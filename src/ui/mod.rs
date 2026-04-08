@@ -1,5 +1,6 @@
 mod format;
 mod help;
+pub mod shape_viz;
 pub mod tree;
 
 use ratatui::Frame;
@@ -268,91 +269,229 @@ fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary:
         .iter()
         .map(|d| d.to_string())
         .collect::<Vec<_>>()
-        .join(" × ");
+        .join(" \u{00d7} ");
 
     let dim_names = summary
         .dimension_names
         .as_ref()
         .map(|dims| dims.join(", "))
-        .unwrap_or_else(|| "—".to_string());
+        .unwrap_or_else(|| "\u{2014}".to_string());
+
+    let separator = "\u{2500}";
 
     let mut lines = vec![
         Line::from(""),
-        Line::from(Span::styled("  Array", app.theme.text_bold)),
-        Line::from(""),
         Line::from(vec![
-            Span::styled("  Name:        ", app.theme.text_dim),
-            Span::styled(node.name.clone(), app.theme.text),
+            Span::styled("  Array: ", app.theme.text_dim),
+            Span::styled(node.name.clone(), app.theme.text_bold),
         ]),
         Line::from(vec![
-            Span::styled("  Path:        ", app.theme.text_dim),
+            Span::styled("  Path:  ", app.theme.text_dim),
             Span::styled(node.path.clone(), app.theme.text),
-        ]),
-        Line::from(vec![
-            Span::styled("  Shape:       ", app.theme.text_dim),
-            Span::styled(shape_str, app.theme.branch),
-        ]),
-        Line::from(vec![
-            Span::styled("  Dimensions:  ", app.theme.text_dim),
-            Span::styled(dim_names, app.theme.text),
-        ]),
-        Line::from(vec![
-            Span::styled("  Manifests:   ", app.theme.text_dim),
-            Span::styled(summary.manifest_count.to_string(), app.theme.text),
         ]),
     ];
 
-    // Pretty-print zarr metadata
-    if !summary.zarr_metadata.is_empty() {
-        if let Some(meta) = format::ZarrMetadata::parse(&summary.zarr_metadata) {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("  Zarr Metadata", app.theme.text_bold)));
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("  Data type:    ", app.theme.text_dim),
-                Span::styled(meta.data_type, app.theme.text),
-            ]));
-            let chunk_str = format!(
-                "[{}]",
-                meta.chunk_shape
-                    .iter()
-                    .map(|d| d.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            lines.push(Line::from(vec![
-                Span::styled("  Chunk shape:  ", app.theme.text_dim),
-                Span::styled(chunk_str, app.theme.text),
-            ]));
-            if !meta.codecs.is_empty() {
+    // ─── Shape & Layout ──────────────────
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("  {0}{0}{0} Shape & Layout {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+        app.theme.text_dim,
+    )));
+
+    lines.push(Line::from(vec![
+        Span::styled("  Shape:         ", app.theme.text_dim),
+        Span::styled(shape_str.clone(), app.theme.branch),
+    ]));
+
+    // Parse metadata early so we can use chunk_shape for the layout section
+    let meta = if !summary.zarr_metadata.is_empty() {
+        format::ZarrMetadata::parse(&summary.zarr_metadata)
+    } else {
+        None
+    };
+
+    if let Some(ref meta) = meta {
+        let chunk_str = meta
+            .chunk_shape
+            .iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<_>>()
+            .join(" \u{00d7} ");
+        lines.push(Line::from(vec![
+            Span::styled("  Chunk shape:   ", app.theme.text_dim),
+            Span::styled(chunk_str, app.theme.text),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("  Data type:     ", app.theme.text_dim),
+            Span::styled(meta.data_type.clone(), app.theme.text),
+        ]));
+
+        // Show v2 dtype if different from data_type
+        if let Some(ref v2dt) = meta.v2_dtype {
+            if v2dt != &meta.data_type {
                 lines.push(Line::from(vec![
-                    Span::styled("  Codecs:       ", app.theme.text_dim),
-                    Span::styled(meta.codecs.join(" \u{2192} "), app.theme.text),
+                    Span::styled("  Dtype (v2):    ", app.theme.text_dim),
+                    Span::styled(v2dt.clone(), app.theme.text),
                 ]));
             }
+        }
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("  Dimensions:    ", app.theme.text_dim),
+        Span::styled(dim_names, app.theme.text),
+    ]));
+
+    // Chunks per dimension: shape[i] / chunk_shape[i]
+    if let Some(ref meta) = meta {
+        if !summary.shape.is_empty()
+            && !meta.chunk_shape.is_empty()
+            && summary.shape.len() == meta.chunk_shape.len()
+        {
+            let chunks_per_dim: Vec<String> = summary
+                .shape
+                .iter()
+                .zip(meta.chunk_shape.iter())
+                .map(|(&s, &c)| {
+                    if c > 0 {
+                        ((s + c - 1) / c).to_string()
+                    } else {
+                        "?".to_string()
+                    }
+                })
+                .collect();
             lines.push(Line::from(vec![
-                Span::styled("  Fill value:   ", app.theme.text_dim),
-                Span::styled(meta.fill_value, app.theme.text),
+                Span::styled("  Chunks/dim:    ", app.theme.text_dim),
+                Span::styled(chunks_per_dim.join(" \u{00d7} "), app.theme.text),
             ]));
+        }
+
+        // Memory layout order (v2)
+        if let Some(ref order) = meta.order {
             lines.push(Line::from(vec![
-                Span::styled("  Zarr format:  ", app.theme.text_dim),
-                Span::styled(meta.zarr_format.to_string(), app.theme.text),
+                Span::styled("  Order:         ", app.theme.text_dim),
+                Span::styled(order.clone(), app.theme.text),
             ]));
-        } else {
-            // Fall back to raw JSON if parsing fails
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("  Zarr Metadata:", app.theme.text_dim)));
-            lines.push(Line::from(""));
-            let formatted = serde_json::from_str::<serde_json::Value>(&summary.zarr_metadata)
-                .ok()
-                .and_then(|v| serde_json::to_string_pretty(&v).ok())
-                .unwrap_or_else(|| summary.zarr_metadata.clone());
-            for json_line in formatted.lines() {
-                lines.push(Line::from(Span::styled(
-                    format!("  {json_line}"),
-                    app.theme.text_dim,
-                )));
+        }
+    }
+
+    // ─── Storage ─────────────────────────
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        format!("  {0}{0}{0} Storage {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+        app.theme.text_dim,
+    )));
+
+    if let Some(ref meta) = meta {
+        let codec_display = meta.codec_chain_display();
+        if !codec_display.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  Codecs:        ", app.theme.text_dim),
+                Span::styled(codec_display, app.theme.text),
+            ]));
+        }
+
+        // v2 compressor (shown separately if codecs were also present)
+        if let Some(ref comp) = meta.compressor {
+            if !meta.codecs.is_empty() {
+                // Already shown via codec_chain_display, but if both exist show compressor
+                // separately for clarity
+                lines.push(Line::from(vec![
+                    Span::styled("  Compressor:    ", app.theme.text_dim),
+                    Span::styled(comp.clone(), app.theme.text),
+                ]));
             }
+        }
+
+        // v2 filters
+        if !meta.filters.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  Filters:       ", app.theme.text_dim),
+                Span::styled(meta.filters.join(", "), app.theme.text),
+            ]));
+        }
+
+        lines.push(Line::from(vec![
+            Span::styled("  Fill value:    ", app.theme.text_dim),
+            Span::styled(meta.fill_value.clone(), app.theme.text),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Zarr format:   ", app.theme.text_dim),
+            Span::styled(meta.zarr_format.to_string(), app.theme.text),
+        ]));
+
+        if meta.dimension_separator != "/" {
+            lines.push(Line::from(vec![
+                Span::styled("  Dim separator: ", app.theme.text_dim),
+                Span::styled(meta.dimension_separator.clone(), app.theme.text),
+            ]));
+        }
+
+        // Storage transformers
+        if !meta.storage_transformers.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  Transformers:  ", app.theme.text_dim),
+                Span::styled(meta.storage_transformers.join(", "), app.theme.text),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("  Manifests:     ", app.theme.text_dim),
+        Span::styled(summary.manifest_count.to_string(), app.theme.text),
+    ]));
+
+    // ─── Attributes ──────────────────────
+    if let Some(ref meta) = meta {
+        if !meta.attributes.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("  {0}{0}{0} Attributes {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+                app.theme.text_dim,
+            )));
+            for (key, val) in &meta.attributes {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {key}: "), app.theme.text_dim),
+                    Span::styled(val.clone(), app.theme.text),
+                ]));
+            }
+        }
+    }
+
+    // ─── Raw Metadata ────────────────────
+    if let Some(ref meta) = meta {
+        if !meta.extra_fields.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("  {0}{0}{0} Raw Metadata {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+                app.theme.text_dim,
+            )));
+            for (key, val) in &meta.extra_fields {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {key}: "), app.theme.text_dim),
+                    Span::styled(val.clone(), app.theme.text),
+                ]));
+            }
+        }
+    }
+
+    // Fallback: if metadata was present but couldn't be parsed, show raw JSON
+    if !summary.zarr_metadata.is_empty() && meta.is_none() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  {0}{0}{0} Raw Metadata {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+            app.theme.text_dim,
+        )));
+        let formatted = serde_json::from_str::<serde_json::Value>(&summary.zarr_metadata)
+            .ok()
+            .and_then(|v| serde_json::to_string_pretty(&v).ok())
+            .unwrap_or_else(|| summary.zarr_metadata.clone());
+        for json_line in formatted.lines() {
+            lines.push(Line::from(Span::styled(
+                format!("  {json_line}"),
+                app.theme.text_dim,
+            )));
         }
     }
 

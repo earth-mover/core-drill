@@ -467,8 +467,17 @@ impl App {
                     }
                 }
             }
-            _ => {
-                // TODO: handle enter in other panes
+            Pane::Detail => {
+                // If a group is selected in the sidebar, expand it and focus sidebar
+                let selected = self.tree_state.selected().to_vec();
+                if !selected.is_empty() {
+                    self.tree_state.open(selected);
+                    self.tree_state.key_right();
+                    self.focused_pane = Pane::Sidebar;
+                }
+            }
+            Pane::Bottom => {
+                // TODO: handle enter in bottom pane
             }
         }
     }
