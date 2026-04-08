@@ -85,6 +85,8 @@ impl App {
             && let Some(LoadState::Loaded(_)) = self.store.node_children.get("/") {
                 self.auto_expand_tree();
                 self.tree_auto_expanded = true;
+                // Kick off chunk stats for whatever array got auto-selected
+                self.maybe_request_chunk_stats();
             }
 
         // Auto-request diff when bottom pane is focused on Snapshots tab
@@ -117,6 +119,40 @@ impl App {
             branch: self.current_branch.clone(),
             snapshot_id: sid,
         });
+    }
+
+    /// If an array node is currently selected in the sidebar and we haven't already
+    /// fetched (or started fetching) its chunk stats, submit the request.
+    fn maybe_request_chunk_stats(&mut self) {
+        let selected = self.tree_state.selected();
+        let Some(path) = selected.last() else { return };
+
+        // Only request if not already cached or loading
+        if self.store.chunk_stats.contains_key(path) {
+            return;
+        }
+
+        // Check whether the selected node is an array
+        let is_array = self
+            .store
+            .node_children
+            .values()
+            .find_map(|state| {
+                if let LoadState::Loaded(nodes) = state {
+                    nodes.iter().find(|n| n.path == *path)
+                } else {
+                    None
+                }
+            })
+            .map(|node| matches!(node.node_type, crate::store::TreeNodeType::Array(_)))
+            .unwrap_or(false);
+
+        if is_array {
+            self.store.submit(DataRequest::ChunkStats {
+                branch: self.current_branch.clone(),
+                path: path.clone(),
+            });
+        }
     }
 
     /// Get the snapshot ID for the currently selected row in the bottom panel.
@@ -311,6 +347,7 @@ impl App {
             Pane::Sidebar => {
                 let moved = self.tree_state.key_down();
                 self.detail_scroll = 0; // reset when changing selection
+                self.maybe_request_chunk_stats();
                 if !moved && self.bottom_visible {
                     self.focused_pane = Pane::Bottom;
                 }
@@ -330,6 +367,7 @@ impl App {
             Pane::Sidebar => {
                 self.tree_state.key_up();
                 self.detail_scroll = 0; // reset when changing selection
+                self.maybe_request_chunk_stats();
             }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(1),
             Pane::Bottom => {

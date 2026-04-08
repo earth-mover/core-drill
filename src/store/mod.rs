@@ -45,6 +45,8 @@ pub enum DataRequest {
     AllNodes { branch: String },
     /// Fetch diff between a snapshot and its parent
     SnapshotDiff { branch: String, snapshot_id: String },
+    /// Fetch chunk type statistics for an array node
+    ChunkStats { branch: String, path: String },
     #[allow(dead_code)]
     OpsLog,
 }
@@ -64,6 +66,10 @@ pub enum DataResponse {
         snapshot_id: String,
         result: Result<DiffSummary, String>,
     },
+    ChunkStats {
+        path: String,
+        result: Result<ChunkStats, String>,
+    },
     OpsLog(Result<Vec<String>, String>),
 }
 
@@ -76,6 +82,7 @@ pub struct DataStore {
     pub ancestry: HashMap<String, LoadState<Vec<SnapshotEntry>>>,
     pub node_children: HashMap<String, LoadState<Vec<TreeNode>>>,
     pub diffs: HashMap<String, LoadState<DiffSummary>>,
+    pub chunk_stats: HashMap<String, LoadState<ChunkStats>>,
     pub ops_log: LoadState<Vec<String>>,
 
     // Channel for sending requests to background worker
@@ -99,6 +106,7 @@ impl DataStore {
             ancestry: HashMap::new(),
             node_children: HashMap::new(),
             diffs: HashMap::new(),
+            chunk_stats: HashMap::new(),
             ops_log: LoadState::NotRequested,
             request_tx,
             response_rx,
@@ -120,6 +128,9 @@ impl DataStore {
             }
             DataRequest::SnapshotDiff { snapshot_id, .. } => {
                 self.diffs.insert(snapshot_id.clone(), LoadState::Loading);
+            }
+            DataRequest::ChunkStats { path, .. } => {
+                self.chunk_stats.insert(path.clone(), LoadState::Loading);
             }
             DataRequest::OpsLog => self.ops_log = LoadState::Loading,
         }
@@ -186,6 +197,13 @@ impl DataStore {
                 };
                 self.diffs.insert(snapshot_id, state);
             }
+            DataResponse::ChunkStats { path, result } => {
+                let state = match result {
+                    Ok(stats) => LoadState::Loaded(stats),
+                    Err(e) => LoadState::Error(e),
+                };
+                self.chunk_stats.insert(path, state);
+            }
             DataResponse::OpsLog(result) => {
                 self.ops_log = match result {
                     Ok(entries) => LoadState::Loaded(entries),
@@ -245,6 +263,10 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
                 snapshot_id,
                 result,
             }
+        }
+        DataRequest::ChunkStats { branch, path } => {
+            let result = fetch_chunk_stats(repo, &branch, &path).await;
+            DataResponse::ChunkStats { path, result }
         }
         DataRequest::OpsLog => {
             // TODO: implement ops log fetching
@@ -391,6 +413,57 @@ async fn fetch_all_nodes(
     }
 
     Ok(children_by_parent)
+}
+
+/// Fetch chunk type statistics for an array node by iterating all its chunks.
+async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Result<ChunkStats, String> {
+    use futures::StreamExt;
+    use icechunk::repository::VersionInfo;
+
+    let version = VersionInfo::BranchTipRef(branch.to_string());
+    let session = repo.readonly_session(&version).await.map_err(|e| e.to_string())?;
+    let node_path = icechunk::format::Path::try_from(path).map_err(|e: icechunk::format::PathError| e.to_string())?;
+
+    let mut total = 0usize;
+    let mut inline = 0usize;
+    let mut native = 0usize;
+    let mut virtual_count = 0usize;
+    let mut virtual_total_bytes = 0u64;
+    let mut url_counts: HashMap<String, usize> = HashMap::new();
+
+    let stream = session.array_chunk_iterator(&node_path).await;
+    futures::pin_mut!(stream);
+
+    while let Some(result) = stream.next().await {
+        let chunk_info = result.map_err(|e| e.to_string())?;
+        total += 1;
+        match &chunk_info.payload {
+            icechunk::format::manifest::ChunkPayload::Inline(_) => inline += 1,
+            icechunk::format::manifest::ChunkPayload::Ref(_) => native += 1,
+            icechunk::format::manifest::ChunkPayload::Virtual(vref) => {
+                virtual_count += 1;
+                virtual_total_bytes += vref.length;
+                // Extract URL prefix (everything up to and including the last '/')
+                let url = vref.location.url();
+                let prefix = url.rsplitn(2, '/').nth(1).unwrap_or(url).to_string();
+                *url_counts.entry(prefix).or_insert(0) += 1;
+            }
+            _ => {}
+        }
+    }
+
+    let mut virtual_prefixes: Vec<(String, usize)> = url_counts.into_iter().collect();
+    virtual_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
+    virtual_prefixes.truncate(5);
+
+    Ok(ChunkStats {
+        total_chunks: total,
+        inline_count: inline,
+        native_count: native,
+        virtual_count,
+        virtual_prefixes,
+        virtual_total_bytes,
+    })
 }
 
 /// Fetch the diff between a snapshot and its parent.

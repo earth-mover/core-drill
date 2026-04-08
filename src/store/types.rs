@@ -64,3 +64,16 @@ pub struct ArraySummary {
     pub manifest_count: usize,
     pub zarr_metadata: String,
 }
+
+/// Chunk type breakdown for an array
+#[derive(Debug, Clone, Serialize)]
+pub struct ChunkStats {
+    pub total_chunks: usize,
+    pub inline_count: usize,
+    pub native_count: usize,
+    pub virtual_count: usize,
+    /// Common URL prefixes for virtual chunks, with counts
+    pub virtual_prefixes: Vec<(String, usize)>,
+    /// Total size of virtual chunks in bytes (sum of length fields)
+    pub virtual_total_bytes: u64,
+}

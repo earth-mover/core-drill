@@ -227,6 +227,16 @@ fn find_node_by_path<'a>(
     None
 }
 
+/// Compute a clamped scroll offset: cap detail_scroll so the last content line
+/// is still visible. `content_height` is the number of lines in `text`
+/// (an approximation that ignores wrapping, so it's a conservative cap).
+fn clamped_scroll(detail_scroll: usize, content_height: usize, area: Rect) -> u16 {
+    // area still has the border — inner height is area.height - 2 (top + bottom border)
+    let visible_height = (area.height as usize).saturating_sub(2);
+    let max_scroll = content_height.saturating_sub(visible_height);
+    detail_scroll.min(max_scroll) as u16
+}
+
 fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Detail;
     let block = theme::panel("[2] Detail", focused, &app.theme);
@@ -237,11 +247,12 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         && let Some(sid) = app.selected_snapshot_id()
             && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid)) {
                 let text = render_snapshot_diff_detail(app, &sid);
+                let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
                 frame.render_widget(
                     Paragraph::new(text)
                         .block(block)
                         .wrap(Wrap { trim: false })
-                        .scroll((app.detail_scroll as u16, 0)),
+                        .scroll((scroll, 0)),
                     area,
                 );
                 return;
@@ -259,25 +270,27 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                 if summary.shape.is_empty() {
                     // Scalar — no canvas, just text (header + all sections together)
                     let pre_text = render_array_detail_header(app, node, summary);
-                    let post_text = render_array_detail_storage(app, summary);
+                    let post_text = render_array_detail_storage(app, node.path.as_str(), summary);
                     let mut text = pre_text;
                     text.extend(post_text);
+                    let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
                     frame.render_widget(
                         Paragraph::new(text)
                             .block(block)
                             .wrap(Wrap { trim: false })
-                            .scroll((app.detail_scroll as u16, 0)),
+                            .scroll((scroll, 0)),
                         area,
                     );
                 } else {
                     // For arrays: single scrollable paragraph (no canvas)
                     let mut text = render_array_detail_header(app, node, summary);
-                    text.extend(render_array_detail_storage(app, summary));
+                    text.extend(render_array_detail_storage(app, node.path.as_str(), summary));
+                    let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
                     frame.render_widget(
                         Paragraph::new(text)
                             .block(block)
                             .wrap(Wrap { trim: false })
-                            .scroll((app.detail_scroll as u16, 0)),
+                            .scroll((scroll, 0)),
                         area,
                     );
                 }
@@ -300,11 +313,12 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         render_repo_overview(app)
     };
 
+    let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
     frame.render_widget(
         Paragraph::new(text)
             .block(block)
             .wrap(Wrap { trim: false })
-            .scroll((app.detail_scroll as u16, 0)),
+            .scroll((scroll, 0)),
         area,
     );
 }
@@ -431,7 +445,7 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
 }
 
 /// Render the Storage + Attributes + Raw Metadata sections for an array node (shown after the canvas viz).
-fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
+fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
     let separator = "\u{2500}";
 
     let meta = if !summary.zarr_metadata.is_empty() {
@@ -506,6 +520,82 @@ fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::
         Span::styled("  Manifests:     ", app.theme.text_dim),
         Span::styled(summary.manifest_count.to_string(), app.theme.text),
     ]));
+
+    // ─── Chunk Types ─────────────────────
+    match app.store.chunk_stats.get(path) {
+        None | Some(LoadState::NotRequested) => {
+            // Not yet requested — skip section silently
+        }
+        Some(LoadState::Loading) => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+                app.theme.text_dim,
+            )));
+            lines.push(Line::from(Span::styled("  Loading...", app.theme.loading)));
+        }
+        Some(LoadState::Error(e)) => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+                app.theme.text_dim,
+            )));
+            lines.push(Line::from(Span::styled(format!("  Error: {e}"), app.theme.error)));
+        }
+        Some(LoadState::Loaded(stats)) => {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
+                app.theme.text_dim,
+            )));
+            lines.push(Line::from(vec![
+                Span::styled("  Total:         ", app.theme.text_dim),
+                Span::styled(stats.total_chunks.to_string(), app.theme.text),
+            ]));
+
+            let total = stats.total_chunks.max(1);
+
+            if stats.native_count > 0 {
+                let pct = stats.native_count * 100 / total;
+                lines.push(Line::from(vec![
+                    Span::styled("  Native:        ", app.theme.text_dim),
+                    Span::styled(format!("{} ({pct}%)", stats.native_count), app.theme.text),
+                ]));
+            }
+            if stats.inline_count > 0 {
+                let pct = stats.inline_count * 100 / total;
+                lines.push(Line::from(vec![
+                    Span::styled("  Inline:        ", app.theme.text_dim),
+                    Span::styled(format!("{} ({pct}%)", stats.inline_count), app.theme.text),
+                ]));
+            }
+            if stats.virtual_count > 0 {
+                let pct = stats.virtual_count * 100 / total;
+                let size_str = humansize::format_size(stats.virtual_total_bytes, humansize::DECIMAL);
+                lines.push(Line::from(vec![
+                    Span::styled("  Virtual:       ", app.theme.text_dim),
+                    Span::styled(
+                        format!("{} ({pct}%)   {size_str}", stats.virtual_count),
+                        app.theme.text,
+                    ),
+                ]));
+                if !stats.virtual_prefixes.is_empty() {
+                    lines.push(Line::from(Span::styled("  Sources:", app.theme.text_dim)));
+                    for (prefix, count) in &stats.virtual_prefixes {
+                        lines.push(Line::from(vec![
+                            Span::styled("    ", app.theme.text_dim),
+                            Span::styled(format!("{prefix}/"), app.theme.text),
+                            Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
+                        ]));
+                    }
+                }
+            }
+            // If all zeros (empty array), show explicit zero
+            if stats.total_chunks == 0 {
+                lines.push(Line::from(Span::styled("  (no chunks written)", app.theme.text_dim)));
+            }
+        }
+    }
 
     // ─── Attributes ──────────────────────
     if let Some(ref meta) = meta
