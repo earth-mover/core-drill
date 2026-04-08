@@ -46,7 +46,7 @@ pub enum DataRequest {
     /// Fetch diff between a snapshot and its parent.
     /// `parent_id` is provided by the caller from the cached ancestry data so the
     /// worker never needs to fetch the child snapshot — only the transaction log.
-    SnapshotDiff { snapshot_id: String },
+    SnapshotDiff { snapshot_id: String, parent_id: Option<String> },
     /// Fetch chunk type statistics for an array node
     ChunkStats { branch: String, path: String },
     #[allow(dead_code)]
@@ -64,9 +64,11 @@ pub enum DataResponse {
     },
     /// All nodes organized by parent path. One response populates the entire node_children cache.
     AllNodes(Result<HashMap<String, Vec<TreeNode>>, String>),
+    /// Unresolved diff: NodeId strings from the transaction log.
+    /// Paths are resolved on the main thread using the node_children cache.
     SnapshotDiff {
         snapshot_id: String,
-        result: Result<DiffSummary, String>,
+        result: Result<RawDiff, String>,
     },
     ChunkStats {
         path: String,
@@ -159,6 +161,19 @@ impl DataStore {
         self.response_rx.recv().await
     }
 
+    /// Resolve a NodeId string (Crockford Base32) to a path string using the
+    /// node_children cache. Falls back to a `<node:ID>` placeholder if not found.
+    fn node_id_to_path(&self, node_id: &str) -> String {
+        for state in self.node_children.values() {
+            if let LoadState::Loaded(nodes) = state {
+                if let Some(node) = nodes.iter().find(|n| n.node_id == node_id) {
+                    return node.path.clone();
+                }
+            }
+        }
+        format!("<node:{}>", node_id)
+    }
+
     fn apply_response(&mut self, response: DataResponse) {
         match response {
             DataResponse::Branches(result) => {
@@ -194,7 +209,22 @@ impl DataStore {
             }
             DataResponse::SnapshotDiff { snapshot_id, result } => {
                 let state = match result {
-                    Ok(summary) => LoadState::Loaded(summary),
+                    Ok(raw) => {
+                        // Resolve NodeId strings to paths using the cached node_children.
+                        // This is pure in-memory work — zero network calls.
+                        let summary = DiffSummary {
+                            snapshot_id: raw.snapshot_id,
+                            parent_id: raw.parent_id,
+                            added_arrays: raw.added_array_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
+                            added_groups: raw.added_group_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
+                            deleted_arrays: raw.deleted_array_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
+                            deleted_groups: raw.deleted_group_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
+                            modified_arrays: raw.modified_array_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
+                            modified_groups: raw.modified_group_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
+                            chunk_changes: raw.chunk_change_ids.iter().map(|(id, count)| (self.node_id_to_path(id), *count)).collect(),
+                        };
+                        LoadState::Loaded(summary)
+                    }
                     Err(e) => LoadState::Error(e),
                 };
                 self.diffs.insert(snapshot_id, state);
@@ -259,8 +289,8 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
             let result = fetch_all_nodes(repo, &branch).await;
             DataResponse::AllNodes(result)
         }
-        DataRequest::SnapshotDiff { snapshot_id } => {
-            let result = fetch_diff(repo, &snapshot_id).await;
+        DataRequest::SnapshotDiff { snapshot_id, parent_id } => {
+            let result = fetch_diff(repo, &snapshot_id, parent_id.as_deref()).await;
             DataResponse::SnapshotDiff {
                 snapshot_id,
                 result,
@@ -469,87 +499,48 @@ async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Resul
     })
 }
 
-/// Fetch the diff between a snapshot and its parent using the transaction log directly.
-/// This requires only 2 S3 fetches: the child snapshot + the transaction log.
-/// (Previously required N ancestry fetches + 2 full snapshot fetches via Repository::diff().)
+/// Fetch the diff between a snapshot and its parent using only the transaction log.
+/// Costs exactly 1 S3 fetch (the transaction log). Path resolution is done on the
+/// main thread using the already-cached node_children data — zero extra network calls.
 async fn fetch_diff(
     repo: &Repository,
     snapshot_id: &str,
-) -> Result<DiffSummary, String> {
+    parent_id: Option<&str>,
+) -> Result<RawDiff, String> {
     use icechunk::format::SnapshotId;
 
     let snap_id: SnapshotId =
         snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
 
-    // Fetch 1: child snapshot — gives us parent_id AND node table for path resolution.
-    let snapshot = repo
-        .asset_manager()
-        .fetch_snapshot(&snap_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // parent_id() is deprecated since 2.0 for V2 repos (parent is encoded differently),
-    // but it is still the correct way to get the parent for both V1 and V2 snapshots.
-    #[expect(deprecated)]
-    let parent_id = match snapshot.parent_id() {
-        Some(pid) => pid,
-        None => return Err("Initial snapshot — no parent to diff against".to_string()),
-    };
-
-    // Build NodeId -> Path map from the child snapshot's node table.
-    // We use the string representation of NodeId (Crockford Base32, 13 chars) as the key.
-    let mut node_paths: HashMap<String, String> = HashMap::new();
-    for node_result in snapshot.iter() {
-        let node = node_result.map_err(|e| e.to_string())?;
-        node_paths.insert(node.id.to_string(), node.path.to_string());
-    }
-
-    // Fetch 2: transaction log for this snapshot.
+    // The only S3 fetch: transaction log for this snapshot.
     let tx_log = repo
         .asset_manager()
         .fetch_transaction_log(&snap_id)
         .await
         .map_err(|e| e.to_string())?;
 
-    // Helper: resolve a NodeId to a path string, falling back to a placeholder.
-    let resolve = |node_id: &icechunk::format::NodeId| -> String {
-        let key = node_id.to_string();
-        match node_paths.get(&key) {
-            Some(path) => sanitize(path),
-            None => format!("<node:{}>", key),
-        }
-    };
+    let added_array_ids: Vec<String> = tx_log.new_arrays().map(|id| id.to_string()).collect();
+    let added_group_ids: Vec<String> = tx_log.new_groups().map(|id| id.to_string()).collect();
+    let deleted_array_ids: Vec<String> = tx_log.deleted_arrays().map(|id| id.to_string()).collect();
+    let deleted_group_ids: Vec<String> = tx_log.deleted_groups().map(|id| id.to_string()).collect();
+    let modified_array_ids: Vec<String> = tx_log.updated_arrays().map(|id| id.to_string()).collect();
+    let modified_group_ids: Vec<String> = tx_log.updated_groups().map(|id| id.to_string()).collect();
 
-    let added_arrays: Vec<String> = tx_log.new_arrays().map(|id| resolve(&id)).collect();
-    let added_groups: Vec<String> = tx_log.new_groups().map(|id| resolve(&id)).collect();
-    let deleted_arrays: Vec<String> =
-        tx_log.deleted_arrays().map(|id| resolve(&id)).collect();
-    let deleted_groups: Vec<String> =
-        tx_log.deleted_groups().map(|id| resolve(&id)).collect();
-    let modified_arrays: Vec<String> =
-        tx_log.updated_arrays().map(|id| resolve(&id)).collect();
-    let modified_groups: Vec<String> =
-        tx_log.updated_groups().map(|id| resolve(&id)).collect();
-
-    // updated_chunks gives (NodeId, Iterator<ChunkIndices>); we need (path, count).
-    let chunk_changes: Vec<(String, usize)> = tx_log
+    // updated_chunks gives (NodeId, Iterator<ChunkIndices>); capture (id_string, count).
+    let chunk_change_ids: Vec<(String, usize)> = tx_log
         .updated_chunks()
-        .map(|(node_id, chunks_iter)| {
-            let path = resolve(&node_id);
-            let count = chunks_iter.count();
-            (path, count)
-        })
+        .map(|(node_id, chunks_iter)| (node_id.to_string(), chunks_iter.count()))
         .collect();
 
-    Ok(DiffSummary {
+    Ok(RawDiff {
         snapshot_id: snapshot_id.to_string(),
-        parent_id: Some(parent_id.to_string()),
-        added_arrays,
-        added_groups,
-        deleted_arrays,
-        deleted_groups,
-        modified_arrays,
-        modified_groups,
-        chunk_changes,
+        parent_id: parent_id.map(|s| s.to_string()),
+        added_array_ids,
+        added_group_ids,
+        deleted_array_ids,
+        deleted_group_ids,
+        modified_array_ids,
+        modified_group_ids,
+        chunk_change_ids,
     })
 }

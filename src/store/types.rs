@@ -58,6 +58,22 @@ pub struct DiffSummary {
     pub chunk_changes: Vec<(String, usize)>,
 }
 
+/// Unresolved diff: NodeId strings straight from the transaction log.
+/// Paths are resolved on the main thread using the node_children cache.
+#[derive(Debug, Clone)]
+pub struct RawDiff {
+    pub snapshot_id: String,
+    pub parent_id: Option<String>,
+    pub added_array_ids: Vec<String>,
+    pub added_group_ids: Vec<String>,
+    pub deleted_array_ids: Vec<String>,
+    pub deleted_group_ids: Vec<String>,
+    pub modified_array_ids: Vec<String>,
+    pub modified_group_ids: Vec<String>,
+    /// (node_id, chunk_count)
+    pub chunk_change_ids: Vec<(String, usize)>,
+}
+
 /// Summary info for an array node
 #[derive(Debug, Clone, Serialize)]
 pub struct ArraySummary {

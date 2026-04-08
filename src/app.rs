@@ -114,9 +114,19 @@ impl App {
             return;
         }
 
+        // Look up the parent_id from the cached ancestry — avoids fetching the snapshot.
+        let parent_id = self
+            .store
+            .ancestry
+            .get(&self.current_branch)
+            .and_then(|s| s.as_loaded())
+            .and_then(|entries| entries.get(self.bottom_selected))
+            .and_then(|e| e.parent_id.clone());
+
         self.last_diff_requested = Some(sid.clone());
         self.store.submit(DataRequest::SnapshotDiff {
             snapshot_id: sid,
+            parent_id,
         });
     }
 
