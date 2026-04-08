@@ -1,0 +1,42 @@
+[package]
+name = "core-drill"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal UI for inspecting Icechunk V2 repositories"
+license = "MIT"
+
+[[bin]]
+name = "core-drill"
+path = "src/main.rs"
+
+[dependencies]
+# Icechunk — the library does all format parsing and storage I/O
+icechunk = { path = "../icechunk/icechunk" }
+
+# TUI framework
+ratatui = { version = "0.29", features = ["crossterm"] }
+crossterm = "0.28"
+tui-input = "0.11"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# Serialization (structured output mode)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling and logging
+color-eyre = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+humansize = "2"
+
+[profile.release]
+lto = true
