@@ -1,5 +1,6 @@
 mod format;
 mod help;
+pub mod json_view;
 pub mod shape_viz;
 pub mod tree;
 
@@ -246,12 +247,51 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let selected = app.tree_state.selected();
     let selected_path = selected.last();
 
+    // For array nodes: split into text metadata (top) + canvas visualization (bottom)
+    if let Some(path) = selected_path {
+        if let Some(node) = find_node_by_path(&app.store, path) {
+            if let TreeNodeType::Array(summary) = &node.node_type {
+                let text = render_array_detail(app, node, summary);
+
+                // Check if we have a canvas visualization (ndim > 0)
+                if summary.shape.is_empty() {
+                    // Scalar — no canvas, just text
+                    frame.render_widget(
+                        Paragraph::new(text).block(block).wrap(Wrap { trim: false }),
+                        area,
+                    );
+                } else {
+                    // Split: text on top, canvas visualization on bottom
+                    let inner = block.inner(area);
+                    frame.render_widget(block, area);
+
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Min(8),       // text metadata (scrollable)
+                            Constraint::Length(14),    // shape visualization canvas
+                        ])
+                        .split(inner);
+
+                    frame.render_widget(
+                        Paragraph::new(text).wrap(Wrap { trim: false }),
+                        chunks[0],
+                    );
+
+                    if let Some(canvas) = shape_viz::chunk_grid_canvas(summary, &app.theme) {
+                        frame.render_widget(canvas, chunks[1]);
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    // Non-array nodes: groups, repo overview
     let text = if let Some(path) = selected_path {
         if let Some(node) = find_node_by_path(&app.store, path) {
             match &node.node_type {
-                TreeNodeType::Array(summary) => {
-                    render_array_detail(app, node, summary)
-                }
+                TreeNodeType::Array(_) => unreachable!(),
                 TreeNodeType::Group => {
                     render_group_detail(app, node)
                 }
@@ -379,10 +419,10 @@ fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary:
         }
     }
 
-    // Add shape visualization
-    lines.push(Line::from(""));
-    let viz_lines = crate::ui::shape_viz::render_shape(summary, &app.theme, 40);
-    lines.extend(viz_lines);
+    // Chunk grid summary line (textual) — the graphical canvas is rendered separately
+    if let Some(summary_line) = crate::ui::shape_viz::chunk_summary_line(summary, &app.theme) {
+        lines.push(summary_line);
+    }
 
     // ─── Storage ─────────────────────────
     lines.push(Line::from(""));
@@ -458,11 +498,21 @@ fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary:
                 format!("  {0}{0}{0} Attributes {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
                 app.theme.text_dim,
             )));
-            for (key, val) in &meta.attributes {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("  {key}: "), app.theme.text_dim),
-                    Span::styled(val.clone(), app.theme.text),
-                ]));
+            // Build a JSON object from the attributes and render with json_view
+            let attr_obj: serde_json::Value = serde_json::Value::Object(
+                meta.attributes
+                    .iter()
+                    .map(|(k, v)| {
+                        // Try to parse the value back to JSON; if it fails, keep as string
+                        let json_val = serde_json::from_str(v)
+                            .unwrap_or_else(|_| serde_json::Value::String(v.clone()));
+                        (k.clone(), json_val)
+                    })
+                    .collect(),
+            );
+            if let Ok(attr_json) = serde_json::to_string(&attr_obj) {
+                let json_lines = json_view::render_json(&attr_json, &app.theme, 10, 50);
+                lines.extend(json_lines);
             }
         }
     }
@@ -475,32 +525,33 @@ fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary:
                 format!("  {0}{0}{0} Raw Metadata {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
                 app.theme.text_dim,
             )));
-            for (key, val) in &meta.extra_fields {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("  {key}: "), app.theme.text_dim),
-                    Span::styled(val.clone(), app.theme.text),
-                ]));
+            // Build a JSON object from extra fields and render with json_view
+            let extra_obj: serde_json::Value = serde_json::Value::Object(
+                meta.extra_fields
+                    .iter()
+                    .map(|(k, v)| {
+                        let json_val = serde_json::from_str(v)
+                            .unwrap_or_else(|_| serde_json::Value::String(v.clone()));
+                        (k.clone(), json_val)
+                    })
+                    .collect(),
+            );
+            if let Ok(extra_json) = serde_json::to_string(&extra_obj) {
+                let json_lines = json_view::render_json(&extra_json, &app.theme, 10, 50);
+                lines.extend(json_lines);
             }
         }
     }
 
-    // Fallback: if metadata was present but couldn't be parsed, show raw JSON
+    // Fallback: if metadata was present but couldn't be parsed, show with json_view
     if !summary.zarr_metadata.is_empty() && meta.is_none() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("  {0}{0}{0} Raw Metadata {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
             app.theme.text_dim,
         )));
-        let formatted = serde_json::from_str::<serde_json::Value>(&summary.zarr_metadata)
-            .ok()
-            .and_then(|v| serde_json::to_string_pretty(&v).ok())
-            .unwrap_or_else(|| summary.zarr_metadata.clone());
-        for json_line in formatted.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("  {json_line}"),
-                app.theme.text_dim,
-            )));
-        }
+        let json_lines = json_view::render_json(&summary.zarr_metadata, &app.theme, 10, 50);
+        lines.extend(json_lines);
     }
 
     lines

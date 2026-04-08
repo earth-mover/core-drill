@@ -1,340 +1,589 @@
-//! ASCII art visualization of zarr array shapes with chunk grid overlays.
+//! Dask-style chunk grid visualization using ratatui's Canvas widget.
 //!
-//! Renders 1D arrays as horizontal bars, 2D as rectangles with chunk grid lines,
-//! 3D+ as stacked 2D slices (isometric cube effect), and 4D+ with a text note
-//! for additional dimensions.
+//! Renders zarr array chunk grids as graphical diagrams:
+//! - 0D (scalar): text label only
+//! - 1D: horizontal row of chunk rectangles
+//! - 2D: grid of chunk rectangles with dimension labels
+//! - 3D+: 2D front face with isometric depth offset for 3rd dimension
 
 use ratatui::prelude::*;
+use ratatui::widgets::canvas::{Canvas, Context, Line as CanvasLine, Rectangle};
+use ratatui::widgets::Block;
 
 use crate::store::types::ArraySummary;
 use crate::theme::Theme;
 use crate::ui::format::ZarrMetadata;
 
-/// Generate lines of styled text representing the array shape visualization.
-/// `max_width` constrains the horizontal extent (in terminal columns).
-pub fn render_shape(
+/// Information needed to draw the chunk grid.
+struct ChunkGridInfo {
+    shape: Vec<u64>,
+    chunk_shape: Vec<u64>,
+    chunks_per_dim: Vec<u64>,
+    dim_names: Vec<String>,
+}
+
+impl ChunkGridInfo {
+    fn from_summary(summary: &ArraySummary) -> Self {
+        let zarr = ZarrMetadata::parse(&summary.zarr_metadata);
+        let chunk_shape = zarr.map(|z| z.chunk_shape).unwrap_or_default();
+        let ndim = summary.shape.len();
+
+        let chunks_per_dim: Vec<u64> = summary
+            .shape
+            .iter()
+            .zip(chunk_shape.iter().chain(std::iter::repeat(&1)))
+            .map(|(&s, &c)| if c == 0 { 1 } else { (s + c - 1) / c })
+            .collect();
+
+        let dim_names: Vec<String> = summary
+            .dimension_names
+            .as_ref()
+            .map(|names| {
+                names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| {
+                        if n.is_empty() {
+                            format!("dim{i}")
+                        } else {
+                            n.clone()
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| (0..ndim).map(|i| format!("dim{i}")).collect());
+
+        Self {
+            shape: summary.shape.clone(),
+            chunk_shape,
+            chunks_per_dim,
+            dim_names,
+        }
+    }
+}
+
+/// Build a Canvas widget that renders the chunk grid visualization.
+///
+/// Returns `None` for scalar arrays (0D) — the caller should show a text label instead.
+pub fn chunk_grid_canvas<'a>(
     summary: &ArraySummary,
-    theme: &Theme,
-    max_width: u16,
-) -> Vec<Line<'static>> {
+    theme: &'a Theme,
+) -> Option<Canvas<'a, impl Fn(&mut Context<'_>) + 'a>> {
     let ndim = summary.shape.len();
-    let chunk_shape = ZarrMetadata::parse(&summary.zarr_metadata)
-        .map(|m| m.chunk_shape)
-        .unwrap_or_default();
-
-    // Compute number of chunks per dimension
-    let chunks_per_dim: Vec<u64> = summary
-        .shape
-        .iter()
-        .zip(chunk_shape.iter().chain(std::iter::repeat(&1)))
-        .map(|(&s, &c)| if c == 0 { 1 } else { (s + c - 1) / c })
-        .collect();
-
-    let dim_names: Vec<String> = summary
-        .dimension_names
-        .as_ref()
-        .map(|names| {
-            names
-                .iter()
-                .enumerate()
-                .map(|(i, n)| {
-                    if n.is_empty() {
-                        format!("dim{i}")
-                    } else {
-                        n.clone()
-                    }
-                })
-                .collect()
-        })
-        .unwrap_or_else(|| (0..ndim).map(|i| format!("dim{i}")).collect());
-
-    let mut lines = Vec::new();
-
-    // Header: dimension names with sizes
-    let header: String = dim_names
-        .iter()
-        .zip(summary.shape.iter())
-        .map(|(name, &size)| format!("{name} [{size}]"))
-        .collect::<Vec<_>>()
-        .join(" x ");
-    lines.push(Line::from(Span::styled(
-        format!("  {header}"),
-        theme.text_bold,
-    )));
-
-    match ndim {
-        0 => {
-            lines.push(Line::from(Span::styled("  (scalar)", theme.text_dim)));
-        }
-        1 => {
-            render_1d(&mut lines, theme, max_width, &chunks_per_dim, &chunk_shape, &summary.shape);
-        }
-        2 => {
-            render_2d(&mut lines, theme, max_width, &chunks_per_dim);
-        }
-        _ => {
-            render_3d_plus(&mut lines, theme, max_width, &chunks_per_dim, ndim, &dim_names);
-        }
+    if ndim == 0 {
+        return None;
     }
 
-    // Chunk summary line
-    if !chunk_shape.is_empty() && chunk_shape.len() == ndim {
-        let chunk_str = chunks_per_dim
-            .iter()
-            .map(|c| c.to_string())
-            .collect::<Vec<_>>()
-            .join("x");
-        let shape_str = chunk_shape
-            .iter()
-            .map(|c| format!("[{c}]"))
-            .collect::<Vec<_>>()
-            .join("x");
-        lines.push(Line::from(Span::styled(
-            format!("   chunks: {chunk_str} of {shape_str}"),
-            theme.text_dim,
-        )));
-    }
+    let info = ChunkGridInfo::from_summary(summary);
 
-    lines
+    // Colours from theme — extract the RGB values we need for canvas painting.
+    let grid_color = theme.text_dim.fg.unwrap_or(Color::DarkGray);
+    let fill_color = theme.branch.fg.unwrap_or(Color::Cyan);
+    let label_color = theme.text.fg.unwrap_or(Color::White);
+    let bold_color = theme.text_bold.fg.unwrap_or(Color::White);
+
+    // Clone data that the closure will own.
+    let shape = info.shape.clone();
+    let chunk_shape = info.chunk_shape.clone();
+    let chunks_per_dim = info.chunks_per_dim.clone();
+    let dim_names = info.dim_names.clone();
+
+    // Canvas coordinate system: x in [0, 120], y in [0, 60].
+    // We reserve margins for labels.
+    let x_bounds = [0.0, 120.0];
+    let y_bounds = [0.0, 60.0];
+
+    let canvas = Canvas::default()
+        .block(Block::default())
+        .x_bounds(x_bounds)
+        .y_bounds(y_bounds)
+        .paint(move |ctx| match ndim {
+            1 => paint_1d(
+                ctx,
+                &shape,
+                &chunk_shape,
+                &chunks_per_dim,
+                &dim_names,
+                grid_color,
+                fill_color,
+                label_color,
+                bold_color,
+            ),
+            2 => paint_2d(
+                ctx,
+                &shape,
+                &chunk_shape,
+                &chunks_per_dim,
+                &dim_names,
+                grid_color,
+                fill_color,
+                label_color,
+                bold_color,
+            ),
+            _ => paint_3d_plus(
+                ctx,
+                &shape,
+                &chunk_shape,
+                &chunks_per_dim,
+                &dim_names,
+                ndim,
+                grid_color,
+                fill_color,
+                label_color,
+                bold_color,
+            ),
+        });
+
+    Some(canvas)
 }
 
-/// Render a 1D array as a horizontal bar with chunk divisions.
-fn render_1d(
-    lines: &mut Vec<Line<'static>>,
-    theme: &Theme,
-    max_width: u16,
-    chunks_per_dim: &[u64],
-    chunk_shape: &[u64],
+/// Draw a 1D chunk row.
+fn paint_1d(
+    ctx: &mut Context<'_>,
     shape: &[u64],
-) {
-    let indent = 2usize;
-    // Available width for the bar (leave room for indent + borders)
-    let bar_width = (max_width as usize).saturating_sub(indent + 2).max(8);
-
-    let n_chunks = chunks_per_dim.first().copied().unwrap_or(1) as usize;
-
-    let pad = " ".repeat(indent);
-
-    // Top border
-    lines.push(Line::from(Span::styled(
-        format!("{pad}\u{250c}{}\u{2510}", "\u{2500}".repeat(bar_width)),
-        theme.text_dim,
-    )));
-
-    // Content row: build multi-span line with colored fill and dim separators
-    let mut spans: Vec<Span<'static>> = vec![
-        Span::styled(format!("{pad}\u{2502}"), theme.text_dim),
-    ];
-
-    if n_chunks <= 1 {
-        spans.push(Span::styled("\u{2588}".repeat(bar_width), theme.branch));
-    } else {
-        let total = shape.first().copied().unwrap_or(1) as f64;
-        let c_size = chunk_shape.first().copied().unwrap_or(1) as f64;
-        let mut used = 0usize;
-        for i in 0..n_chunks {
-            let remaining = total - (i as f64 * c_size);
-            let elem_count = c_size.min(remaining);
-            let frac = elem_count / total;
-            let w = if i == n_chunks - 1 {
-                bar_width.saturating_sub(used)
-            } else {
-                ((frac * bar_width as f64).round() as usize).max(1)
-            };
-            if i > 0 && used < bar_width {
-                spans.push(Span::styled("\u{2502}", theme.text_dim));
-                used += 1;
-                let fill = w.saturating_sub(1).min(bar_width.saturating_sub(used));
-                if fill > 0 {
-                    spans.push(Span::styled("\u{2588}".repeat(fill), theme.branch));
-                    used += fill;
-                }
-            } else {
-                let fill = w.min(bar_width.saturating_sub(used));
-                spans.push(Span::styled("\u{2588}".repeat(fill), theme.branch));
-                used += fill;
-            }
-        }
-    }
-
-    spans.push(Span::styled("\u{2502}", theme.text_dim));
-    lines.push(Line::from(spans));
-
-    // Bottom border
-    lines.push(Line::from(Span::styled(
-        format!("{pad}\u{2514}{}\u{2518}", "\u{2500}".repeat(bar_width)),
-        theme.text_dim,
-    )));
-}
-
-/// Render a 2D array as a rectangle with chunk grid lines.
-fn render_2d(
-    lines: &mut Vec<Line<'static>>,
-    theme: &Theme,
-    max_width: u16,
+    chunk_shape: &[u64],
     chunks_per_dim: &[u64],
-) {
-    let indent = 2usize;
-    let avail = (max_width as usize).saturating_sub(indent + 2).max(8);
-
-    let ny = chunks_per_dim.first().copied().unwrap_or(1).max(1) as usize;
-    let nx = chunks_per_dim.get(1).copied().unwrap_or(1).max(1) as usize;
-
-    // Scale: each chunk column gets some chars, each chunk row gets some rows
-    let col_w = ((avail) / nx).max(2).min(8);
-    let row_h = 2usize.min(4).max(1);
-    let grid_w = col_w * nx;
-
-    // Top border
-    let top = format!("{:indent$}\u{250c}{}\u{2510}", "", "\u{2500}".repeat(grid_w));
-    lines.push(Line::from(Span::styled(top, theme.text_dim)));
-
-    for r in 0..ny {
-        for _sub in 0..row_h {
-            let mut row = String::new();
-            for c in 0..nx {
-                if c > 0 {
-                    row.push('\u{250a}'); // dotted vertical ┊
-                }
-                let fill = if c > 0 { col_w - 1 } else { col_w };
-                row.push_str(&" ".repeat(fill));
-            }
-            let line = format!("{:indent$}\u{2502}{row}\u{2502}", "");
-            lines.push(Line::from(Span::styled(line, theme.text_dim)));
-        }
-        // Horizontal chunk boundary (dotted) except after last row
-        if r < ny - 1 {
-            let sep = format!(
-                "{:indent$}\u{2502}{}\u{2502}",
-                "",
-                "\u{00b7}".repeat(grid_w)
-            );
-            lines.push(Line::from(Span::styled(sep, theme.text_dim)));
-        }
-    }
-
-    // Bottom border
-    let bottom = format!("{:indent$}\u{2514}{}\u{2518}", "", "\u{2500}".repeat(grid_w));
-    lines.push(Line::from(Span::styled(bottom, theme.text_dim)));
-}
-
-/// Render a 3D+ array as stacked 2D slices with isometric depth effect.
-fn render_3d_plus(
-    lines: &mut Vec<Line<'static>>,
-    theme: &Theme,
-    max_width: u16,
-    chunks_per_dim: &[u64],
-    ndim: usize,
     dim_names: &[String],
+    grid_color: Color,
+    fill_color: Color,
+    label_color: Color,
+    _bold_color: Color,
 ) {
-    let indent = 2usize;
-    let depth_offset = 2usize; // chars of horizontal offset per depth layer
-    let n_slices = chunks_per_dim.first().copied().unwrap_or(1).max(1).min(4) as usize;
-    let depth_padding = depth_offset * (n_slices - 1);
+    let nx = chunks_per_dim.first().copied().unwrap_or(1).min(20) as usize;
+    let cs = chunk_shape.first().copied().unwrap_or(shape.first().copied().unwrap_or(1));
+    let total = shape.first().copied().unwrap_or(1);
 
-    let avail = (max_width as usize)
-        .saturating_sub(indent + 2 + depth_padding)
-        .max(8);
+    // Grid area: x in [10, 110], y centred around 30
+    let grid_left = 10.0_f64;
+    let grid_right = 110.0_f64;
+    let grid_bottom = 22.0_f64;
+    let grid_top = 38.0_f64;
+    let grid_w = grid_right - grid_left;
+    let cell_w = grid_w / nx as f64;
 
-    let ny = chunks_per_dim.get(1).copied().unwrap_or(1).max(1) as usize;
-    let nx = chunks_per_dim.get(2).copied().unwrap_or(1).max(1) as usize;
+    // Draw filled rectangles for each chunk
+    for i in 0..nx {
+        let x = grid_left + i as f64 * cell_w;
+        ctx.draw(&Rectangle {
+            x,
+            y: grid_bottom,
+            width: cell_w,
+            height: grid_top - grid_bottom,
+            color: if nx == 1 { fill_color } else { fill_color },
+        });
 
-    let col_w = (avail / nx).max(2).min(8);
-    let row_h = 2usize.max(1);
-    let grid_w = col_w * nx;
-
-    // Draw back layers (top borders only, stacked)
-    for layer in (1..n_slices).rev() {
-        let pad = indent + depth_offset * layer;
-        let top = format!(
-            "{:pad$}\u{250c}{}\u{2510}",
-            "",
-            "\u{2500}".repeat(grid_w),
-        );
-        lines.push(Line::from(Span::styled(top, theme.text_dim)));
+        // Chunk index label (only if space permits)
+        if nx <= 16 {
+            let label = format!("{i}");
+            ctx.print(x + cell_w / 2.0 - label.len() as f64, grid_bottom + 7.0, label.fg(label_color));
+        }
     }
 
-    // Front layer: full 2D grid
-    let front_indent = indent;
+    // Draw grid lines between chunks
+    for i in 1..nx {
+        let x = grid_left + i as f64 * cell_w;
+        ctx.draw(&CanvasLine {
+            x1: x,
+            y1: grid_bottom,
+            x2: x,
+            y2: grid_top,
+            color: grid_color,
+        });
+    }
 
-    // Top border of front layer
-    let top = format!(
-        "{:front_indent$}\u{250c}{}\u{2510}{}",
-        "",
-        "\u{2500}".repeat(grid_w),
-        if n_slices > 1 { "\u{2502}" } else { "" },
-    );
-    lines.push(Line::from(Span::styled(top, theme.text_dim)));
+    // Outer border
+    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, grid_color);
 
-    let _total_content_rows = ny * row_h + (ny - 1); // content rows + separators
-    let mut content_row_idx = 0;
+    // Dimension name and size below
+    let dim_label = dim_names.first().map(|s| s.as_str()).unwrap_or("dim0");
+    let bottom_label = format!("{dim_label}: {total} \u{2192}");
+    ctx.print(grid_left + grid_w / 2.0 - bottom_label.len() as f64, grid_bottom - 4.0, bottom_label.fg(label_color));
 
-    for r in 0..ny {
-        for _sub in 0..row_h {
-            let mut row = String::new();
-            for c in 0..nx {
-                if c > 0 {
-                    row.push('\u{250a}');
-                }
-                let fill = if c > 0 { col_w - 1 } else { col_w };
-                row.push_str(&" ".repeat(fill));
+    // Chunk size labels below each cell (if few enough)
+    if nx <= 8 {
+        for i in 0..nx {
+            let actual = if i == nx - 1 {
+                let remainder = total % cs;
+                if remainder == 0 { cs } else { remainder }
+            } else {
+                cs
+            };
+            let label = format!("{actual}");
+            let x = grid_left + i as f64 * cell_w + cell_w / 2.0 - label.len() as f64;
+            ctx.print(x, grid_bottom - 1.0, label.fg(grid_color));
+        }
+    }
+}
+
+/// Draw a 2D chunk grid.
+fn paint_2d(
+    ctx: &mut Context<'_>,
+    shape: &[u64],
+    chunk_shape: &[u64],
+    chunks_per_dim: &[u64],
+    dim_names: &[String],
+    grid_color: Color,
+    fill_color: Color,
+    label_color: Color,
+    _bold_color: Color,
+) {
+    let ny = chunks_per_dim.first().copied().unwrap_or(1).min(12) as usize;
+    let nx = chunks_per_dim.get(1).copied().unwrap_or(1).min(16) as usize;
+
+    let cs_y = chunk_shape.first().copied().unwrap_or(1);
+    let cs_x = chunk_shape.get(1).copied().unwrap_or(1);
+    let total_y = shape.first().copied().unwrap_or(1);
+    let total_x = shape.get(1).copied().unwrap_or(1);
+
+    // Grid area with margins for labels
+    let grid_left = 8.0_f64;
+    let grid_right = 100.0_f64;
+    let grid_bottom = 8.0_f64;
+    let grid_top = 54.0_f64;
+    let grid_w = grid_right - grid_left;
+    let grid_h = grid_top - grid_bottom;
+    let cell_w = grid_w / nx as f64;
+    let cell_h = grid_h / ny as f64;
+
+    // Draw filled rectangles for each chunk cell
+    for row in 0..ny {
+        for col in 0..nx {
+            let x = grid_left + col as f64 * cell_w;
+            // Canvas y=0 is bottom, so row 0 is at the top (highest y)
+            let y = grid_top - (row + 1) as f64 * cell_h;
+            ctx.draw(&Rectangle {
+                x,
+                y,
+                width: cell_w,
+                height: cell_h,
+                color: fill_color,
+            });
+
+            // Chunk index label in centre of cell
+            if nx <= 10 && ny <= 10 && cell_w > 4.0 && cell_h > 3.0 {
+                let label = format!("{row},{col}");
+                let lx = x + cell_w / 2.0 - label.len() as f64;
+                let ly = y + cell_h / 2.0;
+                ctx.print(lx, ly, label.fg(label_color));
             }
-            // Right-side depth indicator
-            let right_depth = if content_row_idx < n_slices - 1 {
-                "\u{2518}"
-            } else {
-                ""
-            };
-            let line = format!(
-                "{:front_indent$}\u{2502}{row}\u{2502}{right_depth}",
-                "",
-            );
-            lines.push(Line::from(Span::styled(line, theme.text_dim)));
-            content_row_idx += 1;
-        }
-        if r < ny - 1 {
-            let right_depth = if content_row_idx < n_slices - 1 {
-                "\u{2518}"
-            } else {
-                ""
-            };
-            let sep = format!(
-                "{:front_indent$}\u{2502}{}\u{2502}{right_depth}",
-                "",
-                "\u{00b7}".repeat(grid_w),
-            );
-            lines.push(Line::from(Span::styled(sep, theme.text_dim)));
-            content_row_idx += 1;
         }
     }
 
-    // Bottom border
-    let bottom = format!(
-        "{:front_indent$}\u{2514}{}\u{2518}",
-        "",
-        "\u{2500}".repeat(grid_w),
+    // Draw internal grid lines
+    for i in 1..nx {
+        let x = grid_left + i as f64 * cell_w;
+        ctx.draw(&CanvasLine {
+            x1: x,
+            y1: grid_bottom,
+            x2: x,
+            y2: grid_top,
+            color: grid_color,
+        });
+    }
+    for j in 1..ny {
+        let y = grid_top - j as f64 * cell_h;
+        ctx.draw(&CanvasLine {
+            x1: grid_left,
+            y1: y,
+            x2: grid_right,
+            y2: y,
+            color: grid_color,
+        });
+    }
+
+    // Outer border
+    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, grid_color);
+
+    // Bottom axis: dimension name + total size, and per-chunk sizes
+    let dim_x_name = dim_names.get(1).map(|s| s.as_str()).unwrap_or("dim1");
+    let bottom_label = format!("{dim_x_name}: {total_x} \u{2192}");
+    ctx.print(
+        grid_left + grid_w / 2.0 - bottom_label.len() as f64,
+        grid_bottom - 5.0,
+        bottom_label.fg(label_color),
     );
-    lines.push(Line::from(Span::styled(bottom, theme.text_dim)));
+
+    // Per-column chunk sizes below grid
+    if nx <= 8 {
+        for i in 0..nx {
+            let actual = if i == nx - 1 {
+                let rem = total_x % cs_x;
+                if rem == 0 { cs_x } else { rem }
+            } else {
+                cs_x
+            };
+            let label = format!("{actual}");
+            let x = grid_left + i as f64 * cell_w + cell_w / 2.0 - label.len() as f64;
+            ctx.print(x, grid_bottom - 2.0, label.fg(grid_color));
+        }
+    }
+
+    // Right axis: dimension name + per-row sizes
+    let dim_y_name = dim_names.first().map(|s| s.as_str()).unwrap_or("dim0");
+    // Vertical label on the right — place dimension name
+    let right_label = format!("\u{2191} {dim_y_name}: {total_y}");
+    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(label_color));
+
+    // Per-row chunk sizes on the right
+    if ny <= 8 {
+        for j in 0..ny {
+            let actual = if j == ny - 1 {
+                let rem = total_y % cs_y;
+                if rem == 0 { cs_y } else { rem }
+            } else {
+                cs_y
+            };
+            let label = format!("{actual}");
+            let y = grid_top - j as f64 * cell_h - cell_h / 2.0;
+            ctx.print(grid_right + 2.0, y, label.fg(grid_color));
+        }
+    }
+}
+
+/// Draw a 3D+ array as a 2D front face with isometric depth offset.
+fn paint_3d_plus(
+    ctx: &mut Context<'_>,
+    shape: &[u64],
+    _chunk_shape: &[u64],
+    chunks_per_dim: &[u64],
+    dim_names: &[String],
+    ndim: usize,
+    grid_color: Color,
+    fill_color: Color,
+    label_color: Color,
+    _bold_color: Color,
+) {
+    // For 3D+: dim0 is depth, dim1 is rows (Y), dim2 is cols (X)
+    let n_depth = chunks_per_dim.first().copied().unwrap_or(1).min(6) as usize;
+    let ny = chunks_per_dim.get(1).copied().unwrap_or(1).min(8) as usize;
+    let nx = chunks_per_dim.get(2).copied().unwrap_or(1).min(10) as usize;
+
+    let total_y = shape.get(1).copied().unwrap_or(1);
+    let total_x = shape.get(2).copied().unwrap_or(1);
+    let total_depth = shape.first().copied().unwrap_or(1);
+
+    // Isometric offset per depth layer
+    let dx_per_layer = 2.5_f64;
+    let dy_per_layer = 2.0_f64;
+    let n_back = n_depth.min(4); // show at most 4 depth layers
+
+    // Front face grid area
+    let grid_left = 8.0_f64;
+    let grid_right = 88.0_f64;
+    let grid_bottom = 6.0_f64;
+    let grid_top = 44.0_f64;
+    let grid_w = grid_right - grid_left;
+    let grid_h = grid_top - grid_bottom;
+    let cell_w = grid_w / nx as f64;
+    let cell_h = grid_h / ny as f64;
+
+    // Draw back layers (just borders with offset)
+    for layer in (1..n_back).rev() {
+        let ox = layer as f64 * dx_per_layer;
+        let oy = layer as f64 * dy_per_layer;
+        let l = grid_left + ox;
+        let b = grid_bottom + oy;
+        let r = grid_right + ox;
+        let t = grid_top + oy;
+        draw_rect_border(ctx, l, b, r, t, grid_color);
+    }
+
+    // Draw connecting lines from front to back (corners)
+    if n_back > 1 {
+        let ox = (n_back - 1) as f64 * dx_per_layer;
+        let oy = (n_back - 1) as f64 * dy_per_layer;
+        // Top-right corner
+        ctx.draw(&CanvasLine {
+            x1: grid_right,
+            y1: grid_top,
+            x2: grid_right + ox,
+            y2: grid_top + oy,
+            color: grid_color,
+        });
+        // Top-left corner
+        ctx.draw(&CanvasLine {
+            x1: grid_left,
+            y1: grid_top,
+            x2: grid_left + ox,
+            y2: grid_top + oy,
+            color: grid_color,
+        });
+        // Bottom-right corner
+        ctx.draw(&CanvasLine {
+            x1: grid_right,
+            y1: grid_bottom,
+            x2: grid_right + ox,
+            y2: grid_bottom + oy,
+            color: grid_color,
+        });
+    }
+
+    // Draw front face: filled rectangles
+    for row in 0..ny {
+        for col in 0..nx {
+            let x = grid_left + col as f64 * cell_w;
+            let y = grid_top - (row + 1) as f64 * cell_h;
+            ctx.draw(&Rectangle {
+                x,
+                y,
+                width: cell_w,
+                height: cell_h,
+                color: fill_color,
+            });
+
+            // Chunk index labels
+            if nx <= 6 && ny <= 6 && cell_w > 6.0 && cell_h > 4.0 {
+                let label = format!("{row},{col}");
+                let lx = x + cell_w / 2.0 - label.len() as f64;
+                let ly = y + cell_h / 2.0;
+                ctx.print(lx, ly, label.fg(label_color));
+            }
+        }
+    }
+
+    // Front face internal grid lines
+    for i in 1..nx {
+        let x = grid_left + i as f64 * cell_w;
+        ctx.draw(&CanvasLine {
+            x1: x,
+            y1: grid_bottom,
+            x2: x,
+            y2: grid_top,
+            color: grid_color,
+        });
+    }
+    for j in 1..ny {
+        let y = grid_top - j as f64 * cell_h;
+        ctx.draw(&CanvasLine {
+            x1: grid_left,
+            y1: y,
+            x2: grid_right,
+            y2: y,
+            color: grid_color,
+        });
+    }
+
+    // Front face border (on top of everything)
+    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, grid_color);
+
+    // Labels
+    let dim_x = dim_names.get(2).map(|s| s.as_str()).unwrap_or("dim2");
+    let dim_y = dim_names.get(1).map(|s| s.as_str()).unwrap_or("dim1");
+    let dim_z = dim_names.first().map(|s| s.as_str()).unwrap_or("dim0");
+
+    let bottom_label = format!("{dim_x}: {total_x} \u{2192}");
+    ctx.print(
+        grid_left + grid_w / 2.0 - bottom_label.len() as f64,
+        grid_bottom - 3.0,
+        bottom_label.fg(label_color),
+    );
+
+    let right_label = format!("\u{2191} {dim_y}: {total_y}");
+    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(label_color));
+
+    // Depth label along the diagonal
+    let depth_label = format!("{dim_z}: {total_depth} ({n_depth} chunks)");
+    if n_back > 1 {
+        let ox = (n_back - 1) as f64 * dx_per_layer;
+        let oy = (n_back - 1) as f64 * dy_per_layer;
+        ctx.print(
+            grid_left + ox / 2.0,
+            grid_top + oy / 2.0 + 3.0,
+            depth_label.fg(label_color),
+        );
+    } else {
+        ctx.print(grid_left, grid_top + 3.0, depth_label.fg(label_color));
+    }
 
     // Extra dimensions note for 4D+
     if ndim > 3 {
-        let extra: Vec<String> = dim_names
-            .iter()
-            .skip(3)
-            .map(|n| n.clone())
-            .collect();
-        lines.push(Line::from(Span::styled(
-            format!("   (+{} dims: {})", ndim - 3, extra.join(", ")),
-            theme.text_dim,
-        )));
+        let extra: Vec<&str> = dim_names.iter().skip(3).map(|s| s.as_str()).collect();
+        let extra_label = format!("+{} dims: {}", ndim - 3, extra.join(", "));
+        ctx.print(grid_left, grid_bottom - 6.0, extra_label.fg(grid_color));
     }
+}
+
+/// Draw four lines forming the border of a rectangle.
+fn draw_rect_border(ctx: &mut Context<'_>, left: f64, bottom: f64, right: f64, top: f64, color: Color) {
+    // Bottom
+    ctx.draw(&CanvasLine {
+        x1: left,
+        y1: bottom,
+        x2: right,
+        y2: bottom,
+        color,
+    });
+    // Top
+    ctx.draw(&CanvasLine {
+        x1: left,
+        y1: top,
+        x2: right,
+        y2: top,
+        color,
+    });
+    // Left
+    ctx.draw(&CanvasLine {
+        x1: left,
+        y1: bottom,
+        x2: left,
+        y2: top,
+        color,
+    });
+    // Right
+    ctx.draw(&CanvasLine {
+        x1: right,
+        y1: bottom,
+        x2: right,
+        y2: top,
+        color,
+    });
+}
+
+/// Generate a text summary of the chunk grid (used as a header line above the canvas).
+pub fn chunk_summary_line(summary: &ArraySummary, theme: &Theme) -> Option<Line<'static>> {
+    let zarr = ZarrMetadata::parse(&summary.zarr_metadata)?;
+    let ndim = summary.shape.len();
+    if ndim == 0 || zarr.chunk_shape.is_empty() || zarr.chunk_shape.len() != ndim {
+        return None;
+    }
+
+    let chunks_per_dim: Vec<u64> = summary
+        .shape
+        .iter()
+        .zip(zarr.chunk_shape.iter())
+        .map(|(&s, &c)| if c == 0 { 1 } else { (s + c - 1) / c })
+        .collect();
+
+    let chunk_grid_str = chunks_per_dim
+        .iter()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join("\u{00d7}");
+    let chunk_shape_str = zarr
+        .chunk_shape
+        .iter()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>()
+        .join("\u{00d7}");
+
+    Some(Line::from(vec![
+        Span::styled("  Chunk grid:    ", theme.text_dim),
+        Span::styled(
+            format!("{chunk_grid_str} chunks of [{chunk_shape_str}]"),
+            theme.text,
+        ),
+    ]))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn make_summary(shape: Vec<u64>, dim_names: Option<Vec<String>>, zarr_meta: &str) -> ArraySummary {
+    fn make_summary(
+        shape: Vec<u64>,
+        dim_names: Option<Vec<String>>,
+        zarr_meta: &str,
+    ) -> ArraySummary {
         ArraySummary {
             shape,
             dimension_names: dim_names,
@@ -352,73 +601,81 @@ mod tests {
     }
 
     #[test]
-    fn test_1d_renders() {
+    fn test_scalar_returns_none() {
+        let summary = make_summary(vec![], None, "{}");
         let theme = Theme::default();
-        let summary = make_summary(vec![561264], Some(vec!["time".into()]), &chunk_meta(&[80000]));
-        let lines = render_shape(&summary, &theme, 60);
-        assert!(!lines.is_empty());
-        // Should contain the header
-        let text: String = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
-        assert!(text.contains("time [561264]"));
-        assert!(text.contains("chunks:"));
+        assert!(chunk_grid_canvas(&summary, &theme).is_none());
     }
 
     #[test]
-    fn test_2d_renders() {
+    fn test_1d_returns_some() {
+        let summary = make_summary(
+            vec![561264],
+            Some(vec!["time".into()]),
+            &chunk_meta(&[80000]),
+        );
         let theme = Theme::default();
+        assert!(chunk_grid_canvas(&summary, &theme).is_some());
+    }
+
+    #[test]
+    fn test_2d_returns_some() {
         let summary = make_summary(
             vec![721, 1440],
             Some(vec!["latitude".into(), "longitude".into()]),
             &chunk_meta(&[360, 360]),
         );
-        let lines = render_shape(&summary, &theme, 60);
-        let text: String = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
-        assert!(text.contains("latitude [721]"));
-        assert!(text.contains("longitude [1440]"));
+        let theme = Theme::default();
+        assert!(chunk_grid_canvas(&summary, &theme).is_some());
     }
 
     #[test]
-    fn test_3d_renders() {
-        let theme = Theme::default();
+    fn test_3d_returns_some() {
         let summary = make_summary(
             vec![561264, 721, 1440],
             Some(vec!["time".into(), "latitude".into(), "longitude".into()]),
             &chunk_meta(&[80000, 360, 360]),
         );
-        let lines = render_shape(&summary, &theme, 60);
-        let text: String = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
-        assert!(text.contains("time [561264]"));
-        assert!(text.contains("chunks:"));
+        let theme = Theme::default();
+        assert!(chunk_grid_canvas(&summary, &theme).is_some());
     }
 
     #[test]
-    fn test_4d_shows_extra_dims() {
-        let theme = Theme::default();
+    fn test_4d_returns_some() {
         let summary = make_summary(
             vec![10, 100, 721, 1440],
-            Some(vec!["batch".into(), "time".into(), "lat".into(), "lon".into()]),
+            Some(vec![
+                "batch".into(),
+                "time".into(),
+                "lat".into(),
+                "lon".into(),
+            ]),
             &chunk_meta(&[10, 50, 360, 360]),
         );
-        let lines = render_shape(&summary, &theme, 60);
-        let text: String = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
-        assert!(text.contains("+1 dims: lon"));
+        let theme = Theme::default();
+        assert!(chunk_grid_canvas(&summary, &theme).is_some());
     }
 
     #[test]
-    fn test_scalar_renders() {
+    fn test_chunk_summary_line() {
+        let summary = make_summary(
+            vec![1000, 2000],
+            Some(vec!["x".into(), "y".into()]),
+            &chunk_meta(&[250, 500]),
+        );
         let theme = Theme::default();
-        let summary = make_summary(vec![], None, "{}");
-        let lines = render_shape(&summary, &theme, 40);
-        let text: String = lines.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("\n");
-        assert!(text.contains("scalar"));
+        let line = chunk_summary_line(&summary, &theme);
+        assert!(line.is_some());
+        let text = line.unwrap().to_string();
+        assert!(text.contains("4\u{00d7}4"));
+        assert!(text.contains("250\u{00d7}500"));
     }
 
     #[test]
     fn test_no_chunk_metadata() {
-        let theme = Theme::default();
         let summary = make_summary(vec![100, 200], Some(vec!["x".into(), "y".into()]), "{}");
-        let lines = render_shape(&summary, &theme, 40);
-        // Should still render without panicking
-        assert!(!lines.is_empty());
+        let theme = Theme::default();
+        // Should still return Some (canvas with default 1-chunk grid)
+        assert!(chunk_grid_canvas(&summary, &theme).is_some());
     }
 }
