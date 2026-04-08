@@ -148,7 +148,7 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
 
             let tree = tui_tree_widget::Tree::new(&tree_items)
                 .expect("unique identifiers")
-                .highlight_style(app.theme.selected)
+                .highlight_style(if focused { app.theme.selected } else { app.theme.text_dim })
                 .node_closed_symbol("▶ ")
                 .node_open_symbol("▼ ")
                 .node_no_children_symbol("─ ");
