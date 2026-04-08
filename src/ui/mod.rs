@@ -247,40 +247,52 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let selected = app.tree_state.selected();
     let selected_path = selected.last();
 
-    // For array nodes: split into text metadata (top) + canvas visualization (bottom)
+    // For array nodes: split into header + shape (top), canvas viz (middle), storage + rest (bottom)
     if let Some(path) = selected_path {
         if let Some(node) = find_node_by_path(&app.store, path) {
             if let TreeNodeType::Array(summary) = &node.node_type {
-                let text = render_array_detail(app, node, summary);
-
                 // Check if we have a canvas visualization (ndim > 0)
                 if summary.shape.is_empty() {
-                    // Scalar — no canvas, just text
+                    // Scalar — no canvas, just text (header + all sections together)
+                    let pre_text = render_array_detail_header(app, node, summary);
+                    let post_text = render_array_detail_storage(app, summary);
+                    let mut text = pre_text;
+                    text.extend(post_text);
                     frame.render_widget(
                         Paragraph::new(text).block(block).wrap(Wrap { trim: false }),
                         area,
                     );
                 } else {
-                    // Split: text on top, canvas visualization on bottom
+                    // Three-section split: header+shape | canvas | storage+attrs
+                    let pre_text = render_array_detail_header(app, node, summary);
+                    let post_text = render_array_detail_storage(app, summary);
+
                     let inner = block.inner(area);
                     frame.render_widget(block, area);
 
+                    let pre_len = pre_text.len() as u16;
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
-                            Constraint::Min(8),       // text metadata (scrollable)
-                            Constraint::Length(14),    // shape visualization canvas
+                            Constraint::Length(pre_len + 1), // header + shape section
+                            Constraint::Length(14),           // canvas viz
+                            Constraint::Min(4),               // storage + attrs + rest
                         ])
                         .split(inner);
 
                     frame.render_widget(
-                        Paragraph::new(text).wrap(Wrap { trim: false }),
+                        Paragraph::new(pre_text).wrap(Wrap { trim: false }),
                         chunks[0],
                     );
 
                     if let Some(canvas) = shape_viz::chunk_grid_canvas(summary, &app.theme) {
                         frame.render_widget(canvas, chunks[1]);
                     }
+
+                    frame.render_widget(
+                        Paragraph::new(post_text).wrap(Wrap { trim: false }),
+                        chunks[2],
+                    );
                 }
                 return;
             }
@@ -306,7 +318,8 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(text).block(block).wrap(Wrap { trim: false }), area);
 }
 
-fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
+/// Render the header + Shape & Layout section for an array node (shown above the canvas viz).
+fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
     let shape_str = summary
         .shape
         .iter()
@@ -419,10 +432,25 @@ fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary:
         }
     }
 
-    // Chunk grid summary line (textual) — the graphical canvas is rendered separately
+    // Chunk grid summary line (textual) — the graphical canvas follows immediately below
     if let Some(summary_line) = crate::ui::shape_viz::chunk_summary_line(summary, &app.theme) {
         lines.push(summary_line);
     }
+
+    lines
+}
+
+/// Render the Storage + Attributes + Raw Metadata sections for an array node (shown after the canvas viz).
+fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
+    let separator = "\u{2500}";
+
+    let meta = if !summary.zarr_metadata.is_empty() {
+        format::ZarrMetadata::parse(&summary.zarr_metadata)
+    } else {
+        None
+    };
+
+    let mut lines = Vec::new();
 
     // ─── Storage ─────────────────────────
     lines.push(Line::from(""));
