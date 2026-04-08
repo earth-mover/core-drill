@@ -631,10 +631,10 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
                 let size_str = humansize::format_size(stats.virtual_total_bytes, humansize::BINARY);
                 lines.extend(labeled_lines("  Virtual:       ", format!("{} ({pct}%)   {size_str}", stats.virtual_count), app.theme.text_dim, app.theme.text, max_width));
                 if !stats.virtual_prefixes.is_empty() {
-                    lines.push(Line::from(Span::styled("  Sources:", app.theme.text_dim)));
+                    lines.push(Line::from(Span::styled("    Sources:", app.theme.text_dim)));
                     for (prefix, count) in &stats.virtual_prefixes {
                         lines.push(Line::from(vec![
-                            Span::styled(format!("    {prefix}/"), app.theme.text),
+                            Span::styled(format!("      {prefix}/"), app.theme.text),
                             Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
                         ]));
                     }
