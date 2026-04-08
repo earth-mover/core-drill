@@ -439,127 +439,265 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
 }
 
 fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<'a>> {
+    let mut lines = Vec::new();
+
+    // --- Snapshot header (from ancestry, always available instantly) ---
+    let entry = app
+        .store
+        .ancestry
+        .get(&app.current_branch)
+        .and_then(|s| s.as_loaded())
+        .and_then(|entries| entries.iter().find(|e| e.id == snapshot_id));
+
+    if let Some(entry) = entry {
+        let short_id = if entry.id.len() > 12 {
+            &entry.id[..12]
+        } else {
+            &entry.id
+        };
+        let parent_short = entry
+            .parent_id
+            .as_ref()
+            .map(|p| if p.len() > 12 { &p[..12] } else { p.as_str() })
+            .unwrap_or("none");
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  Snapshot:  ", app.theme.text_dim),
+            Span::styled(short_id.to_string(), app.theme.snapshot_id),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Parent:    ", app.theme.text_dim),
+            Span::styled(parent_short.to_string(), app.theme.snapshot_id),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Time:      ", app.theme.text_dim),
+            Span::styled(
+                entry.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+                app.theme.timestamp,
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Message:   ", app.theme.text_dim),
+            Span::styled(entry.message.clone(), app.theme.text),
+        ]));
+    }
+
+    // --- Separator ---
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500} Changes \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        app.theme.text_dim,
+    )));
+
+    // --- Diff section (may still be loading) ---
     let state = app.store.diffs.get(snapshot_id);
 
     match state {
         None | Some(LoadState::NotRequested) => {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled("  Select a snapshot to view its diff.", app.theme.text_dim)),
-            ]
+            lines.push(Line::from(Span::styled(
+                "  Waiting for diff request...",
+                app.theme.text_dim,
+            )));
         }
         Some(LoadState::Loading) => {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled("  Loading diff...", app.theme.loading)),
-            ]
+            lines.push(Line::from(Span::styled(
+                "  Computing diff...",
+                app.theme.loading,
+            )));
         }
         Some(LoadState::Error(msg)) => {
-            vec![
-                Line::from(""),
-                Line::from(Span::styled(format!("  {msg}"), app.theme.error)),
-            ]
+            lines.push(Line::from(Span::styled(
+                format!("  {msg}"),
+                app.theme.error,
+            )));
         }
         Some(LoadState::Loaded(diff)) => {
-            let short_id = if diff.snapshot_id.len() > 12 {
-                &diff.snapshot_id[..12]
-            } else {
-                &diff.snapshot_id
-            };
-            let parent_short = diff
-                .parent_id
-                .as_ref()
-                .map(|p| if p.len() > 12 { &p[..12] } else { p })
-                .unwrap_or("none");
-
             let added_count = diff.added_arrays.len() + diff.added_groups.len();
             let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();
             let modified_count = diff.modified_arrays.len() + diff.modified_groups.len();
 
-            let mut lines = vec![
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled("  Snapshot: ", app.theme.text_dim),
-                    Span::styled(short_id.to_string(), app.theme.snapshot_id),
-                    Span::styled(
-                        format!("  ({parent_short} \u{2192} {short_id})"),
-                        app.theme.text_dim,
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled("  Summary:  ", app.theme.text_dim),
-                    Span::styled(format!("{added_count} added"), app.theme.added),
-                    Span::styled(", ", app.theme.text_dim),
-                    Span::styled(format!("{deleted_count} removed"), app.theme.removed),
-                    Span::styled(", ", app.theme.text_dim),
-                    Span::styled(format!("{modified_count} modified"), app.theme.modified),
-                ]),
-            ];
+            lines.push(Line::from(vec![
+                Span::styled("  ", app.theme.text_dim),
+                Span::styled(format!("{added_count} added"), app.theme.added),
+                Span::styled(", ", app.theme.text_dim),
+                Span::styled(format!("{deleted_count} removed"), app.theme.removed),
+                Span::styled(", ", app.theme.text_dim),
+                Span::styled(format!("{modified_count} modified"), app.theme.modified),
+            ]));
 
+            // Added section (groups + arrays, grouped by parent)
             if !diff.added_groups.is_empty() || !diff.added_arrays.is_empty() {
+                let mut all_added: Vec<String> = diff
+                    .added_groups
+                    .iter()
+                    .map(|p| format!("{p} (group)"))
+                    .collect();
+                all_added.extend(diff.added_arrays.iter().cloned());
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("  Added:", app.theme.added)));
-                for path in &diff.added_groups {
-                    lines.push(Line::from(Span::styled(
-                        format!("    + {path} (group)"),
-                        app.theme.added,
-                    )));
-                }
-                for path in &diff.added_arrays {
-                    lines.push(Line::from(Span::styled(
-                        format!("    + {path}"),
-                        app.theme.added,
-                    )));
-                }
+                render_grouped_paths(
+                    &mut lines,
+                    &format!("  Added ({added_count}):"),
+                    &all_added,
+                    "+",
+                    app.theme.added,
+                );
             }
 
+            // Removed section
             if !diff.deleted_groups.is_empty() || !diff.deleted_arrays.is_empty() {
+                let mut all_deleted: Vec<String> = diff
+                    .deleted_groups
+                    .iter()
+                    .map(|p| format!("{p} (group)"))
+                    .collect();
+                all_deleted.extend(diff.deleted_arrays.iter().cloned());
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("  Removed:", app.theme.removed)));
-                for path in &diff.deleted_groups {
-                    lines.push(Line::from(Span::styled(
-                        format!("    - {path} (group)"),
-                        app.theme.removed,
-                    )));
-                }
-                for path in &diff.deleted_arrays {
-                    lines.push(Line::from(Span::styled(
-                        format!("    - {path}"),
-                        app.theme.removed,
-                    )));
-                }
+                render_grouped_paths(
+                    &mut lines,
+                    &format!("  Removed ({deleted_count}):"),
+                    &all_deleted,
+                    "-",
+                    app.theme.removed,
+                );
             }
 
+            // Modified section
             if !diff.modified_groups.is_empty() || !diff.modified_arrays.is_empty() {
+                let mut all_modified: Vec<String> = diff
+                    .modified_groups
+                    .iter()
+                    .map(|p| format!("{p} (group)"))
+                    .collect();
+                all_modified.extend(diff.modified_arrays.iter().cloned());
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("  Modified:", app.theme.modified)));
-                for path in &diff.modified_groups {
-                    lines.push(Line::from(Span::styled(
-                        format!("    ~ {path} (group)"),
-                        app.theme.modified,
-                    )));
-                }
-                for path in &diff.modified_arrays {
-                    lines.push(Line::from(Span::styled(
-                        format!("    ~ {path}"),
-                        app.theme.modified,
-                    )));
-                }
+                render_grouped_paths(
+                    &mut lines,
+                    &format!("  Modified ({modified_count}):"),
+                    &all_modified,
+                    "~",
+                    app.theme.modified,
+                );
             }
 
+            // Chunk changes
             if !diff.chunk_changes.is_empty() {
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("  Chunk Changes:", app.theme.text_bold)));
-                for (path, count) in &diff.chunk_changes {
+                lines.push(Line::from(Span::styled(
+                    "  Chunk Changes:",
+                    app.theme.text_bold,
+                )));
+                let max_show = 20;
+                let total = diff.chunk_changes.len();
+                for (path, count) in diff.chunk_changes.iter().take(max_show) {
                     lines.push(Line::from(vec![
                         Span::styled(format!("    {path}  "), app.theme.text),
                         Span::styled(format!("{count} chunks"), app.theme.text_dim),
                     ]));
                 }
+                if total > max_show {
+                    lines.push(Line::from(Span::styled(
+                        format!("    ... and {} more", total - max_show),
+                        app.theme.text_dim,
+                    )));
+                }
             }
-
-            lines
         }
+    }
+
+    lines
+}
+
+/// Group a list of paths by their parent directory.
+/// Returns `(parent_path, vec_of_leaf_names)` sorted by parent.
+fn group_by_parent(paths: &[String]) -> Vec<(String, Vec<String>)> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for path in paths {
+        // Find the last '/' to split parent from leaf
+        match path.rfind('/') {
+            Some(0) => {
+                // Root-level item: parent is "/", leaf is the rest
+                groups
+                    .entry("/".to_string())
+                    .or_default()
+                    .push(path[1..].to_string());
+            }
+            Some(idx) => {
+                let parent = format!("{}/", &path[..idx]);
+                let leaf = path[idx + 1..].to_string();
+                groups.entry(parent).or_default().push(leaf);
+            }
+            None => {
+                // No slash at all — treat entire string as leaf under "/"
+                groups
+                    .entry("/".to_string())
+                    .or_default()
+                    .push(path.clone());
+            }
+        }
+    }
+
+    groups.into_iter().collect()
+}
+
+/// Render a section of paths grouped by parent directory with truncation.
+/// `prefix` is the symbol to show before each leaf ("+", "-", "~").
+fn render_grouped_paths<'a>(
+    lines: &mut Vec<Line<'a>>,
+    header: &str,
+    paths: &[String],
+    prefix: &str,
+    style: Style,
+) {
+    const MAX_ITEMS: usize = 20;
+    const SHOW_ITEMS: usize = 15;
+
+    lines.push(Line::from(Span::styled(header.to_string(), style)));
+
+    let grouped = group_by_parent(paths);
+    let total_items: usize = paths.len();
+    let mut shown = 0;
+
+    for (parent, leaves) in &grouped {
+        if shown >= SHOW_ITEMS && total_items > MAX_ITEMS {
+            break;
+        }
+
+        // If there's only one group and one leaf, show flat
+        if grouped.len() == 1 && leaves.len() == 1 {
+            lines.push(Line::from(Span::styled(
+                format!("    {prefix} {parent}{}", leaves[0]),
+                style,
+            )));
+            shown += 1;
+            continue;
+        }
+
+        lines.push(Line::from(Span::styled(
+            format!("    {parent}"),
+            style,
+        )));
+
+        for leaf in leaves {
+            if shown >= SHOW_ITEMS && total_items > MAX_ITEMS {
+                break;
+            }
+            lines.push(Line::from(Span::styled(
+                format!("      {prefix} {leaf}"),
+                style,
+            )));
+            shown += 1;
+        }
+    }
+
+    if total_items > MAX_ITEMS {
+        let remaining = total_items - SHOW_ITEMS;
+        lines.push(Line::from(Span::styled(
+            format!("    ... and {remaining} more"),
+            style,
+        )));
     }
 }
 
