@@ -72,6 +72,7 @@ impl App {
         self.store.submit(DataRequest::Tags);
         self.store.submit(DataRequest::AllNodes {
             branch: self.current_branch.clone(),
+            snapshot_id: None,
         });
         self.store.submit(DataRequest::Ancestry {
             branch: self.current_branch.clone(),
@@ -378,6 +379,11 @@ impl App {
                 self.bottom_selected = self.bottom_selected.saturating_add(1);
                 self.detail_scroll = 0; // reset when changing selection
                 self.clamp_bottom_table_offset();
+                // Active snapshot follows cursor in Snapshots tab
+                if self.bottom_tab == BottomTab::Snapshots {
+                    self.active_snapshot_index = Some(self.bottom_selected);
+                    self.maybe_request_tree_for_active_snapshot();
+                }
                 self.maybe_request_snapshot_diff();
             }
         }
@@ -398,6 +404,11 @@ impl App {
                     self.bottom_selected -= 1;
                     self.detail_scroll = 0; // reset when changing selection
                     self.clamp_bottom_table_offset();
+                    // Active snapshot follows cursor in Snapshots tab
+                    if self.bottom_tab == BottomTab::Snapshots {
+                        self.active_snapshot_index = Some(self.bottom_selected);
+                        self.maybe_request_tree_for_active_snapshot();
+                    }
                     self.maybe_request_snapshot_diff();
                 }
             }
@@ -565,6 +576,7 @@ impl App {
                     if !self.store.node_children.contains_key(path) {
                         self.store.submit(DataRequest::AllNodes {
                             branch: self.current_branch.clone(),
+                            snapshot_id: None,
                         });
                     }
                 }
@@ -580,7 +592,20 @@ impl App {
             }
             Pane::Bottom => {
                 self.active_snapshot_index = Some(self.bottom_selected);
+                self.maybe_request_tree_for_active_snapshot();
             }
         }
+    }
+
+    /// When the active snapshot changes, reload the tree sidebar for that snapshot's node tree.
+    /// Looks up the snapshot ID from the ancestry cache and submits AllNodes with it.
+    fn maybe_request_tree_for_active_snapshot(&mut self) {
+        let snapshot_id = self.selected_snapshot_id();
+        let branch = self.current_branch.clone();
+        self.tree_auto_expanded = false;
+        self.store.submit(DataRequest::AllNodes {
+            branch,
+            snapshot_id,
+        });
     }
 }

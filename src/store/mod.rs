@@ -40,9 +40,10 @@ pub enum DataRequest {
     Branches,
     Tags,
     Ancestry { branch: String },
-    /// Fetch ALL nodes in the tree for a branch in a single request.
+    /// Fetch ALL nodes in the tree for a branch (or specific snapshot) in a single request.
     /// Results are organized by parent path so every group's children are cached at once.
-    AllNodes { branch: String },
+    /// If `snapshot_id` is Some, fetches the tree at that specific snapshot instead of the branch tip.
+    AllNodes { branch: String, snapshot_id: Option<String> },
     /// Fetch diff between a snapshot and its parent.
     /// `parent_id` is provided by the caller from the cached ancestry data so the
     /// worker never needs to fetch the child snapshot — only the transaction log.
@@ -128,6 +129,7 @@ impl DataStore {
                 self.ancestry.insert(branch.clone(), LoadState::Loading);
             }
             DataRequest::AllNodes { .. } => {
+                // Mark the root as loading; the response will populate all paths.
                 self.node_children.insert("/".to_string(), LoadState::Loading);
             }
             DataRequest::SnapshotDiff { snapshot_id, .. } => {
@@ -286,8 +288,8 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
                 result,
             }
         }
-        DataRequest::AllNodes { branch } => {
-            let result = fetch_all_nodes(repo, &branch).await;
+        DataRequest::AllNodes { branch, snapshot_id } => {
+            let result = fetch_all_nodes(repo, &branch, snapshot_id.as_deref()).await;
             DataResponse::AllNodes(result)
         }
         DataRequest::SnapshotDiff { snapshot_id, parent_id } => {
@@ -373,14 +375,22 @@ async fn fetch_ancestry(repo: &Repository, branch: &str) -> Result<Vec<SnapshotE
 
 /// Fetch ALL nodes from root in a single request and organize them by parent path.
 /// This populates the entire tree cache at once — expanding a group never needs another fetch.
+/// If `snapshot_id` is Some, fetches the tree at that specific snapshot instead of the branch tip.
 async fn fetch_all_nodes(
     repo: &Repository,
     branch: &str,
+    snapshot_id: Option<&str>,
 ) -> Result<HashMap<String, Vec<TreeNode>>, String> {
     use icechunk::format::snapshot::NodeData;
     use icechunk::repository::VersionInfo;
 
-    let version = VersionInfo::BranchTipRef(branch.to_string());
+    let version = if let Some(sid) = snapshot_id {
+        use icechunk::format::SnapshotId;
+        let snap_id: SnapshotId = sid.try_into().map_err(|e: &str| e.to_string())?;
+        VersionInfo::SnapshotId(snap_id)
+    } else {
+        VersionInfo::BranchTipRef(branch.to_string())
+    };
     let session = repo.readonly_session(&version).await.map_err(|e| e.to_string())?;
 
     // Fetch the snapshot once so we can cross-reference manifest metadata for chunk counts.
