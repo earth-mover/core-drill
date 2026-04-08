@@ -234,7 +234,7 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     if app.focused_pane == Pane::Bottom && app.bottom_tab == BottomTab::Snapshots {
         if let Some(sid) = app.selected_snapshot_id() {
             let text = render_snapshot_diff_detail(app, &sid);
-            frame.render_widget(Paragraph::new(text).block(block), area);
+            frame.render_widget(Paragraph::new(text).block(block).wrap(Wrap { trim: false }), area);
             return;
         }
     }
@@ -260,7 +260,7 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         render_repo_overview(app)
     };
 
-    frame.render_widget(Paragraph::new(text).block(block), area);
+    frame.render_widget(Paragraph::new(text).block(block).wrap(Wrap { trim: false }), area);
 }
 
 fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
@@ -375,6 +375,11 @@ fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary:
             ]));
         }
     }
+
+    // Add shape visualization
+    lines.push(Line::from(""));
+    let viz_lines = crate::ui::shape_viz::render_shape(summary, &app.theme, 40);
+    lines.extend(viz_lines);
 
     // ─── Storage ─────────────────────────
     lines.push(Line::from(""));
@@ -848,15 +853,28 @@ fn render_grouped_paths<'a>(
 fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Bottom;
 
-    // Tab bar + content
-    let block_area = area;
-    let inner = Layout::default()
+    // Outer block wraps everything (tabs + content)
+    let block = Block::default()
+        .title(" [3] Version Control ")
+        .borders(Borders::ALL)
+        .border_type(app.theme.border_type)
+        .border_style(if focused { app.theme.border_focused } else { app.theme.border });
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height < 3 {
+        return;
+    }
+
+    // Split inner into tab bar + content
+    let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2), // tab bar
+            Constraint::Length(1), // tab bar (single line, no border)
             Constraint::Min(1),   // content
         ])
-        .split(block_area);
+        .split(inner);
 
     // Tab bar
     let tab_labels: Vec<Line> = [
@@ -872,12 +890,6 @@ fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
     .collect();
 
     let tabs = Tabs::new(tab_labels)
-        .block(
-            Block::default()
-                .title(" [3] Version Control ")
-                .borders(Borders::ALL)
-                .border_style(if focused { app.theme.border_focused } else { app.theme.border })
-        )
         .select(match app.bottom_tab {
             BottomTab::Snapshots => 0,
             BottomTab::Branches => 1,
@@ -885,13 +897,13 @@ fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
         })
         .style(app.theme.text_dim)
         .highlight_style(if focused { app.theme.selected } else { app.theme.text });
-    frame.render_widget(tabs, inner[0]);
+    frame.render_widget(tabs, chunks[0]);
 
     // Content based on active tab
     match app.bottom_tab {
-        BottomTab::Snapshots => render_snapshot_list(app, frame, inner[1], focused),
-        BottomTab::Branches => render_branch_list(app, frame, inner[1], focused),
-        BottomTab::Tags => render_tag_list(app, frame, inner[1], focused),
+        BottomTab::Snapshots => render_snapshot_list(app, frame, chunks[1], focused),
+        BottomTab::Branches => render_branch_list(app, frame, chunks[1], focused),
+        BottomTab::Tags => render_tag_list(app, frame, chunks[1], focused),
     }
 }
 
@@ -914,7 +926,7 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                 .iter()
                 .enumerate()
                 .map(|(i, entry)| {
-                    let is_selected = focused && i == app.bottom_selected;
+                    let is_selected = i == app.bottom_selected;
                     let short_id = if entry.id.len() > 12 {
                         &entry.id[..12]
                     } else {
@@ -927,8 +939,10 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                         )),
                         Cell::from(Span::raw(&entry.message)),
                     ]);
-                    if is_selected {
+                    if is_selected && focused {
                         row.style(app.theme.selected)
+                    } else if is_selected {
+                        row.style(app.theme.text_dim)
                     } else {
                         row.style(app.theme.text)
                     }
@@ -963,9 +977,11 @@ fn render_branch_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                 .iter()
                 .enumerate()
                 .map(|(i, branch)| {
-                    let is_selected = focused && i == app.bottom_selected;
-                    let style = if is_selected {
+                    let is_selected = i == app.bottom_selected;
+                    let style = if is_selected && focused {
                         app.theme.selected
+                    } else if is_selected {
+                        app.theme.text_dim
                     } else {
                         app.theme.branch
                     };
@@ -997,9 +1013,11 @@ fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                 .iter()
                 .enumerate()
                 .map(|(i, tag)| {
-                    let is_selected = focused && i == app.bottom_selected;
-                    let style = if is_selected {
+                    let is_selected = i == app.bottom_selected;
+                    let style = if is_selected && focused {
                         app.theme.selected
+                    } else if is_selected {
+                        app.theme.text_dim
                     } else {
                         app.theme.tag
                     };
