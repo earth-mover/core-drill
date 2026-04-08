@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         None => {
             // Interactive TUI mode
             let data_store = store::DataStore::new(repository);
-            let mut app = app::App::new(data_store);
+            let mut app = app::App::new(data_store, cli.repo.clone());
             app.load_initial_data();
             tui::run(app).await?;
         }

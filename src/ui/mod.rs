@@ -1,320 +1,382 @@
 mod help;
-mod overview;
 
 use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
 use crate::app::App;
-use crate::component::View;
+use crate::component::{BottomTab, Pane};
 use crate::store::LoadState;
+use crate::store::types::TreeNodeType;
 use crate::theme;
 
-/// Main render dispatch — called each frame
+/// Main render — three-pane layout
 pub fn render(app: &App, frame: &mut Frame) {
+    if app.show_help {
+        help::render(app, frame, frame.area());
+        return;
+    }
+
+    // Top-level: status bar, main area, [bottom panel], hint bar
+    let mut constraints = vec![
+        Constraint::Length(1), // status bar
+    ];
+
+    if app.bottom_visible {
+        constraints.push(Constraint::Min(10)); // main area (sidebar + detail)
+        constraints.push(Constraint::Length(10)); // bottom panel
+    } else {
+        constraints.push(Constraint::Min(10)); // main area takes all space
+    }
+    constraints.push(Constraint::Length(1)); // hint bar
+
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(frame.area());
+
+    let (status_area, main_area, bottom_area, hint_area) = if app.bottom_visible {
+        (vertical[0], vertical[1], Some(vertical[2]), vertical[3])
+    } else {
+        (vertical[0], vertical[1], None, vertical[2])
+    };
+
+    // Status bar
+    render_status_bar(app, frame, status_area);
+
+    // Main area: sidebar | detail
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(30), // sidebar
+            Constraint::Percentage(70), // detail
+        ])
+        .split(main_area);
+
+    render_sidebar(app, frame, horizontal[0]);
+    render_detail(app, frame, horizontal[1]);
+
+    // Bottom panel (if visible)
+    if let Some(area) = bottom_area {
+        render_bottom(app, frame, area);
+    }
+
+    // Hint bar
+    render_hint_bar(app, frame, hint_area);
+}
+
+// ─── Status Bar ──────────────────────────────────────────────
+
+fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let status = match (&app.store.branches, &app.store.tags) {
+        (LoadState::Loading, _) | (_, LoadState::Loading) => "connecting...",
+        (LoadState::Error(_), _) | (_, LoadState::Error(_)) => "error",
+        (LoadState::Loaded(_), LoadState::Loaded(_)) => "ready",
+        _ => "",
+    };
+
+    let line = Line::from(vec![
+        Span::styled(" ", app.theme.text),
+        Span::styled(&app.repo_url, app.theme.branch),
+        Span::styled("  ", app.theme.text_dim),
+        Span::styled(status, if status == "ready" { app.theme.status_ok } else { app.theme.loading }),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+// ─── Sidebar (tree view) ─────────────────────────────────────
+
+fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
+    let focused = app.focused_pane == Pane::Sidebar;
+    let block = theme::panel("Tree", focused, &app.theme);
+
+    // Branch selector at top + tree below
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.height < 2 {
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // status bar
-            Constraint::Length(3),  // navigation tabs
-            Constraint::Min(10),   // main content
-            Constraint::Length(1), // help hint
+            Constraint::Length(1), // branch selector
+            Constraint::Min(1),   // tree
         ])
-        .split(frame.area());
+        .split(inner);
 
-    render_status_bar(app, frame, chunks[0]);
-    render_nav_tabs(app, frame, chunks[1]);
-
-    match app.current_view {
-        View::Overview => overview::render(app, frame, chunks[2]),
-        View::Branches => render_branch_list(app, frame, chunks[2]),
-        View::Tags => render_tag_list(app, frame, chunks[2]),
-        View::Log => render_snapshot_log(app, frame, chunks[2]),
-        View::NodeTree => render_node_tree(app, frame, chunks[2]),
-        View::Help => help::render(app, frame, chunks[2]),
-        _ => render_placeholder(app, frame, chunks[2]),
-    }
-
-    render_help_hint(app, frame, chunks[3]);
-}
-
-fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let branch_count = match &app.store.branches {
-        LoadState::Loaded(b) => b.len().to_string(),
-        LoadState::Loading => "...".to_string(),
-        LoadState::Error(_) => "err".to_string(),
-        LoadState::NotRequested => "-".to_string(),
-    };
-
-    let tag_count = match &app.store.tags {
-        LoadState::Loaded(t) => t.len().to_string(),
-        LoadState::Loading => "...".to_string(),
-        LoadState::Error(_) => "err".to_string(),
-        LoadState::NotRequested => "-".to_string(),
-    };
-
-    let status = match (&app.store.branches, &app.store.tags) {
-        (LoadState::Loading, _) | (_, LoadState::Loading) => "Loading...",
-        (LoadState::Error(_), _) | (_, LoadState::Error(_)) => "Error",
-        (LoadState::Loaded(_), LoadState::Loaded(_)) => "Ready",
-        _ => "Idle",
-    };
-
-    let block = theme::panel("core-drill", true, &app.theme);
-
-    let text = Line::from(vec![
-        Span::styled("  Status: ", app.theme.text_dim),
-        Span::styled(status, if status == "Ready" { app.theme.status_ok } else { app.theme.loading }),
-        Span::styled("  |  Branches: ", app.theme.text_dim),
-        Span::styled(&branch_count, app.theme.branch),
-        Span::styled("  |  Tags: ", app.theme.text_dim),
-        Span::styled(&tag_count, app.theme.tag),
+    // Branch selector
+    let branch_line = Line::from(vec![
+        Span::styled(" ", app.theme.text_dim),
+        Span::styled(&app.current_branch, app.theme.branch),
+        Span::styled(" ▾", app.theme.text_dim),
     ]);
+    frame.render_widget(Paragraph::new(branch_line), chunks[0]);
 
-    let paragraph = Paragraph::new(text).block(block);
-    frame.render_widget(paragraph, area);
-}
-
-fn render_nav_tabs(app: &App, frame: &mut Frame, area: Rect) {
-    let titles = vec![
-        "1:Overview", "2:Branches", "3:Tags", "4:Log", "5:Tree", "6:Ops",
-    ];
-    let selected = match app.current_view {
-        View::Overview => 0,
-        View::Branches => 1,
-        View::Tags => 2,
-        View::Log => 3,
-        View::NodeTree => 4,
-        View::OpsLog => 5,
-        View::Help => 0,
-    };
-    let tabs = Tabs::new(titles)
-        .block(theme::panel("Views", false, &app.theme))
-        .select(selected)
-        .style(app.theme.text)
-        .highlight_style(app.theme.selected);
-    frame.render_widget(tabs, area);
-}
-
-fn render_branch_list(app: &App, frame: &mut Frame, area: Rect) {
-    let block = theme::panel("Branches", true, &app.theme);
-
-    match &app.store.branches {
-        LoadState::NotRequested | LoadState::Loading => {
-            let widget = theme::loading_widget(&app.theme).block(block);
-            frame.render_widget(widget, area);
-        }
-        LoadState::Error(msg) => {
-            let widget = theme::error_widget(msg, &app.theme).block(block);
-            frame.render_widget(widget, area);
-        }
-        LoadState::Loaded(branches) => {
-            let items: Vec<ListItem> = branches
-                .iter()
-                .enumerate()
-                .map(|(i, branch)| {
-                    let style = if i == app.selected_index {
-                        app.theme.selected
-                    } else {
-                        app.theme.text
-                    };
-                    let mut spans = vec![Span::styled(&branch.name, if i == app.selected_index { style } else { app.theme.branch })];
-                    if let Some(msg) = &branch.tip_message {
-                        spans.push(Span::styled("  ", app.theme.text_dim));
-                        spans.push(Span::styled(msg, app.theme.text_dim));
-                    }
-                    ListItem::new(Line::from(spans)).style(style)
-                })
-                .collect();
-
-            let list = List::new(items).block(block);
-            frame.render_widget(list, area);
-        }
-    }
-}
-
-fn render_tag_list(app: &App, frame: &mut Frame, area: Rect) {
-    let block = theme::panel("Tags", true, &app.theme);
-
-    match &app.store.tags {
-        LoadState::NotRequested | LoadState::Loading => {
-            let widget = theme::loading_widget(&app.theme).block(block);
-            frame.render_widget(widget, area);
-        }
-        LoadState::Error(msg) => {
-            let widget = theme::error_widget(msg, &app.theme).block(block);
-            frame.render_widget(widget, area);
-        }
-        LoadState::Loaded(tags) => {
-            let items: Vec<ListItem> = tags
-                .iter()
-                .enumerate()
-                .map(|(i, tag)| {
-                    let style = if i == app.selected_index {
-                        app.theme.selected
-                    } else {
-                        app.theme.text
-                    };
-                    let mut spans = vec![Span::styled(&tag.name, if i == app.selected_index { style } else { app.theme.tag })];
-                    if let Some(msg) = &tag.tip_message {
-                        spans.push(Span::styled("  ", app.theme.text_dim));
-                        spans.push(Span::styled(msg, app.theme.text_dim));
-                    }
-                    ListItem::new(Line::from(spans)).style(style)
-                })
-                .collect();
-
-            let list = List::new(items).block(block);
-            frame.render_widget(list, area);
-        }
-    }
-}
-
-fn render_snapshot_log(app: &App, frame: &mut Frame, area: Rect) {
-    let branch_name = app
-        .nav_context
-        .current_branch
-        .as_deref()
-        .unwrap_or("main");
-    let title = format!("Log ({})", branch_name);
-    let block = theme::panel(&title, true, &app.theme);
-
-    let state = app
-        .store
-        .ancestry
-        .get(branch_name)
-        .unwrap_or(&LoadState::NotRequested);
-
-    match state {
-        LoadState::NotRequested | LoadState::Loading => {
-            let widget = theme::loading_widget(&app.theme).block(block);
-            frame.render_widget(widget, area);
-        }
-        LoadState::Error(msg) => {
-            let widget = theme::error_widget(msg, &app.theme).block(block);
-            frame.render_widget(widget, area);
-        }
-        LoadState::Loaded(entries) => {
-            let items: Vec<ListItem> = entries
-                .iter()
-                .enumerate()
-                .map(|(i, entry)| {
-                    let style = if i == app.selected_index {
-                        app.theme.selected
-                    } else {
-                        app.theme.text
-                    };
-                    let short_id = if entry.id.len() > 8 {
-                        &entry.id[..8]
-                    } else {
-                        &entry.id
-                    };
-                    let line = Line::from(vec![
-                        Span::styled(short_id, app.theme.snapshot_id),
-                        Span::styled("  ", app.theme.text_dim),
-                        Span::styled(
-                            entry.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
-                            app.theme.timestamp,
-                        ),
-                        Span::styled("  ", app.theme.text_dim),
-                        Span::styled(&entry.message, style),
-                    ]);
-                    ListItem::new(line).style(style)
-                })
-                .collect();
-
-            let list = List::new(items).block(block);
-            frame.render_widget(list, area);
-        }
-    }
-}
-
-fn render_node_tree(app: &App, frame: &mut Frame, area: Rect) {
-    use crate::store::TreeNodeType;
-
-    let current_path = app
-        .nav_context
-        .current_path
-        .as_deref()
-        .unwrap_or("/");
-    let title = format!("Tree ({})", current_path);
-    let block = theme::panel(&title, true, &app.theme);
-
+    // Tree view
+    let root_path = "/";
     let state = app
         .store
         .node_children
-        .get(current_path)
+        .get(root_path)
         .unwrap_or(&LoadState::NotRequested);
 
     match state {
         LoadState::NotRequested | LoadState::Loading => {
-            let widget = theme::loading_widget(&app.theme).block(block);
-            frame.render_widget(widget, area);
+            frame.render_widget(theme::loading_widget(&app.theme), chunks[1]);
         }
         LoadState::Error(msg) => {
-            let widget = theme::error_widget(msg, &app.theme).block(block);
-            frame.render_widget(widget, area);
+            frame.render_widget(theme::error_widget(msg, &app.theme), chunks[1]);
         }
         LoadState::Loaded(nodes) => {
             let items: Vec<ListItem> = nodes
                 .iter()
                 .enumerate()
                 .map(|(i, node)| {
-                    let style = if i == app.selected_index {
+                    let is_selected = focused && i == app.sidebar_selected;
+                    let style = if is_selected {
                         app.theme.selected
                     } else {
                         app.theme.text
                     };
-                    let (icon, icon_style, detail) = match &node.node_type {
-                        TreeNodeType::Group => (
-                            "\u{1F4C1} ",
-                            app.theme.group_icon,
-                            String::new(),
-                        ),
+
+                    let (icon, detail) = match &node.node_type {
+                        TreeNodeType::Group => ("▶ ", String::new()),
                         TreeNodeType::Array(summary) => {
-                            let shape_str = format!(
-                                "[{}]",
-                                summary
-                                    .shape
-                                    .iter()
-                                    .map(|d| d.to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(" x ")
-                            );
-                            (
-                                "\u{1F4CA} ",
-                                app.theme.array_icon,
-                                format!("  {}", shape_str),
-                            )
+                            let shape = summary
+                                .shape
+                                .iter()
+                                .map(|d| d.to_string())
+                                .collect::<Vec<_>>()
+                                .join("×");
+                            ("─ ", format!(" [{}]", shape))
                         }
                     };
+
                     let line = Line::from(vec![
-                        Span::styled(icon, icon_style),
+                        Span::styled(icon, if matches!(&node.node_type, TreeNodeType::Group) {
+                            app.theme.group_icon
+                        } else {
+                            app.theme.array_icon
+                        }),
                         Span::styled(&node.name, style),
                         Span::styled(detail, app.theme.text_dim),
                     ]);
-                    ListItem::new(line).style(style)
+                    ListItem::new(line)
                 })
                 .collect();
 
-            let list = List::new(items).block(block);
-            frame.render_widget(list, area);
+            frame.render_widget(List::new(items), chunks[1]);
         }
     }
 }
 
-fn render_placeholder(_app: &App, frame: &mut Frame, area: Rect) {
-    let block = theme::panel("Coming Soon", false, &_app.theme);
-    let text = Paragraph::new("  This view is not yet implemented.")
-        .block(block)
-        .style(_app.theme.text_dim);
-    frame.render_widget(text, area);
+// ─── Detail pane ─────────────────────────────────────────────
+
+fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
+    let focused = app.focused_pane == Pane::Detail;
+    let block = theme::panel("Detail", focused, &app.theme);
+
+    // Default: repo overview
+    let branch_count = app.store.branches.as_loaded().map(|b| b.len()).unwrap_or(0);
+    let tag_count = app.store.tags.as_loaded().map(|t| t.len()).unwrap_or(0);
+    let snapshot_count = app
+        .store
+        .ancestry
+        .get(&app.current_branch)
+        .and_then(|s| s.as_loaded())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    let text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Repository: ", app.theme.text_dim),
+            Span::styled(&app.repo_url, app.theme.branch),
+        ]),
+        Line::from(vec![
+            Span::styled("  Branch:     ", app.theme.text_dim),
+            Span::styled(&app.current_branch, app.theme.branch),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Branches:   ", app.theme.text_dim),
+            Span::styled(branch_count.to_string(), app.theme.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  Tags:       ", app.theme.text_dim),
+            Span::styled(tag_count.to_string(), app.theme.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  Snapshots:  ", app.theme.text_dim),
+            Span::styled(snapshot_count.to_string(), app.theme.text),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Select a node in the tree or a snapshot in the log.",
+            app.theme.text_dim,
+        )),
+    ];
+
+    frame.render_widget(Paragraph::new(text).block(block), area);
 }
 
-fn render_help_hint(app: &App, frame: &mut Frame, area: Rect) {
-    let text = Span::styled(
-        " q:quit  ?:help  1-6:views  j/k:navigate  Enter:select  Esc:back ",
-        app.theme.text_dim,
+// ─── Bottom panel (snapshots / branches / tags) ──────────────
+
+fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
+    let focused = app.focused_pane == Pane::Bottom;
+
+    // Tab bar + content
+    let block_area = area;
+    let inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2), // tab bar
+            Constraint::Min(1),   // content
+        ])
+        .split(block_area);
+
+    // Tab bar
+    let tabs = Tabs::new(vec!["1:Snapshots", "2:Branches", "3:Tags"])
+        .block(Block::default().borders(Borders::BOTTOM).border_style(app.theme.border))
+        .select(match app.bottom_tab {
+            BottomTab::Snapshots => 0,
+            BottomTab::Branches => 1,
+            BottomTab::Tags => 2,
+        })
+        .style(app.theme.text_dim)
+        .highlight_style(if focused { app.theme.selected } else { app.theme.text });
+    frame.render_widget(tabs, inner[0]);
+
+    // Content based on active tab
+    match app.bottom_tab {
+        BottomTab::Snapshots => render_snapshot_list(app, frame, inner[1], focused),
+        BottomTab::Branches => render_branch_list(app, frame, inner[1], focused),
+        BottomTab::Tags => render_tag_list(app, frame, inner[1], focused),
+    }
+}
+
+fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
+    let state = app
+        .store
+        .ancestry
+        .get(&app.current_branch)
+        .unwrap_or(&LoadState::NotRequested);
+
+    match state {
+        LoadState::NotRequested | LoadState::Loading => {
+            frame.render_widget(theme::loading_widget(&app.theme), area);
+        }
+        LoadState::Error(msg) => {
+            frame.render_widget(theme::error_widget(msg, &app.theme), area);
+        }
+        LoadState::Loaded(entries) => {
+            let rows: Vec<Row> = entries
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| {
+                    let is_selected = focused && i == app.bottom_selected;
+                    let style = if is_selected {
+                        app.theme.selected
+                    } else {
+                        app.theme.text
+                    };
+                    let short_id = if entry.id.len() > 12 {
+                        &entry.id[..12]
+                    } else {
+                        &entry.id
+                    };
+                    Row::new(vec![
+                        Cell::from(Span::styled(short_id, app.theme.snapshot_id)),
+                        Cell::from(Span::styled(
+                            entry.timestamp.format("%Y-%m-%d %H:%M").to_string(),
+                            app.theme.timestamp,
+                        )),
+                        Cell::from(Span::styled(&entry.message, style)),
+                    ])
+                })
+                .collect();
+
+            let widths = [
+                Constraint::Length(14),
+                Constraint::Length(18),
+                Constraint::Min(20),
+            ];
+            let table = Table::new(rows, widths)
+                .header(
+                    Row::new(vec!["Snapshot", "Time", "Message (Enter=diff)"])
+                        .style(app.theme.text_bold),
+                );
+            frame.render_widget(table, area);
+        }
+    }
+}
+
+fn render_branch_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
+    match &app.store.branches {
+        LoadState::NotRequested | LoadState::Loading => {
+            frame.render_widget(theme::loading_widget(&app.theme), area);
+        }
+        LoadState::Error(msg) => {
+            frame.render_widget(theme::error_widget(msg, &app.theme), area);
+        }
+        LoadState::Loaded(branches) => {
+            let items: Vec<ListItem> = branches
+                .iter()
+                .enumerate()
+                .map(|(i, branch)| {
+                    let is_selected = focused && i == app.bottom_selected;
+                    let style = if is_selected {
+                        app.theme.selected
+                    } else {
+                        app.theme.branch
+                    };
+                    ListItem::new(Span::styled(&branch.name, style))
+                })
+                .collect();
+            frame.render_widget(List::new(items), area);
+        }
+    }
+}
+
+fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
+    match &app.store.tags {
+        LoadState::NotRequested | LoadState::Loading => {
+            frame.render_widget(theme::loading_widget(&app.theme), area);
+        }
+        LoadState::Error(msg) => {
+            frame.render_widget(theme::error_widget(msg, &app.theme), area);
+        }
+        LoadState::Loaded(tags) => {
+            let items: Vec<ListItem> = tags
+                .iter()
+                .enumerate()
+                .map(|(i, tag)| {
+                    let is_selected = focused && i == app.bottom_selected;
+                    let style = if is_selected {
+                        app.theme.selected
+                    } else {
+                        app.theme.tag
+                    };
+                    ListItem::new(Span::styled(&tag.name, style))
+                })
+                .collect();
+            frame.render_widget(List::new(items), area);
+        }
+    }
+}
+
+// ─── Hint bar ────────────────────────────────────────────────
+
+fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let hints = match app.focused_pane {
+        Pane::Sidebar => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  Enter:expand ",
+        Pane::Detail => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:scroll ",
+        Pane::Bottom => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  1/2/3:tabs  Enter:select ",
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(hints, app.theme.text_dim)),
+        area,
     );
-    frame.render_widget(Paragraph::new(text), area);
 }

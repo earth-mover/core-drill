@@ -5,28 +5,34 @@ use ratatui::prelude::Rect;
 use crate::store::{DataRequest, DataStore};
 use crate::theme::Theme;
 
-/// Navigation targets carrying transition-specific data
-#[derive(Debug, Clone)]
-pub enum NavigationTarget {
-    Overview,
+/// Which pane is currently focused
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Sidebar,
+    Detail,
+    Bottom,
+}
+
+/// What the bottom panel is showing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BottomTab {
+    Snapshots,
     Branches,
     Tags,
-    Log { branch: String },
-    NodeTree { branch: String, path: String },
-    OpsLog,
-    Help,
 }
 
 /// Actions that components can return from key handling
 pub enum Action {
-    /// Key was not consumed by this component
+    /// Key was not consumed
     None,
-    /// Navigate to a new view
-    Navigate(NavigationTarget),
+    /// Focus a specific pane
+    FocusPane(Pane),
+    /// Toggle the bottom panel visibility
+    ToggleBottom,
+    /// Switch the bottom panel tab
+    SwitchBottomTab(BottomTab),
     /// Request data from the store
     RequestData(DataRequest),
-    /// Go back in navigation stack
-    Back,
     /// Quit the application
     Quit,
 }
@@ -40,25 +46,11 @@ pub trait Component {
     fn handle_key(&mut self, key: KeyEvent) -> Action;
 
     /// Render into the given area using data from the store.
-    fn render(&self, store: &DataStore, theme: &Theme, frame: &mut Frame, area: Rect);
+    fn render(&self, store: &DataStore, theme: &Theme, focused: bool, frame: &mut Frame, area: Rect);
 
-    /// Called when the component becomes the active view.
     /// Return data requests needed to populate this component.
     fn on_enter(&mut self, store: &DataStore) -> Vec<DataRequest>;
 
     /// Called when the store has new data.
-    /// Update internal state (e.g., clamp selection to new list length).
     fn on_data_changed(&mut self, store: &DataStore);
-}
-
-/// Which view is currently active
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum View {
-    Overview,
-    Branches,
-    Tags,
-    Log,
-    NodeTree,
-    OpsLog,
-    Help,
 }
