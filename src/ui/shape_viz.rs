@@ -7,6 +7,7 @@
 //! - 3D+: 2D front face with isometric depth offset for 3rd dimension
 
 use ratatui::prelude::*;
+use ratatui::symbols::Marker;
 use ratatui::widgets::canvas::{Canvas, Context, Line as CanvasLine};
 use ratatui::widgets::Block;
 
@@ -95,6 +96,7 @@ pub fn chunk_grid_canvas<'a>(
     let y_bounds = [0.0, 60.0];
 
     let canvas = Canvas::default()
+        .marker(Marker::Braille)
         .block(Block::default())
         .x_bounds(x_bounds)
         .y_bounds(y_bounds)

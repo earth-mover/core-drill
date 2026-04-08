@@ -1023,9 +1023,14 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
             frame.render_widget(theme::error_widget(msg, &app.theme), area);
         }
         LoadState::Loaded(entries) => {
+            // Subtract 2 for borders, 2 for tab bar, 1 for table header
+            let visible_rows = (area.height as usize).saturating_sub(5).max(1);
+            let visible_start = app.bottom_table_offset;
             let rows: Vec<Row> = entries
                 .iter()
                 .enumerate()
+                .skip(visible_start)
+                .take(visible_rows)
                 .map(|(i, entry)| {
                     let is_selected = i == app.bottom_selected;
                     let short_id = if entry.id.len() > 12 {

@@ -26,6 +26,8 @@ pub struct App {
     pub tree_state: tui_tree_widget::TreeState<String>,
     pub detail_scroll: usize,
     pub bottom_selected: usize,
+    /// Scroll offset for the snapshot table in the bottom pane
+    pub bottom_table_offset: usize,
     /// Whether we've already auto-expanded the tree after initial load
     tree_auto_expanded: bool,
     /// The snapshot ID we last requested a diff for (to avoid re-requesting)
@@ -52,6 +54,7 @@ impl App {
             tree_state: tui_tree_widget::TreeState::<String>::default(),
             detail_scroll: 0,
             bottom_selected: 0,
+            bottom_table_offset: 0,
             tree_auto_expanded: false,
             last_diff_requested: None,
             sidebar_area: Rect::default(),
@@ -317,6 +320,7 @@ impl App {
             Pane::Bottom => {
                 self.bottom_selected = self.bottom_selected.saturating_add(1);
                 self.detail_scroll = 0; // reset when changing selection
+                self.clamp_bottom_table_offset();
                 self.maybe_request_snapshot_diff();
             }
         }
@@ -335,9 +339,28 @@ impl App {
                 } else {
                     self.bottom_selected -= 1;
                     self.detail_scroll = 0; // reset when changing selection
+                    self.clamp_bottom_table_offset();
                     self.maybe_request_snapshot_diff();
                 }
             }
+        }
+    }
+
+    /// Adjust bottom_table_offset so bottom_selected stays visible.
+    /// The visible rows = area height - 2 (border) - 2 (tab bar) - 1 (table header).
+    fn clamp_bottom_table_offset(&mut self) {
+        let visible_rows = if let Some(area) = self.bottom_area {
+            (area.height as usize).saturating_sub(5)
+        } else {
+            10 // fallback if layout not yet known
+        };
+        if visible_rows == 0 {
+            return;
+        }
+        if self.bottom_selected < self.bottom_table_offset {
+            self.bottom_table_offset = self.bottom_selected;
+        } else if self.bottom_selected >= self.bottom_table_offset + visible_rows {
+            self.bottom_table_offset = self.bottom_selected - visible_rows + 1;
         }
     }
 
@@ -400,7 +423,8 @@ impl App {
                 _ => 0,
             };
             if row >= content_top + header_rows {
-                self.bottom_selected = (row - content_top - header_rows) as usize;
+                self.bottom_selected =
+                    (row - content_top - header_rows) as usize + self.bottom_table_offset;
             }
         }
     }
