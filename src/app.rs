@@ -89,22 +89,36 @@ impl App {
             _ => {}
         }
 
-        // Pane switching: Tab/Shift+Tab cycle, Ctrl+hjkl directional
-        // (Ctrl+hjkl may conflict with terminal multiplexers like zellij —
-        // Tab always works as a fallback)
+        // Ctrl+hjkl: move between panes, or pass through to zellij at edges
         if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
             match key.code {
-                KeyCode::Char('h') | KeyCode::Left => return Action::FocusPane(Pane::Sidebar),
-                KeyCode::Char('l') | KeyCode::Right => return Action::FocusPane(Pane::Detail),
+                KeyCode::Char('h') | KeyCode::Left => {
+                    if self.focused_pane != Pane::Sidebar {
+                        return Action::FocusPane(Pane::Sidebar);
+                    }
+                    crate::multiplexer::move_focus("left");
+                    return Action::None;
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    if self.focused_pane != Pane::Detail {
+                        return Action::FocusPane(Pane::Detail);
+                    }
+                    crate::multiplexer::move_focus("right");
+                    return Action::None;
+                }
                 KeyCode::Char('j') | KeyCode::Down => {
-                    if self.bottom_visible {
+                    if self.bottom_visible && self.focused_pane != Pane::Bottom {
                         return Action::FocusPane(Pane::Bottom);
                     }
+                    crate::multiplexer::move_focus("down");
+                    return Action::None;
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
                     if self.focused_pane == Pane::Bottom {
                         return Action::FocusPane(Pane::Sidebar);
                     }
+                    crate::multiplexer::move_focus("up");
+                    return Action::None;
                 }
                 _ => {}
             }

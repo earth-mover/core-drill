@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod component;
+mod multiplexer;
 mod repo;
 mod store;
 mod theme;
