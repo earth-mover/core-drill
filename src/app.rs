@@ -235,6 +235,35 @@ impl App {
             _ => {}
         }
 
+        // Directional edge navigation (non-Ctrl)
+        match key.code {
+            KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Bottom => {
+                // Cycle bottom tabs backward
+                self.bottom_tab = match self.bottom_tab {
+                    BottomTab::Snapshots => BottomTab::Tags,
+                    BottomTab::Branches => BottomTab::Snapshots,
+                    BottomTab::Tags => BottomTab::Branches,
+                };
+                return Action::None;
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Bottom => {
+                // Cycle bottom tabs forward
+                self.bottom_tab = match self.bottom_tab {
+                    BottomTab::Snapshots => BottomTab::Branches,
+                    BottomTab::Branches => BottomTab::Tags,
+                    BottomTab::Tags => BottomTab::Snapshots,
+                };
+                return Action::None;
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Sidebar => {
+                return Action::FocusPane(Pane::Detail);
+            }
+            KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Detail => {
+                return Action::FocusPane(Pane::Sidebar);
+            }
+            _ => {}
+        }
+
         // Pane-local navigation
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
@@ -279,7 +308,12 @@ impl App {
 
     fn select_next(&mut self) {
         match self.focused_pane {
-            Pane::Sidebar => { self.tree_state.key_down(); }
+            Pane::Sidebar => {
+                let moved = self.tree_state.key_down();
+                if !moved && self.bottom_visible {
+                    self.focused_pane = Pane::Bottom;
+                }
+            }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_add(1),
             Pane::Bottom => {
                 self.bottom_selected = self.bottom_selected.saturating_add(1);
@@ -293,8 +327,12 @@ impl App {
             Pane::Sidebar => { self.tree_state.key_up(); }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(1),
             Pane::Bottom => {
-                self.bottom_selected = self.bottom_selected.saturating_sub(1);
-                self.maybe_request_snapshot_diff();
+                if self.bottom_selected == 0 {
+                    self.focused_pane = Pane::Sidebar;
+                } else {
+                    self.bottom_selected -= 1;
+                    self.maybe_request_snapshot_diff();
+                }
             }
         }
     }
