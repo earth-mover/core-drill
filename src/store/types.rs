@@ -56,6 +56,8 @@ pub struct DiffSummary {
     pub modified_arrays: Vec<String>,
     pub modified_groups: Vec<String>,
     pub chunk_changes: Vec<(String, usize)>,
+    /// True when this is the repository's initial commit (no parent snapshot).
+    pub is_initial_commit: bool,
 }
 
 /// Unresolved diff: NodeId strings straight from the transaction log.
@@ -72,6 +74,8 @@ pub struct RawDiff {
     pub modified_group_ids: Vec<String>,
     /// (node_id, chunk_count)
     pub chunk_change_ids: Vec<(String, usize)>,
+    /// True when this is the repository's initial commit (no parent snapshot).
+    pub is_initial_commit: bool,
 }
 
 /// Summary info for an array node

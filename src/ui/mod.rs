@@ -868,93 +868,141 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
             )));
         }
         Some(LoadState::Loaded(diff)) => {
-            let added_count = diff.added_arrays.len() + diff.added_groups.len();
-            let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();
-            let modified_count = diff.modified_arrays.len() + diff.modified_groups.len();
-
-            lines.push(Line::from(vec![
-                Span::styled("  ", app.theme.text_dim),
-                Span::styled(format!("{added_count} added"), app.theme.added),
-                Span::styled(", ", app.theme.text_dim),
-                Span::styled(format!("{deleted_count} removed"), app.theme.removed),
-                Span::styled(", ", app.theme.text_dim),
-                Span::styled(format!("{modified_count} modified"), app.theme.modified),
-            ]));
-
-            // Added section (groups + arrays, grouped by parent)
-            if !diff.added_groups.is_empty() || !diff.added_arrays.is_empty() {
-                let mut all_added: Vec<String> = diff
-                    .added_groups
-                    .iter()
-                    .map(|p| format!("{p} (group)"))
-                    .collect();
-                all_added.extend(diff.added_arrays.iter().cloned());
-                lines.push(Line::from(""));
-                render_grouped_paths(
-                    &mut lines,
-                    &format!("  Added ({added_count}):"),
-                    &all_added,
-                    "+",
-                    app.theme.added,
-                );
-            }
-
-            // Removed section
-            if !diff.deleted_groups.is_empty() || !diff.deleted_arrays.is_empty() {
-                let mut all_deleted: Vec<String> = diff
-                    .deleted_groups
-                    .iter()
-                    .map(|p| format!("{p} (group)"))
-                    .collect();
-                all_deleted.extend(diff.deleted_arrays.iter().cloned());
-                lines.push(Line::from(""));
-                render_grouped_paths(
-                    &mut lines,
-                    &format!("  Removed ({deleted_count}):"),
-                    &all_deleted,
-                    "-",
-                    app.theme.removed,
-                );
-            }
-
-            // Modified section
-            if !diff.modified_groups.is_empty() || !diff.modified_arrays.is_empty() {
-                let mut all_modified: Vec<String> = diff
-                    .modified_groups
-                    .iter()
-                    .map(|p| format!("{p} (group)"))
-                    .collect();
-                all_modified.extend(diff.modified_arrays.iter().cloned());
-                lines.push(Line::from(""));
-                render_grouped_paths(
-                    &mut lines,
-                    &format!("  Modified ({modified_count}):"),
-                    &all_modified,
-                    "~",
-                    app.theme.modified,
-                );
-            }
-
-            // Chunk changes
-            if !diff.chunk_changes.is_empty() {
-                lines.push(Line::from(""));
+            if diff.is_initial_commit {
+                // Initial commit: no parent to diff against — show the repository contents instead.
                 lines.push(Line::from(Span::styled(
-                    "  Chunk Changes:",
+                    "  Repository initialized",
                     app.theme.text_bold,
                 )));
-                let max_show = 20;
-                let total = diff.chunk_changes.len();
-                for (path, count) in diff.chunk_changes.iter().take(max_show) {
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("    {path}  "), app.theme.text),
-                        Span::styled(format!("{count} chunks"), app.theme.text_dim),
-                    ]));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "  This is the initial commit. All arrays and groups",
+                    app.theme.text_dim,
+                )));
+                lines.push(Line::from(Span::styled(
+                    "  were created fresh \u{2014} no parent to diff against.",
+                    app.theme.text_dim,
+                )));
+
+                // Show all cached nodes as "+" added entries.
+                let mut all_paths: Vec<String> = Vec::new();
+                for state in app.store.node_children.values() {
+                    if let LoadState::Loaded(nodes) = state {
+                        for node in nodes {
+                            if matches!(node.node_type, crate::store::TreeNodeType::Group) {
+                                all_paths.push(format!("{} (group)", node.path));
+                            } else {
+                                all_paths.push(node.path.clone());
+                            }
+                        }
+                    }
                 }
-                if total > max_show {
+
+                if !all_paths.is_empty() {
+                    all_paths.sort();
+                    let count = all_paths.len();
+                    lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
-                        format!("    ... and {} more", total - max_show),
+                        "  \u{2500}\u{2500}\u{2500} Contents \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
                         app.theme.text_dim,
                     )));
+                    render_grouped_paths(
+                        &mut lines,
+                        &format!("  Contents ({count}):"),
+                        &all_paths,
+                        "+",
+                        app.theme.added,
+                    );
+                }
+            } else {
+                let added_count = diff.added_arrays.len() + diff.added_groups.len();
+                let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();
+                let modified_count = diff.modified_arrays.len() + diff.modified_groups.len();
+
+                lines.push(Line::from(vec![
+                    Span::styled("  ", app.theme.text_dim),
+                    Span::styled(format!("{added_count} added"), app.theme.added),
+                    Span::styled(", ", app.theme.text_dim),
+                    Span::styled(format!("{deleted_count} removed"), app.theme.removed),
+                    Span::styled(", ", app.theme.text_dim),
+                    Span::styled(format!("{modified_count} modified"), app.theme.modified),
+                ]));
+
+                // Added section (groups + arrays, grouped by parent)
+                if !diff.added_groups.is_empty() || !diff.added_arrays.is_empty() {
+                    let mut all_added: Vec<String> = diff
+                        .added_groups
+                        .iter()
+                        .map(|p| format!("{p} (group)"))
+                        .collect();
+                    all_added.extend(diff.added_arrays.iter().cloned());
+                    lines.push(Line::from(""));
+                    render_grouped_paths(
+                        &mut lines,
+                        &format!("  Added ({added_count}):"),
+                        &all_added,
+                        "+",
+                        app.theme.added,
+                    );
+                }
+
+                // Removed section
+                if !diff.deleted_groups.is_empty() || !diff.deleted_arrays.is_empty() {
+                    let mut all_deleted: Vec<String> = diff
+                        .deleted_groups
+                        .iter()
+                        .map(|p| format!("{p} (group)"))
+                        .collect();
+                    all_deleted.extend(diff.deleted_arrays.iter().cloned());
+                    lines.push(Line::from(""));
+                    render_grouped_paths(
+                        &mut lines,
+                        &format!("  Removed ({deleted_count}):"),
+                        &all_deleted,
+                        "-",
+                        app.theme.removed,
+                    );
+                }
+
+                // Modified section
+                if !diff.modified_groups.is_empty() || !diff.modified_arrays.is_empty() {
+                    let mut all_modified: Vec<String> = diff
+                        .modified_groups
+                        .iter()
+                        .map(|p| format!("{p} (group)"))
+                        .collect();
+                    all_modified.extend(diff.modified_arrays.iter().cloned());
+                    lines.push(Line::from(""));
+                    render_grouped_paths(
+                        &mut lines,
+                        &format!("  Modified ({modified_count}):"),
+                        &all_modified,
+                        "~",
+                        app.theme.modified,
+                    );
+                }
+
+                // Chunk changes
+                if !diff.chunk_changes.is_empty() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        "  Chunk Changes:",
+                        app.theme.text_bold,
+                    )));
+                    let max_show = 20;
+                    let total = diff.chunk_changes.len();
+                    for (path, count) in diff.chunk_changes.iter().take(max_show) {
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("    {path}  "), app.theme.text),
+                            Span::styled(format!("{count} chunks"), app.theme.text_dim),
+                        ]));
+                    }
+                    if total > max_show {
+                        lines.push(Line::from(Span::styled(
+                            format!("    ... and {} more", total - max_show),
+                            app.theme.text_dim,
+                        )));
+                    }
                 }
             }
         }

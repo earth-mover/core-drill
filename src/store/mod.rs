@@ -222,6 +222,7 @@ impl DataStore {
                             modified_arrays: raw.modified_array_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
                             modified_groups: raw.modified_group_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
                             chunk_changes: raw.chunk_change_ids.iter().map(|(id, count)| (self.node_id_to_path(id), *count)).collect(),
+                            is_initial_commit: raw.is_initial_commit,
                         };
                         LoadState::Loaded(summary)
                     }
@@ -535,6 +536,23 @@ async fn fetch_diff(
 ) -> Result<RawDiff, String> {
     use icechunk::format::SnapshotId;
 
+    // Initial commit: no parent snapshot exists, so there is no transaction log to fetch.
+    // Return an empty diff flagged as the initial commit so the UI can display it gracefully.
+    if parent_id.is_none() {
+        return Ok(RawDiff {
+            snapshot_id: snapshot_id.to_string(),
+            parent_id: None,
+            added_array_ids: vec![],
+            added_group_ids: vec![],
+            deleted_array_ids: vec![],
+            deleted_group_ids: vec![],
+            modified_array_ids: vec![],
+            modified_group_ids: vec![],
+            chunk_change_ids: vec![],
+            is_initial_commit: true,
+        });
+    }
+
     let snap_id: SnapshotId =
         snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
 
@@ -568,5 +586,6 @@ async fn fetch_diff(
         modified_array_ids,
         modified_group_ids,
         chunk_change_ids,
+        is_initial_commit: false,
     })
 }
