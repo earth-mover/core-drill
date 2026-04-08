@@ -1003,33 +1003,46 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
                     let max_show = 20;
                     let total = diff.chunk_changes.len();
                     for (path, count) in diff.chunk_changes.iter().take(max_show) {
-                        let annotation =
+                        let (annotation, extra_source_lines) =
                             match app.store.chunk_stats.get(path.as_str()) {
                                 Some(LoadState::Loaded(stats)) if stats.stats_complete => {
                                     let v = stats.virtual_count;
                                     let s = stats.native_count;
                                     let i = stats.inline_count;
                                     if v > 0 && s == 0 && i == 0 {
-                                        // All virtual — show source prefix if there's exactly one
-                                        let prefix = if stats.virtual_prefixes.len() == 1 {
-                                            Some(stats.virtual_prefixes[0].0.clone())
+                                        if stats.virtual_prefixes.len() == 1 {
+                                            // Exactly one source — show inline
+                                            let p = &stats.virtual_prefixes[0].0;
+                                            (format!("  (virtual \u{2192} {p})"), vec![])
                                         } else {
-                                            None
-                                        };
-                                        if let Some(p) = prefix {
-                                            format!("  (virtual \u{2192} {p})")
-                                        } else {
-                                            "  (all virtual)".to_string()
+                                            // Multiple sources — list them indented below
+                                            let source_lines: Vec<Line> = stats
+                                                .virtual_prefixes
+                                                .iter()
+                                                .map(|(prefix, cnt)| {
+                                                    Line::from(vec![
+                                                        Span::styled(
+                                                            format!("    {prefix}/"),
+                                                            app.theme.text,
+                                                        ),
+                                                        Span::styled(
+                                                            format!("  ({cnt} chunks)"),
+                                                            app.theme.text_dim,
+                                                        ),
+                                                    ])
+                                                })
+                                                .collect();
+                                            ("  (all virtual)".to_string(), source_lines)
                                         }
                                     } else if s > 0 && v == 0 && i == 0 {
-                                        "  (all stored)".to_string()
+                                        ("  (all stored)".to_string(), vec![])
                                     } else if i > 0 && v == 0 && s == 0 {
-                                        "  (all inline)".to_string()
+                                        ("  (all inline)".to_string(), vec![])
                                     } else {
-                                        format!("  (virtual: {v}, stored: {s}, inline: {i})")
+                                        (format!("  (virtual: {v}, stored: {s}, inline: {i})"), vec![])
                                     }
                                 }
-                                _ => String::new(),
+                                _ => (String::new(), vec![]),
                             };
                         let mut row = vec![
                             Span::styled(format!("    {path}  "), app.theme.text),
@@ -1039,6 +1052,7 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
                             row.push(Span::styled(annotation, app.theme.text_dim));
                         }
                         lines.push(Line::from(row));
+                        lines.extend(extra_source_lines);
                     }
                     if total > max_show {
                         lines.push(Line::from(Span::styled(
