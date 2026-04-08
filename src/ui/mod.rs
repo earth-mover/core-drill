@@ -397,6 +397,15 @@ fn labeled_lines<'a>(
     result
 }
 
+/// Build a section-header `Line` with consistent width and dark-gray styling.
+/// Total visual width is kept near 40 characters by padding with `─` on the right.
+fn section_header(label: &str) -> Line<'static> {
+    let prefix = format!("  ─── {label} ");
+    let remaining = 36usize.saturating_sub(prefix.chars().count());
+    let line = format!("{prefix}{}", "─".repeat(remaining));
+    Line::from(Span::styled(line, Style::default().fg(Color::Rgb(120, 120, 120))))
+}
+
 /// Render the header + Shape & Layout section for an array node (shown above the canvas viz).
 fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
     let shape_str = summary
@@ -412,18 +421,13 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
         .map(|dims| dims.join(", "))
         .unwrap_or_else(|| "\u{2014}".to_string());
 
-    let separator = "\u{2500}";
-
     let mut lines = vec![Line::from("")];
     lines.extend(labeled_lines("  Array: ", node.name.clone(), app.theme.text_dim, app.theme.text_bold, max_width));
     lines.extend(labeled_lines("  Path:  ", node.path.clone(), app.theme.text_dim, app.theme.text, max_width));
 
     // ─── Shape & Layout ──────────────────
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        format!("  {0}{0}{0} Shape & Layout {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-        app.theme.text_dim,
-    )));
+    lines.push(section_header("Shape & Layout"));
 
     lines.extend(labeled_lines("  Shape:         ", shape_str.clone(), app.theme.text_dim, app.theme.branch, max_width));
 
@@ -490,8 +494,6 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
 
 /// Render the Storage + Attributes + Raw Metadata sections for an array node (shown after the canvas viz).
 fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
-    let separator = "\u{2500}";
-
     let meta = if !summary.zarr_metadata.is_empty() {
         format::ZarrMetadata::parse(&summary.zarr_metadata)
     } else {
@@ -502,10 +504,7 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
 
     // ─── Storage ─────────────────────────
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        format!("  {0}{0}{0} Storage {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-        app.theme.text_dim,
-    )));
+    lines.push(section_header("Storage"));
 
     if let Some(ref meta) = meta {
         let codec_display = meta.codec_chain_display();
@@ -542,16 +541,12 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
     lines.extend(labeled_lines("  Manifests:     ", summary.manifest_count.to_string(), app.theme.text_dim, app.theme.text, max_width));
 
     // ─── Chunk Types ─────────────────────
-    let chunk_section_header = format!(
-        "  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}",
-        separator
-    );
     match app.store.chunk_stats.get(path) {
         None | Some(LoadState::NotRequested) => {
             // No full stats yet — show snapshot-derived total if available
             if let Some(total) = summary.total_chunks {
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
+                lines.push(section_header("Chunk Types"));
                 if total == 0 {
                     lines.push(Line::from(Span::styled("  (no chunks written)", app.theme.text_dim)));
                 } else {
@@ -568,7 +563,7 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
         }
         Some(LoadState::Loading) => {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
+            lines.push(section_header("Chunk Types"));
             if let Some(total) = summary.total_chunks {
                 lines.extend(labeled_lines(
                     "  Total:         ",
@@ -583,12 +578,12 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
         }
         Some(LoadState::Error(e)) => {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
+            lines.push(section_header("Chunk Types"));
             lines.push(Line::from(Span::styled(format!("  Error: {e}"), app.theme.error)));
         }
         Some(LoadState::Loaded(stats)) => {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
+            lines.push(section_header("Chunk Types"));
 
             let total = stats.total_chunks.max(1);
 
@@ -651,10 +646,7 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
     if let Some(ref meta) = meta
         && !meta.attributes.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("  {0}{0}{0} Attributes {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-                app.theme.text_dim,
-            )));
+            lines.push(section_header("Attributes"));
             // Build a JSON object from the attributes and render with json_view
             let attr_obj: serde_json::Value = serde_json::Value::Object(
                 meta.attributes
@@ -677,10 +669,7 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
     if let Some(ref meta) = meta
         && !meta.extra_fields.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("  {0}{0}{0} Raw Metadata {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-                app.theme.text_dim,
-            )));
+            lines.push(section_header("Raw Metadata"));
             // Build a JSON object from extra fields and render with json_view
             let extra_obj: serde_json::Value = serde_json::Value::Object(
                 meta.extra_fields
@@ -701,10 +690,7 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
     // Fallback: if metadata was present but couldn't be parsed, show with json_view
     if !summary.zarr_metadata.is_empty() && meta.is_none() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            format!("  {0}{0}{0} Raw Metadata {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-            app.theme.text_dim,
-        )));
+        lines.push(section_header("Raw Metadata"));
         let json_lines = json_view::render_json(&summary.zarr_metadata, &app.theme, 10, 50);
         lines.extend(json_lines);
     }
@@ -841,10 +827,7 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
 
     // --- Separator ---
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  \u{2500}\u{2500}\u{2500} Changes \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-        app.theme.text_dim,
-    )));
+    lines.push(section_header("Changes"));
 
     // --- Diff section (may still be loading) ---
     let state = app.store.diffs.get(snapshot_id);
@@ -870,51 +853,20 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
         }
         Some(LoadState::Loaded(diff)) => {
             if diff.is_initial_commit {
-                // Initial commit: no parent to diff against — show the repository contents instead.
+                // Initial commit: no parent to diff against — show a simple message.
                 lines.push(Line::from(Span::styled(
                     "  Repository initialized",
                     app.theme.text_bold,
                 )));
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "  This is the initial commit. All arrays and groups",
+                    "  This is the first snapshot. No diff available \u{2014}",
                     app.theme.text_dim,
                 )));
                 lines.push(Line::from(Span::styled(
-                    "  were created fresh \u{2014} no parent to diff against.",
+                    "  select a later snapshot to see what changed.",
                     app.theme.text_dim,
                 )));
-
-                // Show all cached nodes as "+" added entries.
-                let mut all_paths: Vec<String> = Vec::new();
-                for state in app.store.node_children.values() {
-                    if let LoadState::Loaded(nodes) = state {
-                        for node in nodes {
-                            if matches!(node.node_type, crate::store::TreeNodeType::Group) {
-                                all_paths.push(format!("{} (group)", node.path));
-                            } else {
-                                all_paths.push(node.path.clone());
-                            }
-                        }
-                    }
-                }
-
-                if !all_paths.is_empty() {
-                    all_paths.sort();
-                    let count = all_paths.len();
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(
-                        "  \u{2500}\u{2500}\u{2500} Contents \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-                        app.theme.text_dim,
-                    )));
-                    render_grouped_paths(
-                        &mut lines,
-                        &format!("  Contents ({count}):"),
-                        &all_paths,
-                        "+",
-                        app.theme.added,
-                    );
-                }
             } else {
                 let added_count = diff.added_arrays.len() + diff.added_groups.len();
                 let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();

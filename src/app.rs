@@ -34,6 +34,8 @@ pub struct App {
     tree_auto_expanded: bool,
     /// The snapshot ID we last requested a diff for (to avoid re-requesting)
     pub last_diff_requested: Option<String>,
+    /// The snapshot ID we last requested a tree (AllNodes) for (to avoid re-requesting)
+    pub last_tree_snapshot_requested: Option<String>,
 
     // Layout areas (updated each render for mouse hit-testing)
     pub sidebar_area: Rect,
@@ -60,6 +62,7 @@ impl App {
             bottom_table_offset: 0,
             tree_auto_expanded: false,
             last_diff_requested: None,
+            last_tree_snapshot_requested: None,
             sidebar_area: Rect::default(),
             detail_area: Rect::default(),
             bottom_area: None,
@@ -68,6 +71,8 @@ impl App {
 
     /// Kick off initial data loads
     pub fn load_initial_data(&mut self) {
+        // Reset tree dedup guard when (re-)loading for a branch
+        self.last_tree_snapshot_requested = None;
         self.store.submit(DataRequest::Branches);
         self.store.submit(DataRequest::Tags);
         self.store.submit(DataRequest::AllNodes {
@@ -599,12 +604,19 @@ impl App {
 
     /// When the active snapshot changes, reload the tree sidebar for that snapshot's node tree.
     /// Looks up the snapshot ID from the ancestry cache and submits AllNodes with it.
+    /// Deduplicates: if we already requested this snapshot's tree, does nothing.
     fn maybe_request_tree_for_active_snapshot(&mut self) {
         let snapshot_id = self.selected_snapshot_id();
-        let branch = self.current_branch.clone();
+
+        // Don't re-request if already loading/loaded for this snapshot
+        if self.last_tree_snapshot_requested.as_deref() == snapshot_id.as_deref() {
+            return;
+        }
+
+        self.last_tree_snapshot_requested = snapshot_id.clone();
         self.tree_auto_expanded = false;
         self.store.submit(DataRequest::AllNodes {
-            branch,
+            branch: self.current_branch.clone(),
             snapshot_id,
         });
     }

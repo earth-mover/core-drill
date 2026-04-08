@@ -198,6 +198,7 @@ impl DataStore {
                 self.ancestry.insert(branch, state);
             }
             DataResponse::AllNodes(result) => {
+                self.node_children.clear();  // Replace, don't merge
                 match result {
                     Ok(children_by_parent) => {
                         for (parent_path, nodes) in children_by_parent {
@@ -450,7 +451,7 @@ async fn fetch_all_nodes(
                     let mut sum: u64 = 0;
                     let mut all_found = true;
                     for mref in manifests.iter() {
-                        if let Some(info) = snapshot.manifest_info(&mref.object_id) {
+                        if let Ok(Some(info)) = snapshot.manifest_info(&mref.object_id) {
                             sum += info.num_chunk_refs as u64;
                         } else {
                             all_found = false;
