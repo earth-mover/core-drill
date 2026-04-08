@@ -592,7 +592,12 @@ fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
     .collect();
 
     let tabs = Tabs::new(tab_labels)
-        .block(Block::default().borders(Borders::BOTTOM).border_style(app.theme.border))
+        .block(
+            Block::default()
+                .title(" [3] ")
+                .borders(Borders::TOP | Borders::BOTTOM)
+                .border_style(if focused { app.theme.border_focused } else { app.theme.border })
+        )
         .select(match app.bottom_tab {
             BottomTab::Snapshots => 0,
             BottomTab::Branches => 1,
