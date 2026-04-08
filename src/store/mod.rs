@@ -466,54 +466,88 @@ async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Resul
     })
 }
 
-/// Fetch the diff between a snapshot and its parent.
-/// If the snapshot has no parent (initial snapshot), returns an error message.
+/// Fetch the diff between a snapshot and its parent using the transaction log directly.
+/// This requires only 2 S3 fetches: the child snapshot + the transaction log.
+/// (Previously required N ancestry fetches + 2 full snapshot fetches via Repository::diff().)
 async fn fetch_diff(
     repo: &Repository,
-    branch: &str,
+    _branch: &str,
     snapshot_id: &str,
 ) -> Result<DiffSummary, String> {
-    use icechunk::repository::VersionInfo;
+    use icechunk::format::SnapshotId;
 
-    // Look up ancestry to find the parent of this snapshot
-    let ancestry = fetch_ancestry(repo, branch).await?;
-
-    let entry = ancestry
-        .iter()
-        .find(|e| e.id == snapshot_id)
-        .ok_or_else(|| format!("Snapshot {} not found in ancestry", snapshot_id))?;
-
-    let parent_id = entry
-        .parent_id
-        .as_ref()
-        .ok_or_else(|| "Initial snapshot has no parent to diff against".to_string())?;
-
-    let from_snap_id: icechunk::format::SnapshotId =
-        parent_id.as_str().try_into().map_err(|e: &str| e.to_string())?;
-    let to_snap_id: icechunk::format::SnapshotId =
+    let snap_id: SnapshotId =
         snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
 
-    let from_version = VersionInfo::SnapshotId(from_snap_id);
-    let to_version = VersionInfo::SnapshotId(to_snap_id);
-
-    let diff = repo
-        .diff(&from_version, &to_version)
+    // Fetch 1: child snapshot — gives us parent_id AND node table for path resolution.
+    let snapshot = repo
+        .asset_manager()
+        .fetch_snapshot(&snap_id)
         .await
         .map_err(|e| e.to_string())?;
 
+    // parent_id() is deprecated since 2.0 for V2 repos (parent is encoded differently),
+    // but it is still the correct way to get the parent for both V1 and V2 snapshots.
+    #[expect(deprecated)]
+    let parent_id = match snapshot.parent_id() {
+        Some(pid) => pid,
+        None => return Err("Initial snapshot — no parent to diff against".to_string()),
+    };
+
+    // Build NodeId -> Path map from the child snapshot's node table.
+    // We use the string representation of NodeId (Crockford Base32, 13 chars) as the key.
+    let mut node_paths: HashMap<String, String> = HashMap::new();
+    for node_result in snapshot.iter() {
+        let node = node_result.map_err(|e| e.to_string())?;
+        node_paths.insert(node.id.to_string(), node.path.to_string());
+    }
+
+    // Fetch 2: transaction log for this snapshot.
+    let tx_log = repo
+        .asset_manager()
+        .fetch_transaction_log(&snap_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Helper: resolve a NodeId to a path string, falling back to a placeholder.
+    let resolve = |node_id: &icechunk::format::NodeId| -> String {
+        let key = node_id.to_string();
+        match node_paths.get(&key) {
+            Some(path) => sanitize(path),
+            None => format!("<node:{}>", key),
+        }
+    };
+
+    let added_arrays: Vec<String> = tx_log.new_arrays().map(|id| resolve(&id)).collect();
+    let added_groups: Vec<String> = tx_log.new_groups().map(|id| resolve(&id)).collect();
+    let deleted_arrays: Vec<String> =
+        tx_log.deleted_arrays().map(|id| resolve(&id)).collect();
+    let deleted_groups: Vec<String> =
+        tx_log.deleted_groups().map(|id| resolve(&id)).collect();
+    let modified_arrays: Vec<String> =
+        tx_log.updated_arrays().map(|id| resolve(&id)).collect();
+    let modified_groups: Vec<String> =
+        tx_log.updated_groups().map(|id| resolve(&id)).collect();
+
+    // updated_chunks gives (NodeId, Iterator<ChunkIndices>); we need (path, count).
+    let chunk_changes: Vec<(String, usize)> = tx_log
+        .updated_chunks()
+        .map(|(node_id, chunks_iter)| {
+            let path = resolve(&node_id);
+            let count = chunks_iter.count();
+            (path, count)
+        })
+        .collect();
+
     Ok(DiffSummary {
         snapshot_id: snapshot_id.to_string(),
-        parent_id: Some(parent_id.clone()),
-        added_arrays: diff.new_arrays.iter().map(|p| sanitize(&p.to_string())).collect(),
-        added_groups: diff.new_groups.iter().map(|p| sanitize(&p.to_string())).collect(),
-        deleted_arrays: diff.deleted_arrays.iter().map(|p| sanitize(&p.to_string())).collect(),
-        deleted_groups: diff.deleted_groups.iter().map(|p| sanitize(&p.to_string())).collect(),
-        modified_arrays: diff.updated_arrays.iter().map(|p| sanitize(&p.to_string())).collect(),
-        modified_groups: diff.updated_groups.iter().map(|p| sanitize(&p.to_string())).collect(),
-        chunk_changes: diff
-            .updated_chunks
-            .iter()
-            .map(|(p, chunks)| (sanitize(&p.to_string()), chunks.len()))
-            .collect(),
+        parent_id: Some(parent_id.to_string()),
+        added_arrays,
+        added_groups,
+        deleted_arrays,
+        deleted_groups,
+        modified_arrays,
+        modified_groups,
+        chunk_changes,
     })
 }
