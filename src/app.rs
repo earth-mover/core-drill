@@ -154,8 +154,15 @@ impl App {
         let selected = self.tree_state.selected();
         let Some(path) = selected.last() else { return };
 
+        // Get the current snapshot context
+        let snapshot_id = self.selected_snapshot_id()
+            .or_else(|| self.get_branch_tip_snapshot_id());
+        let Some(snapshot_id) = snapshot_id else { return };
+
+        let key = (snapshot_id.clone(), path.clone());
+
         // Only request if not already cached or loading
-        if self.store.chunk_stats.contains_key(path) {
+        if self.store.chunk_stats.contains_key(&key) {
             return;
         }
 
@@ -176,10 +183,19 @@ impl App {
 
         if is_array {
             self.store.submit(DataRequest::ChunkStats {
-                branch: self.current_branch.clone(),
+                snapshot_id,
                 path: path.clone(),
             });
         }
+    }
+
+    /// Get the snapshot ID at the tip of the current branch, from the branches cache.
+    pub fn get_branch_tip_snapshot_id(&self) -> Option<String> {
+        self.store
+            .branches
+            .as_loaded()
+            .and_then(|branches| branches.iter().find(|b| b.name == self.current_branch))
+            .map(|b| b.snapshot_id.clone())
     }
 
     /// Get the snapshot ID for the currently selected row in the bottom panel.

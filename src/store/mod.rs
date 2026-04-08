@@ -48,8 +48,8 @@ pub enum DataRequest {
     /// `parent_id` is provided by the caller from the cached ancestry data so the
     /// worker never needs to fetch the child snapshot — only the transaction log.
     SnapshotDiff { snapshot_id: String, parent_id: Option<String> },
-    /// Fetch chunk type statistics for an array node
-    ChunkStats { branch: String, path: String },
+    /// Fetch chunk type statistics for an array node at a specific snapshot
+    ChunkStats { snapshot_id: String, path: String },
     #[allow(dead_code)]
     OpsLog,
 }
@@ -72,6 +72,7 @@ pub enum DataResponse {
         result: Result<RawDiff, String>,
     },
     ChunkStats {
+        snapshot_id: String,
         path: String,
         result: Result<ChunkStats, String>,
     },
@@ -87,7 +88,7 @@ pub struct DataStore {
     pub ancestry: HashMap<String, LoadState<Vec<SnapshotEntry>>>,
     pub node_children: HashMap<String, LoadState<Vec<TreeNode>>>,
     pub diffs: HashMap<String, LoadState<DiffSummary>>,
-    pub chunk_stats: HashMap<String, LoadState<ChunkStats>>,
+    pub chunk_stats: HashMap<(String, String), LoadState<ChunkStats>>,
     pub ops_log: LoadState<Vec<String>>,
 
     // Channel for sending requests to background worker
@@ -135,8 +136,8 @@ impl DataStore {
             DataRequest::SnapshotDiff { snapshot_id, .. } => {
                 self.diffs.insert(snapshot_id.clone(), LoadState::Loading);
             }
-            DataRequest::ChunkStats { path, .. } => {
-                self.chunk_stats.insert(path.clone(), LoadState::Loading);
+            DataRequest::ChunkStats { snapshot_id, path } => {
+                self.chunk_stats.insert((snapshot_id.clone(), path.clone()), LoadState::Loading);
             }
             DataRequest::OpsLog => self.ops_log = LoadState::Loading,
         }
@@ -233,12 +234,12 @@ impl DataStore {
                 };
                 self.diffs.insert(snapshot_id, state);
             }
-            DataResponse::ChunkStats { path, result } => {
+            DataResponse::ChunkStats { snapshot_id, path, result } => {
                 let state = match result {
                     Ok(stats) => LoadState::Loaded(stats),
                     Err(e) => LoadState::Error(e),
                 };
-                self.chunk_stats.insert(path, state);
+                self.chunk_stats.insert((snapshot_id, path), state);
             }
             DataResponse::OpsLog(result) => {
                 self.ops_log = match result {
@@ -300,9 +301,9 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
                 result,
             }
         }
-        DataRequest::ChunkStats { branch, path } => {
-            let result = fetch_chunk_stats(repo, &branch, &path).await;
-            DataResponse::ChunkStats { path, result }
+        DataRequest::ChunkStats { snapshot_id, path } => {
+            let result = fetch_chunk_stats(repo, &snapshot_id, &path).await;
+            DataResponse::ChunkStats { snapshot_id, path, result }
         }
         DataRequest::OpsLog => {
             // TODO: implement ops log fetching
@@ -486,11 +487,13 @@ async fn fetch_all_nodes(
 }
 
 /// Fetch chunk type statistics for an array node by iterating all its chunks.
-async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Result<ChunkStats, String> {
+async fn fetch_chunk_stats(repo: &Repository, snapshot_id: &str, path: &str) -> Result<ChunkStats, String> {
     use futures::StreamExt;
+    use icechunk::format::SnapshotId;
     use icechunk::repository::VersionInfo;
 
-    let version = VersionInfo::BranchTipRef(branch.to_string());
+    let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
+    let version = VersionInfo::SnapshotId(snap_id);
     let session = repo.readonly_session(&version).await.map_err(|e| e.to_string())?;
     let node_path = icechunk::format::Path::try_from(path).map_err(|e: icechunk::format::PathError| e.to_string())?;
 

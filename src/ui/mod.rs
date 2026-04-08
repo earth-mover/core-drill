@@ -273,10 +273,12 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                 // inner_width: subtract 2 for the panel border
                 let inner_width = area.width.saturating_sub(2);
                 // Check if we have a canvas visualization (ndim > 0)
+                let snapshot_id = app.selected_snapshot_id()
+                    .or_else(|| app.get_branch_tip_snapshot_id());
                 if summary.shape.is_empty() {
                     // Scalar — no canvas, just text (header + all sections together)
                     let pre_text = render_array_detail_header(app, node, summary, inner_width);
-                    let post_text = render_array_detail_storage(app, node.path.as_str(), summary, inner_width);
+                    let post_text = render_array_detail_storage(app, node.path.as_str(), snapshot_id.as_deref(), summary, inner_width);
                     let mut text = pre_text;
                     text.extend(post_text);
                     let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
@@ -290,7 +292,7 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     // For arrays: single scrollable paragraph (no canvas)
                     let mut text = render_array_detail_header(app, node, summary, inner_width);
-                    text.extend(render_array_detail_storage(app, node.path.as_str(), summary, inner_width));
+                    text.extend(render_array_detail_storage(app, node.path.as_str(), snapshot_id.as_deref(), summary, inner_width));
                     let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
                     frame.render_widget(
                         Paragraph::new(text)
@@ -497,7 +499,7 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
 }
 
 /// Render the Storage + Attributes + Raw Metadata sections for an array node (shown after the canvas viz).
-fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
+fn render_array_detail_storage<'a>(app: &'a App, path: &str, snapshot_id: Option<&str>, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
     let meta = if !summary.zarr_metadata.is_empty() {
         format::ZarrMetadata::parse(&summary.zarr_metadata)
     } else {
@@ -545,7 +547,8 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
     lines.extend(labeled_lines("  Manifests:     ", summary.manifest_count.to_string(), app.theme.text_dim, app.theme.text, max_width));
 
     // ─── Chunk Types ─────────────────────
-    match app.store.chunk_stats.get(path) {
+    let chunk_stats_key = snapshot_id.map(|sid| (sid.to_string(), path.to_string()));
+    match chunk_stats_key.as_ref().and_then(|k| app.store.chunk_stats.get(k)) {
         None | Some(LoadState::NotRequested) => {
             // No full stats yet — show snapshot-derived total if available
             if let Some(total) = summary.total_chunks {
@@ -974,8 +977,9 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str, max_width: u
                     let max_show = 20;
                     let total = diff.chunk_changes.len();
                     for (path, count) in diff.chunk_changes.iter().take(max_show) {
+                        let chunk_key = (snapshot_id.to_string(), path.clone());
                         let (annotation, extra_source_lines) =
-                            match app.store.chunk_stats.get(path.as_str()) {
+                            match app.store.chunk_stats.get(&chunk_key) {
                                 Some(LoadState::Loaded(stats)) if stats.stats_complete => {
                                     let v = stats.virtual_count;
                                     let s = stats.native_count;
@@ -1228,11 +1232,9 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                     ]);
                     if is_selected && focused {
                         row.style(app.theme.selected)
-                    } else if is_active {
-                        // Active snapshot always visible, even when pane loses focus
-                        row.style(app.theme.active)
-                    } else if is_selected {
-                        row.style(app.theme.selected_inactive)
+                    } else if is_active || is_selected {
+                        // Active snapshot stays highlighted regardless of focus
+                        row.style(app.theme.selected)
                     } else {
                         row.style(app.theme.text)
                     }
