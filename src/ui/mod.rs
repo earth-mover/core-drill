@@ -595,7 +595,7 @@ fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .title(" [3] ")
-                .borders(Borders::TOP | Borders::BOTTOM)
+                .borders(Borders::TOP)
                 .border_style(if focused { app.theme.border_focused } else { app.theme.border })
         )
         .select(match app.bottom_tab {
