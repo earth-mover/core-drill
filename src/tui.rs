@@ -50,7 +50,7 @@ pub async fn run(mut app: App) -> Result<()> {
         // Drain any pending background responses before rendering
         app.drain_responses();
 
-        terminal.draw(|frame| ui::render(&app, frame))?;
+        terminal.draw(|frame| ui::render(&mut app, frame))?;
 
         // Wait for either a terminal event or a short timeout to stay responsive
         // to background data responses

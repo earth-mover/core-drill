@@ -1,4 +1,5 @@
 mod help;
+pub mod tree;
 
 use ratatui::Frame;
 use ratatui::prelude::*;
@@ -11,7 +12,7 @@ use crate::store::types::TreeNodeType;
 use crate::theme;
 
 /// Main render — three-pane layout
-pub fn render(app: &App, frame: &mut Frame) {
+pub fn render(app: &mut App, frame: &mut Frame) {
     if app.show_help {
         help::render(app, frame, frame.area());
         return;
@@ -86,9 +87,9 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
 
 // ─── Sidebar (tree view) ─────────────────────────────────────
 
-fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
+fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Sidebar;
-    let block = theme::panel("Tree", focused, &app.theme);
+    let block = theme::panel("[1] Tree", focused, &app.theme);
 
     // Branch selector at top + tree below
     let inner = block.inner(area);
@@ -114,7 +115,7 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
     ]);
     frame.render_widget(Paragraph::new(branch_line), chunks[0]);
 
-    // Tree view
+    // Tree view — build TreeItems from cached store data
     let root_path = "/";
     let state = app
         .store
@@ -130,44 +131,61 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
             frame.render_widget(theme::error_widget(msg, &app.theme), chunks[1]);
         }
         LoadState::Loaded(nodes) => {
-            let items: Vec<ListItem> = nodes
+            let tree_items: Vec<tui_tree_widget::TreeItem<String>> = nodes
                 .iter()
-                .enumerate()
-                .map(|(i, node)| {
-                    let is_selected = focused && i == app.sidebar_selected;
-                    let style = if is_selected {
-                        app.theme.selected
-                    } else {
-                        app.theme.text
-                    };
-
-                    let (icon, detail) = match &node.node_type {
-                        TreeNodeType::Group => ("▶ ", String::new()),
-                        TreeNodeType::Array(summary) => {
-                            let shape = summary
-                                .shape
-                                .iter()
-                                .map(|d| d.to_string())
-                                .collect::<Vec<_>>()
-                                .join("×");
-                            ("─ ", format!(" [{}]", shape))
-                        }
-                    };
-
-                    let line = Line::from(vec![
-                        Span::styled(icon, if matches!(&node.node_type, TreeNodeType::Group) {
-                            app.theme.group_icon
-                        } else {
-                            app.theme.array_icon
-                        }),
-                        Span::styled(&node.name, style),
-                        Span::styled(detail, app.theme.text_dim),
-                    ]);
-                    ListItem::new(line)
-                })
+                .map(|node| build_tree_item(node, &app.store))
                 .collect();
 
-            frame.render_widget(List::new(items), chunks[1]);
+            let tree = tui_tree_widget::Tree::new(&tree_items)
+                .expect("unique identifiers")
+                .highlight_style(app.theme.selected)
+                .node_closed_symbol("▶ ")
+                .node_open_symbol("▼ ")
+                .node_no_children_symbol("─ ");
+
+            frame.render_stateful_widget(tree, chunks[1], &mut app.tree_state);
+        }
+    }
+}
+
+/// Build a TreeItem from a store TreeNode, recursively including cached children
+fn build_tree_item<'a>(
+    node: &crate::store::TreeNode,
+    store: &crate::store::DataStore,
+) -> tui_tree_widget::TreeItem<'a, String> {
+    let label = match &node.node_type {
+        TreeNodeType::Group => node.name.clone(),
+        TreeNodeType::Array(summary) => {
+            let shape = summary
+                .shape
+                .iter()
+                .map(|d| d.to_string())
+                .collect::<Vec<_>>()
+                .join("×");
+            format!("{} [{}]", node.name, shape)
+        }
+    };
+
+    match &node.node_type {
+        TreeNodeType::Group => {
+            // Check if children are cached
+            let children: Vec<tui_tree_widget::TreeItem<String>> =
+                if let Some(LoadState::Loaded(child_nodes)) =
+                    store.node_children.get(&node.path)
+                {
+                    child_nodes
+                        .iter()
+                        .map(|child| build_tree_item(child, store))
+                        .collect()
+                } else {
+                    // No children loaded yet — show as expandable but empty
+                    vec![]
+                };
+            tui_tree_widget::TreeItem::new(node.path.clone(), label, children)
+                .expect("unique child identifiers")
+        }
+        TreeNodeType::Array(_) => {
+            tui_tree_widget::TreeItem::new_leaf(node.path.clone(), label)
         }
     }
 }
@@ -176,7 +194,7 @@ fn render_sidebar(app: &App, frame: &mut Frame, area: Rect) {
 
 fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Detail;
-    let block = theme::panel("Detail", focused, &app.theme);
+    let block = theme::panel("[2] Detail", focused, &app.theme);
 
     // Default: repo overview
     let branch_count = app.store.branches.as_loaded().map(|b| b.len()).unwrap_or(0);

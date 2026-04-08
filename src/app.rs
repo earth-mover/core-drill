@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::component::{Action, BottomTab, Pane};
 use crate::store::{DataRequest, DataStore};
@@ -22,12 +22,9 @@ pub struct App {
     pub repo_url: String,
 
     // Per-pane selection state
-    pub sidebar_selected: usize,
+    pub tree_state: tui_tree_widget::TreeState<String>,
     pub detail_scroll: usize,
     pub bottom_selected: usize,
-
-    // Sidebar tree state
-    pub expanded_paths: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -42,10 +39,9 @@ impl App {
             show_help: false,
             current_branch: "main".to_string(),
             repo_url,
-            sidebar_selected: 0,
+            tree_state: tui_tree_widget::TreeState::<String>::default(),
             detail_scroll: 0,
             bottom_selected: 0,
-            expanded_paths: std::collections::HashSet::new(),
         }
     }
 
@@ -82,11 +78,21 @@ impl App {
                 return Action::None;
             }
             KeyCode::Char('t') => return Action::ToggleBottom,
+            KeyCode::Char('1') => return Action::FocusPane(Pane::Sidebar),
+            KeyCode::Char('2') => return Action::FocusPane(Pane::Detail),
+            KeyCode::Char('3') => {
+                if !self.bottom_visible {
+                    self.bottom_visible = true;
+                }
+                return Action::FocusPane(Pane::Bottom);
+            }
             _ => {}
         }
 
-        // Ctrl+hjkl / Ctrl+arrows for pane navigation
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        // Pane switching: Tab/Shift+Tab cycle, Ctrl+hjkl directional
+        // (Ctrl+hjkl may conflict with terminal multiplexers like zellij —
+        // Tab always works as a fallback)
+        if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('h') | KeyCode::Left => return Action::FocusPane(Pane::Sidebar),
                 KeyCode::Char('l') | KeyCode::Right => return Action::FocusPane(Pane::Detail),
@@ -104,12 +110,49 @@ impl App {
             }
         }
 
-        // Bottom tab switching (when bottom is focused)
+        match key.code {
+            KeyCode::Tab => {
+                let next = match self.focused_pane {
+                    Pane::Sidebar => Pane::Detail,
+                    Pane::Detail => {
+                        if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
+                    }
+                    Pane::Bottom => Pane::Sidebar,
+                };
+                return Action::FocusPane(next);
+            }
+            KeyCode::BackTab => {
+                let prev = match self.focused_pane {
+                    Pane::Sidebar => {
+                        if self.bottom_visible { Pane::Bottom } else { Pane::Detail }
+                    }
+                    Pane::Detail => Pane::Sidebar,
+                    Pane::Bottom => Pane::Detail,
+                };
+                return Action::FocusPane(prev);
+            }
+            _ => {}
+        }
+
+        // Bottom tab switching (when bottom is focused, use bracket keys)
         if self.focused_pane == Pane::Bottom {
             match key.code {
-                KeyCode::Char('1') => return Action::SwitchBottomTab(BottomTab::Snapshots),
-                KeyCode::Char('2') => return Action::SwitchBottomTab(BottomTab::Branches),
-                KeyCode::Char('3') => return Action::SwitchBottomTab(BottomTab::Tags),
+                KeyCode::Char('[') => {
+                    self.bottom_tab = match self.bottom_tab {
+                        BottomTab::Snapshots => BottomTab::Tags,
+                        BottomTab::Branches => BottomTab::Snapshots,
+                        BottomTab::Tags => BottomTab::Branches,
+                    };
+                    return Action::None;
+                }
+                KeyCode::Char(']') => {
+                    self.bottom_tab = match self.bottom_tab {
+                        BottomTab::Snapshots => BottomTab::Branches,
+                        BottomTab::Branches => BottomTab::Tags,
+                        BottomTab::Tags => BottomTab::Snapshots,
+                    };
+                    return Action::None;
+                }
                 _ => {}
             }
         }
@@ -158,7 +201,7 @@ impl App {
 
     fn select_next(&mut self) {
         match self.focused_pane {
-            Pane::Sidebar => self.sidebar_selected = self.sidebar_selected.saturating_add(1),
+            Pane::Sidebar => { self.tree_state.key_down(); }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_add(1),
             Pane::Bottom => self.bottom_selected = self.bottom_selected.saturating_add(1),
         }
@@ -166,13 +209,35 @@ impl App {
 
     fn select_prev(&mut self) {
         match self.focused_pane {
-            Pane::Sidebar => self.sidebar_selected = self.sidebar_selected.saturating_sub(1),
+            Pane::Sidebar => { self.tree_state.key_up(); }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(1),
             Pane::Bottom => self.bottom_selected = self.bottom_selected.saturating_sub(1),
         }
     }
 
     fn handle_enter(&mut self) {
-        // TODO: expand/collapse tree nodes, select snapshots, etc.
+        match self.focused_pane {
+            Pane::Sidebar => {
+                // Toggle open/close on the selected tree node
+                self.tree_state.toggle_selected();
+
+                // If a group just opened, trigger loading its children
+                let selected = self.tree_state.selected().to_vec();
+                if let Some(path) = selected.last() {
+                    if self.tree_state.opened().contains(&selected) {
+                        // Just opened — request children if not loaded
+                        if !self.store.node_children.contains_key(path) {
+                            self.store.submit(DataRequest::NodeChildren {
+                                branch: self.current_branch.clone(),
+                                parent_path: path.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {
+                // TODO: handle enter in other panes
+            }
+        }
     }
 }
