@@ -237,7 +237,13 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         if let Some(sid) = app.selected_snapshot_id() {
             if app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid) {
                 let text = render_snapshot_diff_detail(app, &sid);
-                frame.render_widget(Paragraph::new(text).block(block).wrap(Wrap { trim: false }), area);
+                frame.render_widget(
+                    Paragraph::new(text)
+                        .block(block)
+                        .wrap(Wrap { trim: false })
+                        .scroll((app.detail_scroll as u16, 0)),
+                    area,
+                );
                 return;
             }
         }
@@ -259,7 +265,10 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                     let mut text = pre_text;
                     text.extend(post_text);
                     frame.render_widget(
-                        Paragraph::new(text).block(block).wrap(Wrap { trim: false }),
+                        Paragraph::new(text)
+                            .block(block)
+                            .wrap(Wrap { trim: false })
+                            .scroll((app.detail_scroll as u16, 0)),
                         area,
                     );
                 } else {
@@ -275,7 +284,7 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                         .direction(Direction::Vertical)
                         .constraints([
                             Constraint::Length(pre_len + 1), // header + shape section
-                            Constraint::Length(14),           // canvas viz
+                            Constraint::Length(10),           // canvas viz
                             Constraint::Min(4),               // storage + attrs + rest
                         ])
                         .split(inner);
@@ -290,7 +299,9 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                     }
 
                     frame.render_widget(
-                        Paragraph::new(post_text).wrap(Wrap { trim: false }),
+                        Paragraph::new(post_text)
+                            .wrap(Wrap { trim: false })
+                            .scroll((app.detail_scroll as u16, 0)),
                         chunks[2],
                     );
                 }
@@ -315,7 +326,13 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         render_repo_overview(app)
     };
 
-    frame.render_widget(Paragraph::new(text).block(block).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((app.detail_scroll as u16, 0)),
+        area,
+    );
 }
 
 /// Render the header + Shape & Layout section for an array node (shown above the canvas viz).
@@ -1115,9 +1132,9 @@ fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
 
 fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
     let hints = match app.focused_pane {
-        Pane::Sidebar => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  Enter:expand ",
+        Pane::Sidebar => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  PgDn/PgUp:detail-scroll  Enter:expand ",
         Pane::Detail => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:scroll ",
-        Pane::Bottom => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  Tab:next tab  Shift+Tab:prev tab  Enter:select ",
+        Pane::Bottom => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  PgDn/PgUp:detail-scroll  Tab:next tab  Shift+Tab:prev tab  Enter:select ",
     };
     frame.render_widget(
         Paragraph::new(Span::styled(hints, app.theme.text_dim)),

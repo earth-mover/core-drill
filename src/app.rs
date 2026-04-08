@@ -149,6 +149,14 @@ impl App {
                 }
                 return Action::FocusPane(Pane::Bottom);
             }
+            KeyCode::PageDown => {
+                self.detail_scroll = self.detail_scroll.saturating_add(3);
+                return Action::None;
+            }
+            KeyCode::PageUp => {
+                self.detail_scroll = self.detail_scroll.saturating_sub(3);
+                return Action::None;
+            }
             _ => {}
         }
 
@@ -300,6 +308,7 @@ impl App {
         match self.focused_pane {
             Pane::Sidebar => {
                 let moved = self.tree_state.key_down();
+                self.detail_scroll = 0; // reset when changing selection
                 if !moved && self.bottom_visible {
                     self.focused_pane = Pane::Bottom;
                 }
@@ -307,6 +316,7 @@ impl App {
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_add(1),
             Pane::Bottom => {
                 self.bottom_selected = self.bottom_selected.saturating_add(1);
+                self.detail_scroll = 0; // reset when changing selection
                 self.maybe_request_snapshot_diff();
             }
         }
@@ -314,13 +324,17 @@ impl App {
 
     fn select_prev(&mut self) {
         match self.focused_pane {
-            Pane::Sidebar => { self.tree_state.key_up(); }
+            Pane::Sidebar => {
+                self.tree_state.key_up();
+                self.detail_scroll = 0; // reset when changing selection
+            }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(1),
             Pane::Bottom => {
                 if self.bottom_selected == 0 {
                     self.focused_pane = Pane::Sidebar;
                 } else {
                     self.bottom_selected -= 1;
+                    self.detail_scroll = 0; // reset when changing selection
                     self.maybe_request_snapshot_diff();
                 }
             }

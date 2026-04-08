@@ -127,17 +127,13 @@ fn paint_1d(
     let grid_w = grid_right - grid_left;
     let cell_w = grid_w / nx as f64;
 
-    // Chunk index labels — no fill rectangles, transparent interiors
-    if nx <= 16 {
-        for i in 0..nx {
-            let x = grid_left + i as f64 * cell_w;
-            let label = format!("{i}");
-            ctx.print(
-                x + cell_w / 2.0 - label.len() as f64,
-                grid_bottom + 7.0,
-                label.fg(LABEL_COLOR),
-            );
-        }
+    // Label first chunk with chunk size; leave others unlabeled
+    let chunk_label = format!("{cs}");
+    if nx >= 1 && cell_w > 4.0 {
+        let x = grid_left;
+        let lx = x + cell_w / 2.0 - chunk_label.len() as f64 / 2.0;
+        let ly = (grid_bottom + grid_top) / 2.0;
+        ctx.print(lx, ly, chunk_label.fg(LABEL_COLOR));
     }
 
     // Draw grid lines between chunks (inner dividers)
@@ -164,20 +160,17 @@ fn paint_1d(
         bottom_label.fg(LABEL_COLOR),
     );
 
-    // Chunk size labels below each cell (if few enough)
-    if nx <= 8 {
-        for i in 0..nx {
-            let actual = if i == nx - 1 {
-                let remainder = total % cs;
-                if remainder == 0 { cs } else { remainder }
-            } else {
-                cs
-            };
-            let label = format!("{actual}");
-            let x = grid_left + i as f64 * cell_w + cell_w / 2.0 - label.len() as f64;
-            ctx.print(x, grid_bottom - 1.0, label.fg(LABEL_COLOR));
-        }
-    }
+    // Chunk grid summary at bottom of canvas
+    let grid_desc = if nx == 1 {
+        format!("Chunk grid: {nx} chunk of {cs}")
+    } else {
+        format!("Chunk grid: {nx} chunks \u{00d7} {cs} each")
+    };
+    ctx.print(
+        grid_left + grid_w / 2.0 - grid_desc.len() as f64,
+        1.5,
+        grid_desc.fg(LABEL_COLOR),
+    );
 }
 
 /// Draw a 2D chunk grid.
