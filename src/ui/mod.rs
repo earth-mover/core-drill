@@ -1209,10 +1209,11 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                     ]);
                     if is_selected && focused {
                         row.style(app.theme.selected)
+                    } else if is_active {
+                        // Active snapshot always visible, even when pane loses focus
+                        row.style(app.theme.active)
                     } else if is_selected {
                         row.style(app.theme.selected_inactive)
-                    } else if is_active {
-                        row.style(app.theme.active)
                     } else {
                         row.style(app.theme.text)
                     }
