@@ -266,11 +266,13 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     if let Some(path) = selected_path
         && let Some(node) = find_node_by_path(&app.store, path)
             && let TreeNodeType::Array(summary) = &node.node_type {
+                // inner_width: subtract 2 for the panel border
+                let inner_width = area.width.saturating_sub(2);
                 // Check if we have a canvas visualization (ndim > 0)
                 if summary.shape.is_empty() {
                     // Scalar — no canvas, just text (header + all sections together)
-                    let pre_text = render_array_detail_header(app, node, summary);
-                    let post_text = render_array_detail_storage(app, node.path.as_str(), summary);
+                    let pre_text = render_array_detail_header(app, node, summary, inner_width);
+                    let post_text = render_array_detail_storage(app, node.path.as_str(), summary, inner_width);
                     let mut text = pre_text;
                     text.extend(post_text);
                     let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
@@ -283,8 +285,8 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                     );
                 } else {
                     // For arrays: single scrollable paragraph (no canvas)
-                    let mut text = render_array_detail_header(app, node, summary);
-                    text.extend(render_array_detail_storage(app, node.path.as_str(), summary));
+                    let mut text = render_array_detail_header(app, node, summary, inner_width);
+                    text.extend(render_array_detail_storage(app, node.path.as_str(), summary, inner_width));
                     let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
                     frame.render_widget(
                         Paragraph::new(text)
@@ -323,8 +325,80 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     );
 }
 
+/// Produce one or more `Line`s for a label/value pair.
+///
+/// If the label + value fit within `max_width` columns, a single line is returned.
+/// Otherwise the value is split at word boundaries (spaces) and continuation lines
+/// are indented to align with the start of the value column (i.e. `label.len()` spaces).
+fn labeled_lines<'a>(
+    label: &'a str,
+    value: String,
+    label_style: Style,
+    value_style: Style,
+    max_width: u16,
+) -> Vec<Line<'a>> {
+    let label_len = label.len();
+    let available = (max_width as usize).saturating_sub(label_len);
+
+    // Fast path: everything fits on one line.
+    if value.len() <= available || available == 0 {
+        return vec![Line::from(vec![
+            Span::styled(label, label_style),
+            Span::styled(value, value_style),
+        ])];
+    }
+
+    // Split the value into chunks that fit within `available` columns.
+    // We split on spaces so we don't break inside tokens.
+    let indent = " ".repeat(label_len);
+    let mut result: Vec<Line<'a>> = Vec::new();
+    let mut current_line = String::new();
+    let mut first = true;
+
+    for word in value.split_inclusive(' ') {
+        if current_line.len() + word.len() <= available || current_line.is_empty() {
+            current_line.push_str(word);
+        } else {
+            // Flush the current line.
+            if first {
+                result.push(Line::from(vec![
+                    Span::styled(label, label_style),
+                    Span::styled(current_line.trim_end().to_string(), value_style),
+                ]));
+                first = false;
+            } else {
+                let ind = indent.clone();
+                result.push(Line::from(vec![
+                    Span::styled(ind, label_style),
+                    Span::styled(current_line.trim_end().to_string(), value_style),
+                ]));
+            }
+            current_line = word.to_string();
+        }
+    }
+
+    // Flush any remaining text.
+    if !current_line.is_empty() {
+        let trimmed = current_line.trim_end().to_string();
+        if first {
+            result.push(Line::from(vec![
+                Span::styled(label, label_style),
+                Span::styled(trimmed, value_style),
+            ]));
+        } else {
+            let ind = indent.clone();
+            result.push(Line::from(vec![
+                Span::styled(ind, label_style),
+                Span::styled(trimmed, value_style),
+            ]));
+        }
+    }
+
+    result
+}
+
 /// Render the header + Shape & Layout section for an array node (shown above the canvas viz).
-fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
+fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
     let shape_str = summary
         .shape
         .iter()
@@ -340,17 +414,9 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
 
     let separator = "\u{2500}";
 
-    let mut lines = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Array: ", app.theme.text_dim),
-            Span::styled(node.name.clone(), app.theme.text_bold),
-        ]),
-        Line::from(vec![
-            Span::styled("  Path:  ", app.theme.text_dim),
-            Span::styled(node.path.clone(), app.theme.text),
-        ]),
-    ];
+    let mut lines = vec![Line::from("")];
+    lines.extend(labeled_lines("  Array: ", node.name.clone(), app.theme.text_dim, app.theme.text_bold, max_width));
+    lines.extend(labeled_lines("  Path:  ", node.path.clone(), app.theme.text_dim, app.theme.text, max_width));
 
     // ─── Shape & Layout ──────────────────
     lines.push(Line::from(""));
@@ -359,10 +425,7 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
         app.theme.text_dim,
     )));
 
-    lines.push(Line::from(vec![
-        Span::styled("  Shape:         ", app.theme.text_dim),
-        Span::styled(shape_str.clone(), app.theme.branch),
-    ]));
+    lines.extend(labeled_lines("  Shape:         ", shape_str.clone(), app.theme.text_dim, app.theme.branch, max_width));
 
     // Parse metadata early so we can use chunk_shape for the layout section
     let meta = if !summary.zarr_metadata.is_empty() {
@@ -378,30 +441,17 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
             .map(|d| d.to_string())
             .collect::<Vec<_>>()
             .join(" \u{00d7} ");
-        lines.push(Line::from(vec![
-            Span::styled("  Chunk shape:   ", app.theme.text_dim),
-            Span::styled(chunk_str, app.theme.text),
-        ]));
-
-        lines.push(Line::from(vec![
-            Span::styled("  Data type:     ", app.theme.text_dim),
-            Span::styled(meta.data_type.clone(), app.theme.text),
-        ]));
+        lines.extend(labeled_lines("  Chunk shape:   ", chunk_str, app.theme.text_dim, app.theme.text, max_width));
+        lines.extend(labeled_lines("  Data type:     ", meta.data_type.clone(), app.theme.text_dim, app.theme.text, max_width));
 
         // Show v2 dtype if different from data_type
         if let Some(ref v2dt) = meta.v2_dtype
             && v2dt != &meta.data_type {
-                lines.push(Line::from(vec![
-                    Span::styled("  Dtype (v2):    ", app.theme.text_dim),
-                    Span::styled(v2dt.clone(), app.theme.text),
-                ]));
+                lines.extend(labeled_lines("  Dtype (v2):    ", v2dt.clone(), app.theme.text_dim, app.theme.text, max_width));
             }
     }
 
-    lines.push(Line::from(vec![
-        Span::styled("  Dimensions:    ", app.theme.text_dim),
-        Span::styled(dim_names, app.theme.text),
-    ]));
+    lines.extend(labeled_lines("  Dimensions:    ", dim_names, app.theme.text_dim, app.theme.text, max_width));
 
     // Chunks per dimension: shape[i] / chunk_shape[i]
     if let Some(ref meta) = meta {
@@ -421,18 +471,12 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
                     }
                 })
                 .collect();
-            lines.push(Line::from(vec![
-                Span::styled("  Chunks/dim:    ", app.theme.text_dim),
-                Span::styled(chunks_per_dim.join(" \u{00d7} "), app.theme.text),
-            ]));
+            lines.extend(labeled_lines("  Chunks/dim:    ", chunks_per_dim.join(" \u{00d7} "), app.theme.text_dim, app.theme.text, max_width));
         }
 
         // Memory layout order (v2)
         if let Some(ref order) = meta.order {
-            lines.push(Line::from(vec![
-                Span::styled("  Order:         ", app.theme.text_dim),
-                Span::styled(order.clone(), app.theme.text),
-            ]));
+            lines.extend(labeled_lines("  Order:         ", order.clone(), app.theme.text_dim, app.theme.text, max_width));
         }
     }
 
@@ -445,7 +489,7 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
 }
 
 /// Render the Storage + Attributes + Raw Metadata sections for an array node (shown after the canvas viz).
-fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::store::types::ArraySummary) -> Vec<Line<'a>> {
+fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
     let separator = "\u{2500}";
 
     let meta = if !summary.zarr_metadata.is_empty() {
@@ -466,10 +510,7 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
     if let Some(ref meta) = meta {
         let codec_display = meta.codec_chain_display();
         if !codec_display.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled("  Codecs:        ", app.theme.text_dim),
-                Span::styled(codec_display, app.theme.text),
-            ]));
+            lines.extend(labeled_lines("  Codecs:        ", codec_display, app.theme.text_dim, app.theme.text, max_width));
         }
 
         // v2 compressor (shown separately if codecs were also present)
@@ -477,49 +518,28 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
             && !meta.codecs.is_empty() {
                 // Already shown via codec_chain_display, but if both exist show compressor
                 // separately for clarity
-                lines.push(Line::from(vec![
-                    Span::styled("  Compressor:    ", app.theme.text_dim),
-                    Span::styled(comp.clone(), app.theme.text),
-                ]));
+                lines.extend(labeled_lines("  Compressor:    ", comp.clone(), app.theme.text_dim, app.theme.text, max_width));
             }
 
         // v2 filters
         if !meta.filters.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled("  Filters:       ", app.theme.text_dim),
-                Span::styled(meta.filters.join(", "), app.theme.text),
-            ]));
+            lines.extend(labeled_lines("  Filters:       ", meta.filters.join(", "), app.theme.text_dim, app.theme.text, max_width));
         }
 
-        lines.push(Line::from(vec![
-            Span::styled("  Fill value:    ", app.theme.text_dim),
-            Span::styled(meta.fill_value.clone(), app.theme.text),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("  Zarr format:   ", app.theme.text_dim),
-            Span::styled(meta.zarr_format.to_string(), app.theme.text),
-        ]));
+        lines.extend(labeled_lines("  Fill value:    ", meta.fill_value.clone(), app.theme.text_dim, app.theme.text, max_width));
+        lines.extend(labeled_lines("  Zarr format:   ", meta.zarr_format.to_string(), app.theme.text_dim, app.theme.text, max_width));
 
         if meta.dimension_separator != "/" {
-            lines.push(Line::from(vec![
-                Span::styled("  Dim separator: ", app.theme.text_dim),
-                Span::styled(meta.dimension_separator.clone(), app.theme.text),
-            ]));
+            lines.extend(labeled_lines("  Dim separator: ", meta.dimension_separator.clone(), app.theme.text_dim, app.theme.text, max_width));
         }
 
         // Storage transformers
         if !meta.storage_transformers.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled("  Transformers:  ", app.theme.text_dim),
-                Span::styled(meta.storage_transformers.join(", "), app.theme.text),
-            ]));
+            lines.extend(labeled_lines("  Transformers:  ", meta.storage_transformers.join(", "), app.theme.text_dim, app.theme.text, max_width));
         }
     }
 
-    lines.push(Line::from(vec![
-        Span::styled("  Manifests:     ", app.theme.text_dim),
-        Span::styled(summary.manifest_count.to_string(), app.theme.text),
-    ]));
+    lines.extend(labeled_lines("  Manifests:     ", summary.manifest_count.to_string(), app.theme.text_dim, app.theme.text, max_width));
 
     // ─── Chunk Types ─────────────────────
     match app.store.chunk_stats.get(path) {
@@ -548,37 +568,22 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
                 format!("  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
                 app.theme.text_dim,
             )));
-            lines.push(Line::from(vec![
-                Span::styled("  Total:         ", app.theme.text_dim),
-                Span::styled(stats.total_chunks.to_string(), app.theme.text),
-            ]));
+            lines.extend(labeled_lines("  Total:         ", stats.total_chunks.to_string(), app.theme.text_dim, app.theme.text, max_width));
 
             let total = stats.total_chunks.max(1);
 
             if stats.native_count > 0 {
                 let pct = stats.native_count * 100 / total;
-                lines.push(Line::from(vec![
-                    Span::styled("  Native:        ", app.theme.text_dim),
-                    Span::styled(format!("{} ({pct}%)", stats.native_count), app.theme.text),
-                ]));
+                lines.extend(labeled_lines("  Native:        ", format!("{} ({pct}%)", stats.native_count), app.theme.text_dim, app.theme.text, max_width));
             }
             if stats.inline_count > 0 {
                 let pct = stats.inline_count * 100 / total;
-                lines.push(Line::from(vec![
-                    Span::styled("  Inline:        ", app.theme.text_dim),
-                    Span::styled(format!("{} ({pct}%)", stats.inline_count), app.theme.text),
-                ]));
+                lines.extend(labeled_lines("  Inline:        ", format!("{} ({pct}%)", stats.inline_count), app.theme.text_dim, app.theme.text, max_width));
             }
             if stats.virtual_count > 0 {
                 let pct = stats.virtual_count * 100 / total;
                 let size_str = humansize::format_size(stats.virtual_total_bytes, humansize::DECIMAL);
-                lines.push(Line::from(vec![
-                    Span::styled("  Virtual:       ", app.theme.text_dim),
-                    Span::styled(
-                        format!("{} ({pct}%)   {size_str}", stats.virtual_count),
-                        app.theme.text,
-                    ),
-                ]));
+                lines.extend(labeled_lines("  Virtual:       ", format!("{} ({pct}%)   {size_str}", stats.virtual_count), app.theme.text_dim, app.theme.text, max_width));
                 if !stats.virtual_prefixes.is_empty() {
                     lines.push(Line::from(Span::styled("  Sources:", app.theme.text_dim)));
                     for (prefix, count) in &stats.virtual_prefixes {
