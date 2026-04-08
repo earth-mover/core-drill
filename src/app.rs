@@ -26,6 +26,8 @@ pub struct App {
     pub tree_state: tui_tree_widget::TreeState<String>,
     pub detail_scroll: usize,
     pub bottom_selected: usize,
+    /// The snapshot index whose tree is currently displayed (set on Enter, or auto on load)
+    pub active_snapshot_index: Option<usize>,
     /// Scroll offset for the snapshot table in the bottom pane
     pub bottom_table_offset: usize,
     /// Whether we've already auto-expanded the tree after initial load
@@ -54,6 +56,7 @@ impl App {
             tree_state: tui_tree_widget::TreeState::<String>::default(),
             detail_scroll: 0,
             bottom_selected: 0,
+            active_snapshot_index: None,
             bottom_table_offset: 0,
             tree_auto_expanded: false,
             last_diff_requested: None,
@@ -88,6 +91,15 @@ impl App {
                 // Kick off chunk stats for whatever array got auto-selected
                 self.maybe_request_chunk_stats();
             }
+
+        // Auto-set the active snapshot to index 0 when ancestry first loads
+        if self.active_snapshot_index.is_none() {
+            if let Some(LoadState::Loaded(entries)) = self.store.ancestry.get(&self.current_branch) {
+                if !entries.is_empty() {
+                    self.active_snapshot_index = Some(0);
+                }
+            }
+        }
 
         // Auto-request diff when bottom pane is focused on Snapshots tab
         self.maybe_request_snapshot_diff();
@@ -567,7 +579,7 @@ impl App {
                 }
             }
             Pane::Bottom => {
-                // TODO: handle enter in bottom pane
+                self.active_snapshot_index = Some(self.bottom_selected);
             }
         }
     }

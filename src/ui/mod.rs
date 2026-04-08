@@ -634,8 +634,7 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
                     lines.push(Line::from(Span::styled("  Sources:", app.theme.text_dim)));
                     for (prefix, count) in &stats.virtual_prefixes {
                         lines.push(Line::from(vec![
-                            Span::styled("    ", app.theme.text_dim),
-                            Span::styled(format!("{prefix}/"), app.theme.text),
+                            Span::styled(format!("    {prefix}/"), app.theme.text),
                             Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
                         ]));
                     }
@@ -1229,6 +1228,7 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                 .skip(visible_start)
                 .map(|(i, entry)| {
                     let is_selected = i == app.bottom_selected;
+                    let is_active = Some(i) == app.active_snapshot_index;
                     let short_id = if entry.id.len() > 12 {
                         &entry.id[..12]
                     } else {
@@ -1245,6 +1245,8 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                         row.style(app.theme.selected)
                     } else if is_selected {
                         row.style(app.theme.selected_inactive)
+                    } else if is_active {
+                        row.style(app.theme.active)
                     } else {
                         row.style(app.theme.text)
                     }

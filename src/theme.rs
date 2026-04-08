@@ -14,6 +14,7 @@ pub struct Theme {
 
     pub selected: Style,
     pub selected_inactive: Style,
+    pub active: Style,
 
     // Semantic: diff colors
     pub added: Style,
@@ -75,6 +76,7 @@ impl Default for Theme {
 
             selected: Style::default().fg(LIME).add_modifier(Modifier::BOLD),
             selected_inactive: Style::default().fg(LIGHT_GRAY),
+            active: Style::default().fg(ICECHUNK_BLUE).add_modifier(Modifier::UNDERLINED),
 
             added: Style::default().fg(GREEN),
             removed: Style::default().fg(RED),
