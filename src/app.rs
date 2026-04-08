@@ -29,7 +29,7 @@ pub struct App {
     /// Whether we've already auto-expanded the tree after initial load
     tree_auto_expanded: bool,
     /// The snapshot ID we last requested a diff for (to avoid re-requesting)
-    last_diff_requested: Option<String>,
+    pub last_diff_requested: Option<String>,
 
     // Layout areas (updated each render for mouse hit-testing)
     pub sidebar_area: Rect,

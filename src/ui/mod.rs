@@ -230,12 +230,15 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Detail;
     let block = theme::panel("[2] Detail", focused, &app.theme);
 
-    // When the bottom pane is focused on Snapshots, show the diff for the selected snapshot
-    if app.focused_pane == Pane::Bottom && app.bottom_tab == BottomTab::Snapshots {
+    // Show snapshot diff when Snapshots tab is active and a snapshot is selected
+    // (regardless of which pane is focused — the diff persists when switching to Detail)
+    if app.bottom_tab == BottomTab::Snapshots {
         if let Some(sid) = app.selected_snapshot_id() {
-            let text = render_snapshot_diff_detail(app, &sid);
-            frame.render_widget(Paragraph::new(text).block(block).wrap(Wrap { trim: false }), area);
-            return;
+            if app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid) {
+                let text = render_snapshot_diff_detail(app, &sid);
+                frame.render_widget(Paragraph::new(text).block(block).wrap(Wrap { trim: false }), area);
+                return;
+            }
         }
     }
 
