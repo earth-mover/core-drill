@@ -104,6 +104,26 @@ let tx_log = repo.asset_manager().fetch_transaction_log(&snap_id).await?;
 `TransactionLog` contains NodeIds (not paths). Only `Move` entries have paths directly.
 Deleted nodes require the parent snapshot to resolve — for the common case, skip or show NodeId fallback.
 
+In practice we skip the snapshot fetch entirely by resolving NodeIds from a cached node tree
+built during initial load (AllNodes fetch). This gives 1-fetch diff with zero extra network cost.
+
+### Potential upstream improvements to icechunk
+
+These would make diff even cheaper — worth contributing upstream:
+
+1. **Store paths in TransactionLog** — Currently the transaction log stores opaque `NodeId` (8-byte)
+   identifiers for all change types (new/deleted/updated arrays and groups). If paths were also stored,
+   a complete diff would cost exactly 1 S3 fetch (just the transaction log) with no snapshot needed.
+
+2. **`get_parent_id(snapshot_id)` without snapshot fetch** — In V2 repos, the parent is encoded as
+   a `parent_offset` index in the RepoInfo (already in-memory). Exposing a method like
+   `repo.ancestry_info(snapshot_id) -> SnapshotInfo` that reads from cached RepoInfo would let callers
+   get `parent_id` without any S3 fetch. Currently you must call `fetch_snapshot()` to get the parent.
+
+3. **Named accessor for parent_id on Snapshot** — `Snapshot::parent_id()` is marked `#[deprecated]`
+   in the icechunk-format crate. A stable, non-deprecated accessor would avoid the `#[expect(deprecated)]`
+   suppression workaround needed today.
+
 ### Gotcha: ancestry requirement
 
 `Repository::diff(from, to)` requires `from` to be an **ancestor** of `to`.
