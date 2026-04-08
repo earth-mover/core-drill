@@ -496,6 +496,7 @@ async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Resul
         virtual_count,
         virtual_prefixes,
         virtual_total_bytes,
+        stats_complete: true,
     })
 }
 
