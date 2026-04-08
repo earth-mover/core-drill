@@ -4,7 +4,7 @@ default:
 
 # Run against the public ERA5 test repo on S3
 test-s3:
-    cargo run -- 's3://icechunk-public-data/v1/era5_weatherbench2'
+    cargo run -- 's3://icechunk-public-data/v1/era5_weatherbench2?region=us-east-1'
 
 # Run against a local repo
 test-local path:
@@ -12,7 +12,7 @@ test-local path:
 
 # Run with debug logging
 test-debug:
-    RUST_LOG=debug cargo run -- 's3://icechunk-public-data/v1/era5_weatherbench2' 2>debug.log
+    RUST_LOG=debug cargo run -- 's3://icechunk-public-data/v1/era5_weatherbench2?region=us-east-1' 2>debug.log
 
 # Build release
 build:

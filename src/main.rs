@@ -22,7 +22,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Open the repository
-    let repository = repo::open(&cli.repo).await?;
+    let overrides = repo::StorageOverrides {
+        region: cli.region.clone(),
+        endpoint_url: cli.endpoint_url.clone(),
+    };
+    let repository = repo::open(&cli.repo, &overrides).await?;
 
     match cli.output {
         Some(_format) => {

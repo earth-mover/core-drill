@@ -19,6 +19,17 @@ pub struct Cli {
     #[arg(value_name = "REPO")]
     pub repo: String,
 
+    /// Cloud storage region (e.g., us-east-1)
+    ///
+    /// Can also be passed as a query parameter in the URL:
+    ///   s3://bucket/prefix?region=us-east-1
+    #[arg(long)]
+    pub region: Option<String>,
+
+    /// Storage endpoint URL (for S3-compatible services like MinIO, R2)
+    #[arg(long)]
+    pub endpoint_url: Option<String>,
+
     /// Output format for non-interactive use
     ///
     /// When set, disables the interactive TUI and prints results
