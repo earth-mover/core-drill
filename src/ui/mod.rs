@@ -707,6 +707,13 @@ fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
             frame.render_widget(theme::error_widget(msg, &app.theme), area);
         }
         LoadState::Loaded(tags) => {
+            if tags.is_empty() {
+                frame.render_widget(
+                    Paragraph::new("  No tags in this repository").style(app.theme.text_dim),
+                    area,
+                );
+                return;
+            }
             let items: Vec<ListItem> = tags
                 .iter()
                 .enumerate()
