@@ -124,51 +124,51 @@ impl App {
             }
         }
 
+        // Tab/Shift+Tab: cycle bottom tabs when bottom focused, else cycle panes
         match key.code {
             KeyCode::Tab => {
-                let next = match self.focused_pane {
-                    Pane::Sidebar => Pane::Detail,
-                    Pane::Detail => {
-                        if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
-                    }
-                    Pane::Bottom => Pane::Sidebar,
-                };
-                return Action::FocusPane(next);
-            }
-            KeyCode::BackTab => {
-                let prev = match self.focused_pane {
-                    Pane::Sidebar => {
-                        if self.bottom_visible { Pane::Bottom } else { Pane::Detail }
-                    }
-                    Pane::Detail => Pane::Sidebar,
-                    Pane::Bottom => Pane::Detail,
-                };
-                return Action::FocusPane(prev);
-            }
-            _ => {}
-        }
-
-        // Bottom tab switching (when bottom is focused, use bracket keys)
-        if self.focused_pane == Pane::Bottom {
-            match key.code {
-                KeyCode::Char('[') => {
-                    self.bottom_tab = match self.bottom_tab {
-                        BottomTab::Snapshots => BottomTab::Tags,
-                        BottomTab::Branches => BottomTab::Snapshots,
-                        BottomTab::Tags => BottomTab::Branches,
-                    };
-                    return Action::None;
-                }
-                KeyCode::Char(']') => {
+                if self.focused_pane == Pane::Bottom {
+                    // Cycle bottom tabs forward
                     self.bottom_tab = match self.bottom_tab {
                         BottomTab::Snapshots => BottomTab::Branches,
                         BottomTab::Branches => BottomTab::Tags,
                         BottomTab::Tags => BottomTab::Snapshots,
                     };
-                    return Action::None;
+                } else {
+                    // Cycle panes forward
+                    let next = match self.focused_pane {
+                        Pane::Sidebar => Pane::Detail,
+                        Pane::Detail => {
+                            if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
+                        }
+                        Pane::Bottom => Pane::Sidebar,
+                    };
+                    return Action::FocusPane(next);
                 }
-                _ => {}
+                return Action::None;
             }
+            KeyCode::BackTab => {
+                if self.focused_pane == Pane::Bottom {
+                    // Cycle bottom tabs backward
+                    self.bottom_tab = match self.bottom_tab {
+                        BottomTab::Snapshots => BottomTab::Tags,
+                        BottomTab::Branches => BottomTab::Snapshots,
+                        BottomTab::Tags => BottomTab::Branches,
+                    };
+                } else {
+                    // Cycle panes backward
+                    let prev = match self.focused_pane {
+                        Pane::Sidebar => {
+                            if self.bottom_visible { Pane::Bottom } else { Pane::Detail }
+                        }
+                        Pane::Detail => Pane::Sidebar,
+                        Pane::Bottom => Pane::Detail,
+                    };
+                    return Action::FocusPane(prev);
+                }
+                return Action::None;
+            }
+            _ => {}
         }
 
         // Pane-local navigation
