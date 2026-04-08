@@ -208,7 +208,7 @@ impl ZarrMetadata {
 
         let fill_value = v
             .get("fill_value")
-            .map(|fv| value_display(fv))
+            .map(value_display)
             .unwrap_or_else(|| "null".to_string());
 
         let dimension_separator = v

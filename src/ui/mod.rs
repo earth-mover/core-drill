@@ -233,9 +233,9 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
 
     // Show snapshot diff when bottom pane is focused (or detail pane with bottom context)
     // but NOT when sidebar is focused — sidebar navigation should show tree node details
-    if app.focused_pane != Pane::Sidebar && app.bottom_tab == BottomTab::Snapshots {
-        if let Some(sid) = app.selected_snapshot_id() {
-            if app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid) {
+    if app.focused_pane != Pane::Sidebar && app.bottom_tab == BottomTab::Snapshots
+        && let Some(sid) = app.selected_snapshot_id()
+            && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid)) {
                 let text = render_snapshot_diff_detail(app, &sid);
                 frame.render_widget(
                     Paragraph::new(text)
@@ -246,17 +246,15 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                 );
                 return;
             }
-        }
-    }
 
     // Check what's selected in the tree
     let selected = app.tree_state.selected();
     let selected_path = selected.last();
 
     // For array nodes: split into header + shape (top), canvas viz (middle), storage + rest (bottom)
-    if let Some(path) = selected_path {
-        if let Some(node) = find_node_by_path(&app.store, path) {
-            if let TreeNodeType::Array(summary) = &node.node_type {
+    if let Some(path) = selected_path
+        && let Some(node) = find_node_by_path(&app.store, path)
+            && let TreeNodeType::Array(summary) = &node.node_type {
                 // Check if we have a canvas visualization (ndim > 0)
                 if summary.shape.is_empty() {
                     // Scalar — no canvas, just text (header + all sections together)
@@ -272,45 +270,19 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                         area,
                     );
                 } else {
-                    // Three-section split: header+shape | canvas | storage+attrs
-                    let pre_text = render_array_detail_header(app, node, summary);
-                    let post_text = render_array_detail_storage(app, summary);
-
-                    let inner = block.inner(area);
-                    frame.render_widget(block, area);
-
-                    let pre_len = pre_text.len() as u16;
-                    let chunks = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Length(pre_len + 1), // header + shape section
-                            Constraint::Length(10),           // canvas viz
-                            Constraint::Min(4),               // storage + attrs + rest
-                        ])
-                        .split(inner);
-
+                    // For arrays: single scrollable paragraph (no canvas)
+                    let mut text = render_array_detail_header(app, node, summary);
+                    text.extend(render_array_detail_storage(app, summary));
                     frame.render_widget(
-                        Paragraph::new(pre_text)
+                        Paragraph::new(text)
+                            .block(block)
                             .wrap(Wrap { trim: false })
                             .scroll((app.detail_scroll as u16, 0)),
-                        chunks[0],
-                    );
-
-                    if let Some(canvas) = shape_viz::chunk_grid_canvas(summary, &app.theme) {
-                        frame.render_widget(canvas, chunks[1]);
-                    }
-
-                    frame.render_widget(
-                        Paragraph::new(post_text)
-                            .wrap(Wrap { trim: false })
-                            .scroll((app.detail_scroll as u16, 0)),
-                        chunks[2],
+                        area,
                     );
                 }
                 return;
             }
-        }
-    }
 
     // Non-array nodes: groups, repo overview
     let text = if let Some(path) = selected_path {
@@ -403,14 +375,13 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
         ]));
 
         // Show v2 dtype if different from data_type
-        if let Some(ref v2dt) = meta.v2_dtype {
-            if v2dt != &meta.data_type {
+        if let Some(ref v2dt) = meta.v2_dtype
+            && v2dt != &meta.data_type {
                 lines.push(Line::from(vec![
                     Span::styled("  Dtype (v2):    ", app.theme.text_dim),
                     Span::styled(v2dt.clone(), app.theme.text),
                 ]));
             }
-        }
     }
 
     lines.push(Line::from(vec![
@@ -430,7 +401,7 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
                 .zip(meta.chunk_shape.iter())
                 .map(|(&s, &c)| {
                     if c > 0 {
-                        ((s + c - 1) / c).to_string()
+                        s.div_ceil(c).to_string()
                     } else {
                         "?".to_string()
                     }
@@ -488,8 +459,8 @@ fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::
         }
 
         // v2 compressor (shown separately if codecs were also present)
-        if let Some(ref comp) = meta.compressor {
-            if !meta.codecs.is_empty() {
+        if let Some(ref comp) = meta.compressor
+            && !meta.codecs.is_empty() {
                 // Already shown via codec_chain_display, but if both exist show compressor
                 // separately for clarity
                 lines.push(Line::from(vec![
@@ -497,7 +468,6 @@ fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::
                     Span::styled(comp.clone(), app.theme.text),
                 ]));
             }
-        }
 
         // v2 filters
         if !meta.filters.is_empty() {
@@ -538,8 +508,8 @@ fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::
     ]));
 
     // ─── Attributes ──────────────────────
-    if let Some(ref meta) = meta {
-        if !meta.attributes.is_empty() {
+    if let Some(ref meta) = meta
+        && !meta.attributes.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 format!("  {0}{0}{0} Attributes {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
@@ -562,11 +532,10 @@ fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::
                 lines.extend(json_lines);
             }
         }
-    }
 
     // ─── Raw Metadata ────────────────────
-    if let Some(ref meta) = meta {
-        if !meta.extra_fields.is_empty() {
+    if let Some(ref meta) = meta
+        && !meta.extra_fields.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 format!("  {0}{0}{0} Raw Metadata {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
@@ -588,7 +557,6 @@ fn render_array_detail_storage<'a>(app: &'a App, summary: &crate::store::types::
                 lines.extend(json_lines);
             }
         }
-    }
 
     // Fallback: if metadata was present but couldn't be parsed, show with json_view
     if !summary.zarr_metadata.is_empty() && meta.is_none() {
@@ -1023,14 +991,11 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
             frame.render_widget(theme::error_widget(msg, &app.theme), area);
         }
         LoadState::Loaded(entries) => {
-            // Subtract 2 for borders, 2 for tab bar, 1 for table header
-            let visible_rows = (area.height as usize).saturating_sub(5).max(1);
             let visible_start = app.bottom_table_offset;
             let rows: Vec<Row> = entries
                 .iter()
                 .enumerate()
                 .skip(visible_start)
-                .take(visible_rows)
                 .map(|(i, entry)| {
                     let is_selected = i == app.bottom_selected;
                     let short_id = if entry.id.len() > 12 {

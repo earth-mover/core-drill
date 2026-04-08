@@ -81,12 +81,11 @@ impl App {
 
         // After AllNodes data arrives, auto-expand groups so the user sees
         // meaningful content immediately instead of a collapsed root.
-        if !self.tree_auto_expanded {
-            if let Some(LoadState::Loaded(_)) = self.store.node_children.get("/") {
+        if !self.tree_auto_expanded
+            && let Some(LoadState::Loaded(_)) = self.store.node_children.get("/") {
                 self.auto_expand_tree();
                 self.tree_auto_expanded = true;
             }
-        }
 
         // Auto-request diff when bottom pane is focused on Snapshots tab
         self.maybe_request_snapshot_diff();

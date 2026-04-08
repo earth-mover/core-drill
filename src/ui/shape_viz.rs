@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Dask-style chunk grid visualization using ratatui's Canvas widget.
 //!
 //! Renders zarr array chunk grids as graphical diagrams:
@@ -40,7 +41,7 @@ impl ChunkGridInfo {
             .shape
             .iter()
             .zip(chunk_shape.iter().chain(std::iter::repeat(&1)))
-            .map(|(&s, &c)| if c == 0 { 1 } else { (s + c - 1) / c })
+            .map(|(&s, &c)| if c == 0 { 1 } else { s.div_ceil(c) })
             .collect();
 
         let dim_names: Vec<String> = summary
@@ -499,7 +500,7 @@ pub fn chunk_summary_line(summary: &ArraySummary, theme: &Theme) -> Option<Line<
         .shape
         .iter()
         .zip(zarr.chunk_shape.iter())
-        .map(|(&s, &c)| if c == 0 { 1 } else { (s + c - 1) / c })
+        .map(|(&s, &c)| if c == 0 { 1 } else { s.div_ceil(c) })
         .collect();
 
     let chunk_grid_str = chunks_per_dim
