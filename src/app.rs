@@ -346,10 +346,10 @@ impl App {
     }
 
     /// Adjust bottom_table_offset so bottom_selected stays visible.
-    /// The visible rows = area height - 2 (border) - 2 (tab bar) - 1 (table header).
+    /// The visible rows = area height - 1 (table header) - 1 (tab bar), minimum 1.
     fn clamp_bottom_table_offset(&mut self) {
         let visible_rows = if let Some(area) = self.bottom_area {
-            (area.height as usize).saturating_sub(5)
+            (area.height as usize).saturating_sub(2).max(1)
         } else {
             10 // fallback if layout not yet known
         };
