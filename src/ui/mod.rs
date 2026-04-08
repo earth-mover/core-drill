@@ -618,15 +618,17 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
 
             if stats.native_count > 0 {
                 let pct = stats.native_count * 100 / total;
-                lines.extend(labeled_lines("  Native:        ", format!("{} ({pct}%)", stats.native_count), app.theme.text_dim, app.theme.text, max_width));
+                let size_str = humansize::format_size(stats.native_total_bytes, humansize::BINARY);
+                lines.extend(labeled_lines("  Native:        ", format!("{} ({pct}%)   {size_str}", stats.native_count), app.theme.text_dim, app.theme.text, max_width));
             }
             if stats.inline_count > 0 {
                 let pct = stats.inline_count * 100 / total;
-                lines.extend(labeled_lines("  Inline:        ", format!("{} ({pct}%)", stats.inline_count), app.theme.text_dim, app.theme.text, max_width));
+                let size_str = humansize::format_size(stats.inline_total_bytes, humansize::BINARY);
+                lines.extend(labeled_lines("  Inline:        ", format!("{} ({pct}%)   {size_str}", stats.inline_count), app.theme.text_dim, app.theme.text, max_width));
             }
             if stats.virtual_count > 0 {
                 let pct = stats.virtual_count * 100 / total;
-                let size_str = humansize::format_size(stats.virtual_total_bytes, humansize::DECIMAL);
+                let size_str = humansize::format_size(stats.virtual_total_bytes, humansize::BINARY);
                 lines.extend(labeled_lines("  Virtual:       ", format!("{} ({pct}%)   {size_str}", stats.virtual_count), app.theme.text_dim, app.theme.text, max_width));
                 if !stats.virtual_prefixes.is_empty() {
                     lines.push(Line::from(Span::styled("  Sources:", app.theme.text_dim)));
@@ -919,14 +921,24 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
                 let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();
                 let modified_count = diff.modified_arrays.len() + diff.modified_groups.len();
 
-                lines.push(Line::from(vec![
+                let total_chunks_changed: usize =
+                    diff.chunk_changes.iter().map(|(_, n)| n).sum();
+                let mut summary_spans = vec![
                     Span::styled("  ", app.theme.text_dim),
                     Span::styled(format!("{added_count} added"), app.theme.added),
                     Span::styled(", ", app.theme.text_dim),
                     Span::styled(format!("{deleted_count} removed"), app.theme.removed),
                     Span::styled(", ", app.theme.text_dim),
                     Span::styled(format!("{modified_count} modified"), app.theme.modified),
-                ]));
+                ];
+                if total_chunks_changed > 0 {
+                    summary_spans.push(Span::styled("  |  ", app.theme.text_dim));
+                    summary_spans.push(Span::styled(
+                        format!("{total_chunks_changed} chunks changed"),
+                        app.theme.text_dim,
+                    ));
+                }
+                lines.push(Line::from(summary_spans));
 
                 // Added section (groups + arrays, grouped by parent)
                 if !diff.added_groups.is_empty() || !diff.added_arrays.is_empty() {

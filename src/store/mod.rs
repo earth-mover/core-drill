@@ -485,7 +485,9 @@ async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Resul
 
     let mut total = 0usize;
     let mut inline = 0usize;
+    let mut inline_total_bytes = 0u64;
     let mut native = 0usize;
+    let mut native_total_bytes = 0u64;
     let mut virtual_count = 0usize;
     let mut virtual_total_bytes = 0u64;
     let mut url_counts: HashMap<String, usize> = HashMap::new();
@@ -497,8 +499,14 @@ async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Resul
         let chunk_info = result.map_err(|e| e.to_string())?;
         total += 1;
         match &chunk_info.payload {
-            icechunk::format::manifest::ChunkPayload::Inline(_) => inline += 1,
-            icechunk::format::manifest::ChunkPayload::Ref(_) => native += 1,
+            icechunk::format::manifest::ChunkPayload::Inline(bytes) => {
+                inline += 1;
+                inline_total_bytes += bytes.len() as u64;
+            }
+            icechunk::format::manifest::ChunkPayload::Ref(chunk_ref) => {
+                native += 1;
+                native_total_bytes += chunk_ref.length;
+            }
             icechunk::format::manifest::ChunkPayload::Virtual(vref) => {
                 virtual_count += 1;
                 virtual_total_bytes += vref.length;
@@ -518,7 +526,9 @@ async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Resul
     Ok(ChunkStats {
         total_chunks: total,
         inline_count: inline,
+        inline_total_bytes,
         native_count: native,
+        native_total_bytes,
         virtual_count,
         virtual_prefixes,
         virtual_total_bytes,
