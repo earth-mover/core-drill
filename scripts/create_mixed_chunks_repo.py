@@ -21,10 +21,19 @@ Array layout:  /climate_data  shape=(12, 4)  chunks=(1, 4)
   Months 4-7  → native/stored chunks  (written via zarr, stored in icechunk)
   Months 8-11 → inline chunks  (stored inline because bytes <= threshold)
 
+Additional arrays added in later commits:
+  /stations/latitude    shape=(4,)  float32  stored chunks
+  /stations/longitude   shape=(4,)  float32  stored chunks
+  /stations/elevation   shape=(4,)  float32  stored chunks
+  /climate_data_qc      shape=(12, 4)  int8  inline chunks
+  /derived/anomaly      shape=(12, 4)  float32  stored chunks
+
 Commit history:
   Commit 1: Create array skeleton + add virtual chunks for months 0–3
   Commit 2: Add native/stored chunks for months 4–7
   Commit 3: Add inline chunks for months 8–11
+  Commit 4: Add station metadata (latitude, longitude, elevation)
+  Commit 5: Add quality flags and derived variables
 """
 
 from __future__ import annotations
@@ -260,6 +269,153 @@ print(f"\nCommit 3: {commit3}")
 print("  Added: inline chunk writes for months 8, 9, 10, 11")
 
 # ---------------------------------------------------------------------------
+# Commit 4: Add station metadata (latitude, longitude, elevation)
+# ---------------------------------------------------------------------------
+# These are 4-element float32 arrays, one value per station.
+# Written with threshold=0 → stored (native) chunks.
+repo = open_repo(inline_threshold=0)
+session = repo.writable_session("main")
+store = session.store
+
+root = zarr.open_group(store, mode="a", zarr_format=3)
+stations_group = root.require_group("stations")
+
+station_latitudes  = np.array([47.6062, 34.0522, 51.5074, 35.6762], dtype="<f4")
+station_longitudes = np.array([-122.3321, -118.2437, -0.1278, 139.6503], dtype="<f4")
+station_elevations = np.array([56.0, 71.0, 11.0, 40.0], dtype="<f4")
+
+lat_arr = stations_group.require_array(
+    name="latitude",
+    shape=(4,),
+    chunks=(4,),
+    dtype="<f4",
+    compressors=None,
+    fill_value=float("nan"),
+)
+lat_arr.attrs["description"] = "Station latitude (degrees north)"
+lat_arr.attrs["units"] = "degrees_north"
+lat_arr.attrs["station_names"] = ["Seattle", "Los Angeles", "London", "Tokyo"]
+lat_arr[:] = station_latitudes
+
+lon_arr = stations_group.require_array(
+    name="longitude",
+    shape=(4,),
+    chunks=(4,),
+    dtype="<f4",
+    compressors=None,
+    fill_value=float("nan"),
+)
+lon_arr.attrs["description"] = "Station longitude (degrees east)"
+lon_arr.attrs["units"] = "degrees_east"
+lon_arr[:] = station_longitudes
+
+elev_arr = stations_group.require_array(
+    name="elevation",
+    shape=(4,),
+    chunks=(4,),
+    dtype="<f4",
+    compressors=None,
+    fill_value=float("nan"),
+)
+elev_arr.attrs["description"] = "Station elevation above sea level"
+elev_arr.attrs["units"] = "meters"
+elev_arr[:] = station_elevations
+
+commit4 = session.commit("Add station metadata")
+print(f"\nCommit 4: {commit4}")
+print(f"  Added: /stations/latitude  {station_latitudes.tolist()}")
+print(f"  Added: /stations/longitude {station_longitudes.tolist()}")
+print(f"  Added: /stations/elevation {station_elevations.tolist()}")
+
+# ---------------------------------------------------------------------------
+# Commit 5: Add quality flags and derived variables
+# ---------------------------------------------------------------------------
+# /climate_data_qc: int8 flags, chunks=(1, 4) → 4 bytes each.
+#   With inline_threshold=20, 4-byte chunks go inline.
+# /derived/anomaly: float32, chunks=(1, 4) → 16 bytes.
+#   With inline_threshold=0, 16-byte chunks go stored.
+#
+# Strategy: open with threshold=20 so QC flags (4 bytes) go inline;
+# anomaly (16 bytes) would also go inline at threshold=20, so we write
+# anomaly first in a sub-session with threshold=0, then write QC flags
+# with threshold=20.
+
+# First: write anomaly with threshold=0 → stored
+repo = open_repo(inline_threshold=0)
+session = repo.writable_session("main")
+store = session.store
+
+root = zarr.open_group(store, mode="a", zarr_format=3)
+derived_group = root.require_group("derived")
+
+# Anomaly = climate_data minus the annual mean per station
+annual_mean = np.array([
+    np.array([270.1, 271.2, 272.3, 273.4],  dtype="<f4"),
+    np.array([274.5, 275.6, 276.7, 277.8],  dtype="<f4"),
+    np.array([278.9, 279.0, 280.1, 281.2],  dtype="<f4"),
+    np.array([282.3, 283.4, 284.5, 285.6],  dtype="<f4"),
+    np.array([286.7, 287.8, 288.9, 290.0],  dtype="<f4"),
+    np.array([291.1, 292.2, 293.3, 294.4],  dtype="<f4"),
+    np.array([295.5, 296.6, 297.7, 298.8],  dtype="<f4"),
+    np.array([299.9, 300.0, 301.1, 302.2],  dtype="<f4"),
+    np.array([303.3, 304.4, 305.5, 306.6],  dtype="<f4"),
+    np.array([307.7, 308.8, 309.9, 310.0],  dtype="<f4"),
+    np.array([311.1, 312.2, 313.3, 314.4],  dtype="<f4"),
+    np.array([315.5, 316.6, 317.7, 318.8],  dtype="<f4"),
+], dtype="<f4")
+col_means = annual_mean.mean(axis=0)
+anomaly_data = (annual_mean - col_means).astype("<f4")
+
+anomaly_arr = derived_group.require_array(
+    name="anomaly",
+    shape=(12, 4),
+    chunks=(1, 4),
+    dtype="<f4",
+    compressors=None,
+    fill_value=float("nan"),
+)
+anomaly_arr.attrs["description"] = "Monthly temperature anomaly relative to annual mean per station"
+anomaly_arr.attrs["units"] = "Kelvin"
+for month in range(12):
+    anomaly_arr[month, :] = anomaly_data[month]
+
+# Do NOT commit yet — add QC flags in same session so they share one commit.
+# But QC needs threshold=20.  We must commit anomaly first, then reopen.
+session.commit("intermediate: anomaly stored before reopening for QC flags")
+
+# Now: write QC flags with threshold=20 → inline (4 bytes <= 20)
+repo = open_repo(inline_threshold=20)
+session = repo.writable_session("main")
+store = session.store
+
+root = zarr.open_group(store, mode="a", zarr_format=3)
+
+# Quality flags: 0=good, 1=suspect. Mark a few months suspect for realism.
+qc_data = np.zeros((12, 4), dtype="int8")
+qc_data[2, 1] = 1   # March, station 1 suspect
+qc_data[7, 3] = 1   # August, station 3 suspect
+qc_data[10, 0] = 1  # November, station 0 suspect
+
+qc_arr = root.require_array(
+    name="climate_data_qc",
+    shape=(12, 4),
+    chunks=(1, 4),
+    dtype="int8",
+    compressors=None,
+    fill_value=0,
+)
+qc_arr.attrs["description"] = "Quality flags for climate_data. 0=good, 1=suspect."
+qc_arr.attrs["flag_values"] = [0, 1]
+qc_arr.attrs["flag_meanings"] = ["good", "suspect"]
+for month in range(12):
+    qc_arr[month, :] = qc_data[month]
+
+commit5 = session.commit("Add quality flags and derived variables")
+print(f"\nCommit 5: {commit5}")
+print(f"  Added: /climate_data_qc  shape=(12,4) int8 — inline chunks (4 bytes <= 20-byte threshold)")
+print(f"  Added: /derived/anomaly  shape=(12,4) float32 — stored chunks")
+
+# ---------------------------------------------------------------------------
 # Verification read-back
 # ---------------------------------------------------------------------------
 print("\n--- Verification read-back ---")
@@ -275,6 +431,7 @@ all_data = climate[:]
 expected_rows = {**virtual_source_data, **native_data, **inline_data}
 
 ok = True
+print("  /climate_data (12 months × 4 stations):")
 for month in range(12):
     expected = expected_rows[month]
     actual = all_data[month]
@@ -282,18 +439,36 @@ for month in range(12):
     marker = "OK" if match else "MISMATCH"
     if not match:
         ok = False
-    print(f"  month {month:2d}: {actual.tolist()}  [{marker}]")
+    print(f"    month {month:2d}: {actual.tolist()}  [{marker}]")
 
 if ok:
     print("  All 12 months match expected values.")
 else:
     print("  WARNING: Some months did not match!")
 
+print()
+print("  /stations/latitude:  ", root["stations/latitude"][:].tolist())
+print("  /stations/longitude: ", root["stations/longitude"][:].tolist())
+print("  /stations/elevation: ", root["stations/elevation"][:].tolist())
+
+print()
+print("  /climate_data_qc (suspect flags):")
+qc_read = root["climate_data_qc"][:]
+for month in range(12):
+    row = qc_read[month].tolist()
+    print(f"    month {month:2d}: {row}")
+
+print()
+print("  /derived/anomaly (sample, months 0 and 6):")
+print(f"    month  0: {root['derived/anomaly'][0, :].tolist()}")
+print(f"    month  6: {root['derived/anomaly'][6, :].tolist()}")
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 print("\n=== Summary ===")
-print(f"\nArray: /climate_data  shape=(12, 4)  chunks=(1, 4)  dtype=float32")
+print()
+print("Array: /climate_data  shape=(12, 4)  chunks=(1, 4)  dtype=float32")
 print(f"Chunk size: {CHUNK_BYTES} bytes each")
 print()
 print(f"{'Month':>6}  {'Chunk index':>11}  {'Type':>8}  {'Description'}")
@@ -308,17 +483,36 @@ for month, ctype, desc in chunk_types:
     print(f"  {month:4d}    c/{month}/0       {ctype:>8}  {desc}")
 
 print()
-print(f"Inline threshold: 20 bytes (chunk size 16 bytes → months 8-11 inline)")
-print(f"Stored threshold: 0 bytes  (chunk size 16 bytes → months 4-7 stored)")
+print("Array: /stations/latitude   shape=(4,)  chunks=(4,)  dtype=float32  stored")
+print("Array: /stations/longitude  shape=(4,)  chunks=(4,)  dtype=float32  stored")
+print("Array: /stations/elevation  shape=(4,)  chunks=(4,)  dtype=float32  stored")
+print()
+print("Array: /climate_data_qc  shape=(12, 4)  chunks=(1, 4)  dtype=int8  inline (4 bytes <= 20-byte threshold)")
+print("Array: /derived/anomaly  shape=(12, 4)  chunks=(1, 4)  dtype=float32  stored")
+print()
+print(f"Inline threshold: 20 bytes")
+print(f"  → climate_data months 8-11 inline  (16 bytes)")
+print(f"  → climate_data_qc all months inline (4 bytes)")
+print(f"Stored threshold: 0 bytes")
+print(f"  → climate_data months 4-7 stored   (16 bytes)")
+print(f"  → stations/* stored                (16 bytes)")
+print(f"  → derived/anomaly stored           (16 bytes)")
 print()
 print(f"Virtual source A (obs station A, months 0-1): {SOURCE_DIR_A}")
 print(f"Virtual source B (obs station B, months 2-3): {SOURCE_DIR_B}")
 print(f"Icechunk repo: {REPO_DIR}")
 print()
-print(f"Commits:")
-print(f"  1: {commit1}  (virtual chunks, months 0-3)")
-print(f"  2: {commit2}  (stored chunks,  months 4-7)")
-print(f"  3: {commit3}  (inline chunks,  months 8-11)")
+print("Commits:")
+print(f"  1: {commit1}")
+print(f"       virtual chunks for months 0-3")
+print(f"  2: {commit2}")
+print(f"       stored chunks for months 4-7")
+print(f"  3: {commit3}")
+print(f"       inline chunks for months 8-11")
+print(f"  4: {commit4}")
+print(f"       /stations/latitude, /stations/longitude, /stations/elevation")
+print(f"  5: {commit5}")
+print(f"       /climate_data_qc (inline int8 flags), /derived/anomaly (stored float32)")
 print()
 print("To explore with core-drill:")
 print(f"  cargo run -- {REPO_DIR}")
