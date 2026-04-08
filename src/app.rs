@@ -28,6 +28,8 @@ pub struct App {
     pub bottom_selected: usize,
     /// Whether we've already auto-expanded the tree after initial load
     tree_auto_expanded: bool,
+    /// The snapshot ID we last requested a diff for (to avoid re-requesting)
+    last_diff_requested: Option<String>,
 
     // Layout areas (updated each render for mouse hit-testing)
     pub sidebar_area: Rect,
@@ -51,6 +53,7 @@ impl App {
             detail_scroll: 0,
             bottom_selected: 0,
             tree_auto_expanded: false,
+            last_diff_requested: None,
             sidebar_area: Rect::default(),
             detail_area: Rect::default(),
             bottom_area: None,
@@ -81,6 +84,47 @@ impl App {
                 self.tree_auto_expanded = true;
             }
         }
+
+        // Auto-request diff when bottom pane is focused on Snapshots tab
+        self.maybe_request_snapshot_diff();
+    }
+
+    /// If the bottom pane is focused on the Snapshots tab and we have a selected
+    /// snapshot that we haven't yet requested a diff for, submit the request.
+    fn maybe_request_snapshot_diff(&mut self) {
+        if self.focused_pane != Pane::Bottom || self.bottom_tab != BottomTab::Snapshots {
+            return;
+        }
+
+        let snapshot_id = self.selected_snapshot_id();
+        let Some(sid) = snapshot_id else { return };
+
+        // Don't re-request if we already have it or are loading it
+        if self.last_diff_requested.as_deref() == Some(&sid) {
+            return;
+        }
+
+        // Don't re-request if already cached
+        if self.store.diffs.contains_key(&sid) {
+            self.last_diff_requested = Some(sid);
+            return;
+        }
+
+        self.last_diff_requested = Some(sid.clone());
+        self.store.submit(DataRequest::SnapshotDiff {
+            branch: self.current_branch.clone(),
+            snapshot_id: sid,
+        });
+    }
+
+    /// Get the snapshot ID for the currently selected row in the bottom panel.
+    pub fn selected_snapshot_id(&self) -> Option<String> {
+        let ancestry = self
+            .store
+            .ancestry
+            .get(&self.current_branch)?
+            .as_loaded()?;
+        ancestry.get(self.bottom_selected).map(|e| e.id.clone())
     }
 
     /// Handle a key event
@@ -237,7 +281,10 @@ impl App {
         match self.focused_pane {
             Pane::Sidebar => { self.tree_state.key_down(); }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_add(1),
-            Pane::Bottom => self.bottom_selected = self.bottom_selected.saturating_add(1),
+            Pane::Bottom => {
+                self.bottom_selected = self.bottom_selected.saturating_add(1);
+                self.maybe_request_snapshot_diff();
+            }
         }
     }
 
@@ -245,7 +292,10 @@ impl App {
         match self.focused_pane {
             Pane::Sidebar => { self.tree_state.key_up(); }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(1),
-            Pane::Bottom => self.bottom_selected = self.bottom_selected.saturating_sub(1),
+            Pane::Bottom => {
+                self.bottom_selected = self.bottom_selected.saturating_sub(1);
+                self.maybe_request_snapshot_diff();
+            }
         }
     }
 

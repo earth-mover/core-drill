@@ -226,6 +226,15 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Detail;
     let block = theme::panel("[2] Detail", focused, &app.theme);
 
+    // When the bottom pane is focused on Snapshots, show the diff for the selected snapshot
+    if app.focused_pane == Pane::Bottom && app.bottom_tab == BottomTab::Snapshots {
+        if let Some(sid) = app.selected_snapshot_id() {
+            let text = render_snapshot_diff_detail(app, &sid);
+            frame.render_widget(Paragraph::new(text).block(block), area);
+            return;
+        }
+    }
+
     // Check what's selected in the tree
     let selected = app.tree_state.selected();
     let selected_path = selected.last();
@@ -427,6 +436,131 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
             app.theme.text_dim,
         )),
     ]
+}
+
+fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<'a>> {
+    let state = app.store.diffs.get(snapshot_id);
+
+    match state {
+        None | Some(LoadState::NotRequested) => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("  Select a snapshot to view its diff.", app.theme.text_dim)),
+            ]
+        }
+        Some(LoadState::Loading) => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled("  Loading diff...", app.theme.loading)),
+            ]
+        }
+        Some(LoadState::Error(msg)) => {
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(format!("  {msg}"), app.theme.error)),
+            ]
+        }
+        Some(LoadState::Loaded(diff)) => {
+            let short_id = if diff.snapshot_id.len() > 12 {
+                &diff.snapshot_id[..12]
+            } else {
+                &diff.snapshot_id
+            };
+            let parent_short = diff
+                .parent_id
+                .as_ref()
+                .map(|p| if p.len() > 12 { &p[..12] } else { p })
+                .unwrap_or("none");
+
+            let added_count = diff.added_arrays.len() + diff.added_groups.len();
+            let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();
+            let modified_count = diff.modified_arrays.len() + diff.modified_groups.len();
+
+            let mut lines = vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("  Snapshot: ", app.theme.text_dim),
+                    Span::styled(short_id.to_string(), app.theme.snapshot_id),
+                    Span::styled(
+                        format!("  ({parent_short} \u{2192} {short_id})"),
+                        app.theme.text_dim,
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("  Summary:  ", app.theme.text_dim),
+                    Span::styled(format!("{added_count} added"), app.theme.added),
+                    Span::styled(", ", app.theme.text_dim),
+                    Span::styled(format!("{deleted_count} removed"), app.theme.removed),
+                    Span::styled(", ", app.theme.text_dim),
+                    Span::styled(format!("{modified_count} modified"), app.theme.modified),
+                ]),
+            ];
+
+            if !diff.added_groups.is_empty() || !diff.added_arrays.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("  Added:", app.theme.added)));
+                for path in &diff.added_groups {
+                    lines.push(Line::from(Span::styled(
+                        format!("    + {path} (group)"),
+                        app.theme.added,
+                    )));
+                }
+                for path in &diff.added_arrays {
+                    lines.push(Line::from(Span::styled(
+                        format!("    + {path}"),
+                        app.theme.added,
+                    )));
+                }
+            }
+
+            if !diff.deleted_groups.is_empty() || !diff.deleted_arrays.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("  Removed:", app.theme.removed)));
+                for path in &diff.deleted_groups {
+                    lines.push(Line::from(Span::styled(
+                        format!("    - {path} (group)"),
+                        app.theme.removed,
+                    )));
+                }
+                for path in &diff.deleted_arrays {
+                    lines.push(Line::from(Span::styled(
+                        format!("    - {path}"),
+                        app.theme.removed,
+                    )));
+                }
+            }
+
+            if !diff.modified_groups.is_empty() || !diff.modified_arrays.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("  Modified:", app.theme.modified)));
+                for path in &diff.modified_groups {
+                    lines.push(Line::from(Span::styled(
+                        format!("    ~ {path} (group)"),
+                        app.theme.modified,
+                    )));
+                }
+                for path in &diff.modified_arrays {
+                    lines.push(Line::from(Span::styled(
+                        format!("    ~ {path}"),
+                        app.theme.modified,
+                    )));
+                }
+            }
+
+            if !diff.chunk_changes.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("  Chunk Changes:", app.theme.text_bold)));
+                for (path, count) in &diff.chunk_changes {
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("    {path}  "), app.theme.text),
+                        Span::styled(format!("{count} chunks"), app.theme.text_dim),
+                    ]));
+                }
+            }
+
+            lines
+        }
+    }
 }
 
 // ─── Bottom panel (snapshots / branches / tags) ──────────────

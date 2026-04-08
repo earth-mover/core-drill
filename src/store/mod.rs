@@ -41,6 +41,8 @@ pub enum DataRequest {
     /// Fetch ALL nodes in the tree for a branch in a single request.
     /// Results are organized by parent path so every group's children are cached at once.
     AllNodes { branch: String },
+    /// Fetch diff between a snapshot and its parent
+    SnapshotDiff { branch: String, snapshot_id: String },
     #[allow(dead_code)]
     OpsLog,
 }
@@ -56,6 +58,10 @@ pub enum DataResponse {
     },
     /// All nodes organized by parent path. One response populates the entire node_children cache.
     AllNodes(Result<HashMap<String, Vec<TreeNode>>, String>),
+    SnapshotDiff {
+        snapshot_id: String,
+        result: Result<DiffSummary, String>,
+    },
     OpsLog(Result<Vec<String>, String>),
 }
 
@@ -67,6 +73,7 @@ pub struct DataStore {
     pub tags: LoadState<Vec<TagInfo>>,
     pub ancestry: HashMap<String, LoadState<Vec<SnapshotEntry>>>,
     pub node_children: HashMap<String, LoadState<Vec<TreeNode>>>,
+    pub diffs: HashMap<String, LoadState<DiffSummary>>,
     pub ops_log: LoadState<Vec<String>>,
 
     // Channel for sending requests to background worker
@@ -89,6 +96,7 @@ impl DataStore {
             tags: LoadState::NotRequested,
             ancestry: HashMap::new(),
             node_children: HashMap::new(),
+            diffs: HashMap::new(),
             ops_log: LoadState::NotRequested,
             request_tx,
             response_rx,
@@ -107,6 +115,9 @@ impl DataStore {
             }
             DataRequest::AllNodes { .. } => {
                 self.node_children.insert("/".to_string(), LoadState::Loading);
+            }
+            DataRequest::SnapshotDiff { snapshot_id, .. } => {
+                self.diffs.insert(snapshot_id.clone(), LoadState::Loading);
             }
             DataRequest::OpsLog => self.ops_log = LoadState::Loading,
         }
@@ -166,6 +177,13 @@ impl DataStore {
                     }
                 }
             }
+            DataResponse::SnapshotDiff { snapshot_id, result } => {
+                let state = match result {
+                    Ok(summary) => LoadState::Loaded(summary),
+                    Err(e) => LoadState::Error(e),
+                };
+                self.diffs.insert(snapshot_id, state);
+            }
             DataResponse::OpsLog(result) => {
                 self.ops_log = match result {
                     Ok(entries) => LoadState::Loaded(entries),
@@ -218,6 +236,13 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
         DataRequest::AllNodes { branch } => {
             let result = fetch_all_nodes(repo, &branch).await;
             DataResponse::AllNodes(result)
+        }
+        DataRequest::SnapshotDiff { branch, snapshot_id } => {
+            let result = fetch_diff(repo, &branch, &snapshot_id).await;
+            DataResponse::SnapshotDiff {
+                snapshot_id,
+                result,
+            }
         }
         DataRequest::OpsLog => {
             // TODO: implement ops log fetching
@@ -364,4 +389,56 @@ async fn fetch_all_nodes(
     }
 
     Ok(children_by_parent)
+}
+
+/// Fetch the diff between a snapshot and its parent.
+/// If the snapshot has no parent (initial snapshot), returns an error message.
+async fn fetch_diff(
+    repo: &Repository,
+    branch: &str,
+    snapshot_id: &str,
+) -> Result<DiffSummary, String> {
+    use icechunk::repository::VersionInfo;
+
+    // Look up ancestry to find the parent of this snapshot
+    let ancestry = fetch_ancestry(repo, branch).await?;
+
+    let entry = ancestry
+        .iter()
+        .find(|e| e.id == snapshot_id)
+        .ok_or_else(|| format!("Snapshot {} not found in ancestry", snapshot_id))?;
+
+    let parent_id = entry
+        .parent_id
+        .as_ref()
+        .ok_or_else(|| "Initial snapshot has no parent to diff against".to_string())?;
+
+    let from_snap_id: icechunk::format::SnapshotId =
+        parent_id.as_str().try_into().map_err(|e: &str| e.to_string())?;
+    let to_snap_id: icechunk::format::SnapshotId =
+        snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
+
+    let from_version = VersionInfo::SnapshotId(from_snap_id);
+    let to_version = VersionInfo::SnapshotId(to_snap_id);
+
+    let diff = repo
+        .diff(&from_version, &to_version)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(DiffSummary {
+        snapshot_id: snapshot_id.to_string(),
+        parent_id: Some(parent_id.clone()),
+        added_arrays: diff.new_arrays.iter().map(|p| p.to_string()).collect(),
+        added_groups: diff.new_groups.iter().map(|p| p.to_string()).collect(),
+        deleted_arrays: diff.deleted_arrays.iter().map(|p| p.to_string()).collect(),
+        deleted_groups: diff.deleted_groups.iter().map(|p| p.to_string()).collect(),
+        modified_arrays: diff.updated_arrays.iter().map(|p| p.to_string()).collect(),
+        modified_groups: diff.updated_groups.iter().map(|p| p.to_string()).collect(),
+        chunk_changes: diff
+            .updated_chunks
+            .iter()
+            .map(|(p, chunks)| (p.to_string(), chunks.len()))
+            .collect(),
+    })
 }

@@ -42,6 +42,20 @@ pub enum TreeNodeType {
     Array(ArraySummary),
 }
 
+/// Summary of differences between two snapshots
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffSummary {
+    pub snapshot_id: String,
+    pub parent_id: Option<String>,
+    pub added_arrays: Vec<String>,
+    pub added_groups: Vec<String>,
+    pub deleted_arrays: Vec<String>,
+    pub deleted_groups: Vec<String>,
+    pub modified_arrays: Vec<String>,
+    pub modified_groups: Vec<String>,
+    pub chunk_changes: Vec<(String, usize)>,
+}
+
 /// Summary info for an array node
 #[derive(Debug, Clone, Serialize)]
 pub struct ArraySummary {
