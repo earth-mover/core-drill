@@ -26,6 +26,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     if app.bottom_visible {
         constraints.push(Constraint::Min(10)); // main area (sidebar + detail)
+        constraints.push(Constraint::Length(1));  // spacer before bottom panel
         constraints.push(Constraint::Length(10)); // bottom panel
     } else {
         constraints.push(Constraint::Min(10)); // main area takes all space
@@ -38,7 +39,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         .split(frame.area());
 
     let (status_area, main_area, bottom_area, hint_area) = if app.bottom_visible {
-        (vertical[0], vertical[1], Some(vertical[2]), vertical[3])
+        // indices: 0=status, 1=main, 2=spacer, 3=bottom, 4=hint
+        (vertical[0], vertical[1], Some(vertical[3]), vertical[4])
     } else {
         (vertical[0], vertical[1], None, vertical[2])
     };
@@ -51,17 +53,18 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(30), // sidebar
+            Constraint::Length(1),      // spacer
             Constraint::Percentage(70), // detail
         ])
         .split(main_area);
 
     // Store layout areas on App for mouse hit-testing
     app.sidebar_area = horizontal[0];
-    app.detail_area = horizontal[1];
+    app.detail_area = horizontal[2];
     app.bottom_area = bottom_area;
 
     render_sidebar(app, frame, horizontal[0]);
-    render_detail(app, frame, horizontal[1]);
+    render_detail(app, frame, horizontal[2]);
 
     // Bottom panel (if visible)
     if let Some(area) = bottom_area {
@@ -732,8 +735,8 @@ fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
     let tabs = Tabs::new(tab_labels)
         .block(
             Block::default()
-                .title(" [3] ")
-                .borders(Borders::TOP)
+                .title(" [3] Version Control ")
+                .borders(Borders::ALL)
                 .border_style(if focused { app.theme.border_focused } else { app.theme.border })
         )
         .select(match app.bottom_tab {
@@ -773,24 +776,23 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                 .enumerate()
                 .map(|(i, entry)| {
                     let is_selected = focused && i == app.bottom_selected;
-                    let style = if is_selected {
-                        app.theme.selected
-                    } else {
-                        app.theme.text
-                    };
                     let short_id = if entry.id.len() > 12 {
                         &entry.id[..12]
                     } else {
                         &entry.id
                     };
-                    Row::new(vec![
-                        Cell::from(Span::styled(short_id, app.theme.snapshot_id)),
-                        Cell::from(Span::styled(
+                    let row = Row::new(vec![
+                        Cell::from(Span::raw(short_id)),
+                        Cell::from(Span::raw(
                             entry.timestamp.format("%Y-%m-%d %H:%M").to_string(),
-                            app.theme.timestamp,
                         )),
-                        Cell::from(Span::styled(&entry.message, style)),
-                    ])
+                        Cell::from(Span::raw(&entry.message)),
+                    ]);
+                    if is_selected {
+                        row.style(app.theme.selected)
+                    } else {
+                        row.style(app.theme.text)
+                    }
                 })
                 .collect();
 
