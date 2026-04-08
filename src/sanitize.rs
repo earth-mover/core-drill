@@ -1,73 +1,24 @@
-//! Sanitize untrusted strings before display in the TUI.
-//!
-//! Icechunk repos from the cloud are untrusted. Metadata could contain
-//! terminal escape sequences, ANSI codes, or control characters that
-//! could hijack the terminal or confuse the display.
+//! String sanitization for untrusted data from cloud repos.
+use strip_ansi_escapes::strip;
 
-/// Strip control characters and ANSI escape sequences from a string.
-/// Preserves printable Unicode, spaces, newlines, and tabs.
 pub fn sanitize(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            // Start of an escape sequence — consume it
-            if chars.peek() == Some(&'[') {
-                // CSI sequence: ESC [ ... (parameters) final_byte (0x40-0x7E)
-                chars.next(); // consume '['
-                loop {
-                    match chars.next() {
-                        Some(c) if ('\x40'..='\x7e').contains(&c) => break,
-                        Some(_) => continue,
-                        None => break,
-                    }
-                }
-            } else if chars.peek() == Some(&']') {
-                // OSC sequence: ESC ] ... ST (ESC \ or BEL)
-                chars.next(); // consume ']'
-                loop {
-                    match chars.next() {
-                        Some('\x07') => break,            // BEL terminator
-                        Some('\x1b') => {
-                            if chars.peek() == Some(&'\\') {
-                                chars.next(); // consume '\'
-                            }
-                            break;
-                        }
-                        Some(_) => continue,
-                        None => break,
-                    }
-                }
-            } else {
-                // Other escape: ESC + single char (e.g., ESC D, ESC M)
-                chars.next(); // consume the next char
-            }
-        } else if ch == '\n' || ch == '\t' {
-            result.push(ch);
-        } else if ch.is_control() {
-            // Strip all other control characters (U+0000-U+001F except \n \t, U+007F, etc.)
-            continue;
-        } else {
-            result.push(ch);
-        }
-    }
-
-    result
+    // Strip ANSI/escape sequences using the crate
+    let stripped = strip(s);
+    // Then remove any remaining non-printable control chars (except \n \t)
+    String::from_utf8_lossy(&stripped)
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+        .collect()
 }
 
-/// Sanitize and truncate to a max length, appending "..." if truncated.
-/// `max_len` is measured in bytes for simplicity; truncation respects char boundaries.
 pub fn sanitize_truncate(s: &str, max_len: usize) -> String {
     let s = sanitize(s);
-    if s.len() <= max_len {
-        return s;
+    if s.chars().count() > max_len {
+        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{}...", truncated)
+    } else {
+        s
     }
-    let suffix = "...";
-    let target = max_len.saturating_sub(suffix.len());
-    // Find the last char boundary at or before `target`
-    let end = s.floor_char_boundary(target);
-    format!("{}{}", &s[..end], suffix)
 }
 
 #[cfg(test)]
@@ -118,7 +69,7 @@ mod tests {
     fn truncate_long_string() {
         let long = "a".repeat(200);
         let result = sanitize_truncate(&long, 50);
-        assert!(result.len() <= 50);
+        assert!(result.chars().count() <= 50);
         assert!(result.ends_with("..."));
     }
 
@@ -126,7 +77,7 @@ mod tests {
     fn truncate_with_ansi() {
         let s = format!("\x1b[31m{}\x1b[0m", "x".repeat(100));
         let result = sanitize_truncate(&s, 50);
-        assert!(result.len() <= 50);
+        assert!(result.chars().count() <= 50);
         assert!(!result.contains('\x1b'));
     }
 }

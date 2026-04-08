@@ -1024,7 +1024,7 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                     if is_selected && focused {
                         row.style(app.theme.selected)
                     } else if is_selected {
-                        row.style(app.theme.text_dim)
+                        row.style(app.theme.selected_inactive)
                     } else {
                         row.style(app.theme.text)
                     }
@@ -1063,7 +1063,7 @@ fn render_branch_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                     let style = if is_selected && focused {
                         app.theme.selected
                     } else if is_selected {
-                        app.theme.text_dim
+                        app.theme.selected_inactive
                     } else {
                         app.theme.branch
                     };
@@ -1099,7 +1099,7 @@ fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                     let style = if is_selected && focused {
                         app.theme.selected
                     } else if is_selected {
-                        app.theme.text_dim
+                        app.theme.selected_inactive
                     } else {
                         app.theme.tag
                     };

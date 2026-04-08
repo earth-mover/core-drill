@@ -7,8 +7,15 @@
 //! - 3D+: 2D front face with isometric depth offset for 3rd dimension
 
 use ratatui::prelude::*;
-use ratatui::widgets::canvas::{Canvas, Context, Line as CanvasLine, Rectangle};
+use ratatui::widgets::canvas::{Canvas, Context, Line as CanvasLine};
 use ratatui::widgets::Block;
+
+// Brand palette colors — hardcoded for reliable canvas rendering.
+// Theme color extraction via .fg returns Option<Color> and palette variants
+// (Cyan, DarkGray, etc.) may not render consistently in all terminals.
+const OUTER_COLOR: Color = Color::Rgb(94, 196, 247); // icechunk blue
+const INNER_COLOR: Color = Color::Rgb(60, 60, 80); // dark blue-gray grid lines
+const LABEL_COLOR: Color = Color::Rgb(245, 245, 245); // light gray labels
 
 use crate::store::types::ArraySummary;
 use crate::theme::Theme;
@@ -67,7 +74,7 @@ impl ChunkGridInfo {
 /// Returns `None` for scalar arrays (0D) — the caller should show a text label instead.
 pub fn chunk_grid_canvas<'a>(
     summary: &ArraySummary,
-    theme: &'a Theme,
+    _theme: &'a Theme,
 ) -> Option<Canvas<'a, impl Fn(&mut Context<'_>) + 'a>> {
     let ndim = summary.shape.len();
     if ndim == 0 {
@@ -75,15 +82,6 @@ pub fn chunk_grid_canvas<'a>(
     }
 
     let info = ChunkGridInfo::from_summary(summary);
-
-    // Colours from theme — extract the RGB values we need for canvas painting.
-    // outer_color: solid, visible border (icechunk blue / border_focused)
-    // inner_color: slightly dimmer inner grid lines (border)
-    let outer_color = theme.border_focused.fg.unwrap_or(Color::Cyan);
-    let inner_color = theme.border.fg.unwrap_or(Color::DarkGray);
-    let fill_color = theme.branch.fg.unwrap_or(Color::Cyan);
-    let label_color = theme.text.fg.unwrap_or(Color::White);
-    let bold_color = theme.text_bold.fg.unwrap_or(Color::White);
 
     // Clone data that the closure will own.
     let shape = info.shape.clone();
@@ -101,43 +99,9 @@ pub fn chunk_grid_canvas<'a>(
         .x_bounds(x_bounds)
         .y_bounds(y_bounds)
         .paint(move |ctx| match ndim {
-            1 => paint_1d(
-                ctx,
-                &shape,
-                &chunk_shape,
-                &chunks_per_dim,
-                &dim_names,
-                outer_color,
-                inner_color,
-                fill_color,
-                label_color,
-                bold_color,
-            ),
-            2 => paint_2d(
-                ctx,
-                &shape,
-                &chunk_shape,
-                &chunks_per_dim,
-                &dim_names,
-                outer_color,
-                inner_color,
-                fill_color,
-                label_color,
-                bold_color,
-            ),
-            _ => paint_3d_plus(
-                ctx,
-                &shape,
-                &chunk_shape,
-                &chunks_per_dim,
-                &dim_names,
-                ndim,
-                outer_color,
-                inner_color,
-                fill_color,
-                label_color,
-                bold_color,
-            ),
+            1 => paint_1d(ctx, &shape, &chunk_shape, &chunks_per_dim, &dim_names),
+            2 => paint_2d(ctx, &shape, &chunk_shape, &chunks_per_dim, &dim_names),
+            _ => paint_3d_plus(ctx, &shape, &chunk_shape, &chunks_per_dim, &dim_names, ndim),
         });
 
     Some(canvas)
@@ -150,11 +114,6 @@ fn paint_1d(
     chunk_shape: &[u64],
     chunks_per_dim: &[u64],
     dim_names: &[String],
-    outer_color: Color,
-    inner_color: Color,
-    fill_color: Color,
-    label_color: Color,
-    _bold_color: Color,
 ) {
     let nx = chunks_per_dim.first().copied().unwrap_or(1).min(20) as usize;
     let cs = chunk_shape.first().copied().unwrap_or(shape.first().copied().unwrap_or(1));
@@ -168,21 +127,16 @@ fn paint_1d(
     let grid_w = grid_right - grid_left;
     let cell_w = grid_w / nx as f64;
 
-    // Draw filled rectangles for each chunk
-    for i in 0..nx {
-        let x = grid_left + i as f64 * cell_w;
-        ctx.draw(&Rectangle {
-            x,
-            y: grid_bottom,
-            width: cell_w,
-            height: grid_top - grid_bottom,
-            color: fill_color,
-        });
-
-        // Chunk index label (only if space permits)
-        if nx <= 16 {
+    // Chunk index labels — no fill rectangles, transparent interiors
+    if nx <= 16 {
+        for i in 0..nx {
+            let x = grid_left + i as f64 * cell_w;
             let label = format!("{i}");
-            ctx.print(x + cell_w / 2.0 - label.len() as f64, grid_bottom + 7.0, label.fg(label_color));
+            ctx.print(
+                x + cell_w / 2.0 - label.len() as f64,
+                grid_bottom + 7.0,
+                label.fg(LABEL_COLOR),
+            );
         }
     }
 
@@ -194,17 +148,21 @@ fn paint_1d(
             y1: grid_bottom,
             x2: x,
             y2: grid_top,
-            color: inner_color,
+            color: INNER_COLOR,
         });
     }
 
-    // Outer border — solid, visible
-    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, outer_color);
+    // Outer border — solid icechunk blue
+    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, OUTER_COLOR);
 
     // Dimension name and size below
     let dim_label = dim_names.first().map(|s| s.as_str()).unwrap_or("dim0");
     let bottom_label = format!("{dim_label}: {total} \u{2192}");
-    ctx.print(grid_left + grid_w / 2.0 - bottom_label.len() as f64, grid_bottom - 4.0, bottom_label.fg(label_color));
+    ctx.print(
+        grid_left + grid_w / 2.0 - bottom_label.len() as f64,
+        grid_bottom - 4.0,
+        bottom_label.fg(LABEL_COLOR),
+    );
 
     // Chunk size labels below each cell (if few enough)
     if nx <= 8 {
@@ -217,7 +175,7 @@ fn paint_1d(
             };
             let label = format!("{actual}");
             let x = grid_left + i as f64 * cell_w + cell_w / 2.0 - label.len() as f64;
-            ctx.print(x, grid_bottom - 1.0, label.fg(inner_color));
+            ctx.print(x, grid_bottom - 1.0, label.fg(LABEL_COLOR));
         }
     }
 }
@@ -229,11 +187,6 @@ fn paint_2d(
     chunk_shape: &[u64],
     chunks_per_dim: &[u64],
     dim_names: &[String],
-    outer_color: Color,
-    inner_color: Color,
-    fill_color: Color,
-    label_color: Color,
-    _bold_color: Color,
 ) {
     let ny = chunks_per_dim.first().copied().unwrap_or(1).min(12) as usize;
     let nx = chunks_per_dim.get(1).copied().unwrap_or(1).min(16) as usize;
@@ -253,31 +206,22 @@ fn paint_2d(
     let cell_w = grid_w / nx as f64;
     let cell_h = grid_h / ny as f64;
 
-    // Draw filled rectangles for each chunk cell
-    for row in 0..ny {
-        for col in 0..nx {
-            let x = grid_left + col as f64 * cell_w;
-            // Canvas y=0 is bottom, so row 0 is at the top (highest y)
-            let y = grid_top - (row + 1) as f64 * cell_h;
-            ctx.draw(&Rectangle {
-                x,
-                y,
-                width: cell_w,
-                height: cell_h,
-                color: fill_color,
-            });
-
-            // Chunk index label in centre of cell
-            if nx <= 10 && ny <= 10 && cell_w > 4.0 && cell_h > 3.0 {
+    // Chunk index labels — no fill rectangles, transparent interiors
+    if nx <= 10 && ny <= 10 && cell_w > 4.0 && cell_h > 3.0 {
+        for row in 0..ny {
+            for col in 0..nx {
+                let x = grid_left + col as f64 * cell_w;
+                // Canvas y=0 is bottom, so row 0 is at the top (highest y)
+                let y = grid_top - (row + 1) as f64 * cell_h;
                 let label = format!("{row},{col}");
                 let lx = x + cell_w / 2.0 - label.len() as f64;
                 let ly = y + cell_h / 2.0;
-                ctx.print(lx, ly, label.fg(label_color));
+                ctx.print(lx, ly, label.fg(LABEL_COLOR));
             }
         }
     }
 
-    // Draw internal grid lines (inner dividers — slightly dimmer)
+    // Draw internal grid lines (inner dividers)
     for i in 1..nx {
         let x = grid_left + i as f64 * cell_w;
         ctx.draw(&CanvasLine {
@@ -285,7 +229,7 @@ fn paint_2d(
             y1: grid_bottom,
             x2: x,
             y2: grid_top,
-            color: inner_color,
+            color: INNER_COLOR,
         });
     }
     for j in 1..ny {
@@ -295,12 +239,12 @@ fn paint_2d(
             y1: y,
             x2: grid_right,
             y2: y,
-            color: inner_color,
+            color: INNER_COLOR,
         });
     }
 
-    // Outer border — solid, visible
-    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, outer_color);
+    // Outer border — solid icechunk blue
+    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, OUTER_COLOR);
 
     // Bottom axis: dimension name + total size, and per-chunk sizes
     let dim_x_name = dim_names.get(1).map(|s| s.as_str()).unwrap_or("dim1");
@@ -308,7 +252,7 @@ fn paint_2d(
     ctx.print(
         grid_left + grid_w / 2.0 - bottom_label.len() as f64,
         grid_bottom - 5.0,
-        bottom_label.fg(label_color),
+        bottom_label.fg(LABEL_COLOR),
     );
 
     // Per-column chunk sizes below grid
@@ -322,15 +266,14 @@ fn paint_2d(
             };
             let label = format!("{actual}");
             let x = grid_left + i as f64 * cell_w + cell_w / 2.0 - label.len() as f64;
-            ctx.print(x, grid_bottom - 2.0, label.fg(inner_color));
+            ctx.print(x, grid_bottom - 2.0, label.fg(LABEL_COLOR));
         }
     }
 
     // Right axis: dimension name + per-row sizes
     let dim_y_name = dim_names.first().map(|s| s.as_str()).unwrap_or("dim0");
-    // Vertical label on the right — place dimension name
     let right_label = format!("\u{2191} {dim_y_name}: {total_y}");
-    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(label_color));
+    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(LABEL_COLOR));
 
     // Per-row chunk sizes on the right
     if ny <= 8 {
@@ -343,7 +286,7 @@ fn paint_2d(
             };
             let label = format!("{actual}");
             let y = grid_top - j as f64 * cell_h - cell_h / 2.0;
-            ctx.print(grid_right + 2.0, y, label.fg(inner_color));
+            ctx.print(grid_right + 2.0, y, label.fg(LABEL_COLOR));
         }
     }
 }
@@ -356,11 +299,6 @@ fn paint_3d_plus(
     chunks_per_dim: &[u64],
     dim_names: &[String],
     ndim: usize,
-    outer_color: Color,
-    inner_color: Color,
-    fill_color: Color,
-    label_color: Color,
-    _bold_color: Color,
 ) {
     // For 3D+: dim0 is depth, dim1 is rows (Y), dim2 is cols (X)
     let n_depth = chunks_per_dim.first().copied().unwrap_or(1).min(6) as usize;
@@ -386,7 +324,7 @@ fn paint_3d_plus(
     let cell_w = grid_w / nx as f64;
     let cell_h = grid_h / ny as f64;
 
-    // Draw back layers (just borders with offset — use inner color for depth layers)
+    // Draw back layers (just borders with offset — inner color for depth layers)
     for layer in (1..n_back).rev() {
         let ox = layer as f64 * dx_per_layer;
         let oy = layer as f64 * dy_per_layer;
@@ -394,7 +332,7 @@ fn paint_3d_plus(
         let b = grid_bottom + oy;
         let r = grid_right + ox;
         let t = grid_top + oy;
-        draw_rect_border(ctx, l, b, r, t, inner_color);
+        draw_rect_border(ctx, l, b, r, t, INNER_COLOR);
     }
 
     // Draw connecting lines from front to back (corners)
@@ -407,7 +345,7 @@ fn paint_3d_plus(
             y1: grid_top,
             x2: grid_right + ox,
             y2: grid_top + oy,
-            color: inner_color,
+            color: INNER_COLOR,
         });
         // Top-left corner
         ctx.draw(&CanvasLine {
@@ -415,7 +353,7 @@ fn paint_3d_plus(
             y1: grid_top,
             x2: grid_left + ox,
             y2: grid_top + oy,
-            color: inner_color,
+            color: INNER_COLOR,
         });
         // Bottom-right corner
         ctx.draw(&CanvasLine {
@@ -423,29 +361,20 @@ fn paint_3d_plus(
             y1: grid_bottom,
             x2: grid_right + ox,
             y2: grid_bottom + oy,
-            color: inner_color,
+            color: INNER_COLOR,
         });
     }
 
-    // Draw front face: filled rectangles
-    for row in 0..ny {
-        for col in 0..nx {
-            let x = grid_left + col as f64 * cell_w;
-            let y = grid_top - (row + 1) as f64 * cell_h;
-            ctx.draw(&Rectangle {
-                x,
-                y,
-                width: cell_w,
-                height: cell_h,
-                color: fill_color,
-            });
-
-            // Chunk index labels
-            if nx <= 6 && ny <= 6 && cell_w > 6.0 && cell_h > 4.0 {
+    // Front face — chunk index labels, no fill rectangles (transparent interiors)
+    if nx <= 6 && ny <= 6 && cell_w > 6.0 && cell_h > 4.0 {
+        for row in 0..ny {
+            for col in 0..nx {
+                let x = grid_left + col as f64 * cell_w;
+                let y = grid_top - (row + 1) as f64 * cell_h;
                 let label = format!("{row},{col}");
                 let lx = x + cell_w / 2.0 - label.len() as f64;
                 let ly = y + cell_h / 2.0;
-                ctx.print(lx, ly, label.fg(label_color));
+                ctx.print(lx, ly, label.fg(LABEL_COLOR));
             }
         }
     }
@@ -458,7 +387,7 @@ fn paint_3d_plus(
             y1: grid_bottom,
             x2: x,
             y2: grid_top,
-            color: inner_color,
+            color: INNER_COLOR,
         });
     }
     for j in 1..ny {
@@ -468,12 +397,12 @@ fn paint_3d_plus(
             y1: y,
             x2: grid_right,
             y2: y,
-            color: inner_color,
+            color: INNER_COLOR,
         });
     }
 
-    // Front face border — solid, visible outer border
-    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, outer_color);
+    // Front face border — solid icechunk blue
+    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, OUTER_COLOR);
 
     // Labels
     let dim_x = dim_names.get(2).map(|s| s.as_str()).unwrap_or("dim2");
@@ -484,11 +413,11 @@ fn paint_3d_plus(
     ctx.print(
         grid_left + grid_w / 2.0 - bottom_label.len() as f64,
         grid_bottom - 3.0,
-        bottom_label.fg(label_color),
+        bottom_label.fg(LABEL_COLOR),
     );
 
     let right_label = format!("\u{2191} {dim_y}: {total_y}");
-    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(label_color));
+    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(LABEL_COLOR));
 
     // Depth label along the diagonal
     let depth_label = format!("{dim_z}: {total_depth} ({n_depth} chunks)");
@@ -498,17 +427,17 @@ fn paint_3d_plus(
         ctx.print(
             grid_left + ox / 2.0,
             grid_top + oy / 2.0 + 3.0,
-            depth_label.fg(label_color),
+            depth_label.fg(LABEL_COLOR),
         );
     } else {
-        ctx.print(grid_left, grid_top + 3.0, depth_label.fg(label_color));
+        ctx.print(grid_left, grid_top + 3.0, depth_label.fg(LABEL_COLOR));
     }
 
     // Extra dimensions note for 4D+
     if ndim > 3 {
         let extra: Vec<&str> = dim_names.iter().skip(3).map(|s| s.as_str()).collect();
         let extra_label = format!("+{} dims: {}", ndim - 3, extra.join(", "));
-        ctx.print(grid_left, grid_bottom - 6.0, extra_label.fg(inner_color));
+        ctx.print(grid_left, grid_bottom - 6.0, extra_label.fg(LABEL_COLOR));
     }
 }
 

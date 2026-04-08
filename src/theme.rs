@@ -74,7 +74,7 @@ impl Default for Theme {
             text_bold: Style::default().fg(LIGHT_GRAY).add_modifier(Modifier::BOLD),
 
             selected: Style::default().fg(LIME).add_modifier(Modifier::BOLD),
-            selected_inactive: Style::default().fg(LIGHT_GRAY).add_modifier(Modifier::DIM),
+            selected_inactive: Style::default().fg(LIGHT_GRAY),
 
             added: Style::default().fg(GREEN),
             removed: Style::default().fg(RED),

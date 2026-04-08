@@ -143,7 +143,6 @@ impl App {
             }
             KeyCode::Char('t') => return Action::ToggleBottom,
             KeyCode::Char('1') => return Action::FocusPane(Pane::Sidebar),
-            KeyCode::Char('2') => return Action::FocusPane(Pane::Detail),
             KeyCode::Char('3') => {
                 if !self.bottom_visible {
                     self.bottom_visible = true;
@@ -164,9 +163,6 @@ impl App {
                     return Action::None;
                 }
                 KeyCode::Char('l') | KeyCode::Right => {
-                    if self.focused_pane != Pane::Detail {
-                        return Action::FocusPane(Pane::Detail);
-                    }
                     crate::multiplexer::move_focus("right");
                     return Action::None;
                 }
@@ -199,12 +195,12 @@ impl App {
                         BottomTab::Tags => BottomTab::Snapshots,
                     };
                 } else {
-                    // Cycle panes forward
+                    // Cycle panes forward: Sidebar -> Bottom -> Sidebar
                     let next = match self.focused_pane {
-                        Pane::Sidebar => Pane::Detail,
-                        Pane::Detail => {
+                        Pane::Sidebar => {
                             if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
                         }
+                        Pane::Detail => Pane::Sidebar,
                         Pane::Bottom => Pane::Sidebar,
                     };
                     return Action::FocusPane(next);
@@ -220,13 +216,13 @@ impl App {
                         BottomTab::Tags => BottomTab::Branches,
                     };
                 } else {
-                    // Cycle panes backward
+                    // Cycle panes backward: Sidebar -> Bottom -> Sidebar
                     let prev = match self.focused_pane {
                         Pane::Sidebar => {
-                            if self.bottom_visible { Pane::Bottom } else { Pane::Detail }
+                            if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
                         }
                         Pane::Detail => Pane::Sidebar,
-                        Pane::Bottom => Pane::Detail,
+                        Pane::Bottom => Pane::Sidebar,
                     };
                     return Action::FocusPane(prev);
                 }
@@ -254,12 +250,6 @@ impl App {
                     BottomTab::Tags => BottomTab::Snapshots,
                 };
                 return Action::None;
-            }
-            KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Sidebar => {
-                return Action::FocusPane(Pane::Detail);
-            }
-            KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Detail => {
-                return Action::FocusPane(Pane::Sidebar);
             }
             _ => {}
         }
@@ -362,8 +352,6 @@ impl App {
                     self.tree_state.key_down();
                 }
             }
-        } else if self.detail_area.contains((col, row).into()) {
-            self.focused_pane = Pane::Detail;
         } else if let Some(bottom) = self.bottom_area
             && bottom.contains((col, row).into())
         {
