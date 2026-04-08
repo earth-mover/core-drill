@@ -231,9 +231,9 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Detail;
     let block = theme::panel("[2] Detail", focused, &app.theme);
 
-    // Show snapshot diff when Snapshots tab is active and a snapshot is selected
-    // (regardless of which pane is focused — the diff persists when switching to Detail)
-    if app.bottom_tab == BottomTab::Snapshots {
+    // Show snapshot diff when bottom pane is focused (or detail pane with bottom context)
+    // but NOT when sidebar is focused — sidebar navigation should show tree node details
+    if app.focused_pane != Pane::Sidebar && app.bottom_tab == BottomTab::Snapshots {
         if let Some(sid) = app.selected_snapshot_id() {
             if app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid) {
                 let text = render_snapshot_diff_detail(app, &sid);
