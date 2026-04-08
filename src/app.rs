@@ -437,20 +437,18 @@ impl App {
     }
 
     /// Adjust bottom_table_offset so bottom_selected stays visible.
-    /// The visible rows = area height - 1 (table header) - 1 (tab bar), minimum 1.
+    /// The visible rows = area height - 2 (border) - 1 (tab bar) - 1 (table header), minimum 1.
     fn clamp_bottom_table_offset(&mut self) {
-        let visible_rows = if let Some(area) = self.bottom_area {
-            (area.height as usize).saturating_sub(2).max(1)
-        } else {
-            10 // fallback if layout not yet known
-        };
-        if visible_rows == 0 {
-            return;
-        }
+        let visible = self.bottom_area
+            .map(|a| a.height as usize)
+            .unwrap_or(10)
+            .saturating_sub(4)  // borders + header + tab bar
+            .max(1);
+
         if self.bottom_selected < self.bottom_table_offset {
             self.bottom_table_offset = self.bottom_selected;
-        } else if self.bottom_selected >= self.bottom_table_offset + visible_rows {
-            self.bottom_table_offset = self.bottom_selected - visible_rows + 1;
+        } else if self.bottom_selected >= self.bottom_table_offset + visible {
+            self.bottom_table_offset = self.bottom_selected + 1 - visible;
         }
     }
 
