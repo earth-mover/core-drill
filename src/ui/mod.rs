@@ -241,12 +241,16 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Detail;
     let block = theme::panel("[2] Detail", focused, &app.theme);
 
-    // Show snapshot diff when bottom pane is focused (or detail pane with bottom context)
-    // but NOT when sidebar is focused — sidebar navigation should show tree node details
-    if app.focused_pane != Pane::Sidebar && app.bottom_tab == BottomTab::Snapshots
+    // Show snapshot detail when VC panel is on Snapshots tab,
+    // UNLESS a tree node is actively being inspected (sidebar focused AND something selected)
+    let tree_node_selected = app.focused_pane == Pane::Sidebar
+        && !app.tree_state.selected().is_empty();
+
+    if !tree_node_selected && app.bottom_tab == BottomTab::Snapshots
         && let Some(sid) = app.selected_snapshot_id()
             && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid)) {
-                let text = render_snapshot_diff_detail(app, &sid);
+                let inner_width = area.width.saturating_sub(2);
+                let text = render_snapshot_diff_detail(app, &sid, inner_width);
                 let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
                 frame.render_widget(
                     Paragraph::new(text)
@@ -780,7 +784,7 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
     ]
 }
 
-fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<'a>> {
+fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str, max_width: u16) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
     // --- Snapshot header (from ancestry, always available instantly) ---
@@ -803,10 +807,22 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
             .map(|p| if p.len() > 12 { &p[..12] } else { p.as_str() })
             .unwrap_or("none");
 
+        // Compute position counter: "N of M"
+        let ancestry_len = app
+            .store
+            .ancestry
+            .get(&app.current_branch)
+            .and_then(|s| s.as_loaded())
+            .map(|entries| entries.len())
+            .unwrap_or(0);
+        let position_n = app.active_snapshot_index.map(|i| i + 1).unwrap_or(1);
+        let position_str = format!("    ({position_n} of {ancestry_len})");
+
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("  Snapshot:  ", app.theme.text_dim),
             Span::styled(short_id.to_string(), app.theme.snapshot_id),
+            Span::styled(position_str, app.theme.text_dim),
         ]));
         lines.push(Line::from(vec![
             Span::styled("  Parent:    ", app.theme.text_dim),
@@ -819,10 +835,13 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str) -> Vec<Line<
                 app.theme.timestamp,
             ),
         ]));
-        lines.push(Line::from(vec![
-            Span::styled("  Message:   ", app.theme.text_dim),
-            Span::styled(entry.message.clone(), app.theme.text),
-        ]));
+        lines.extend(labeled_lines(
+            "  Message:   ",
+            entry.message.clone(),
+            app.theme.text_dim,
+            app.theme.text,
+            max_width,
+        ));
     }
 
     // --- Separator ---

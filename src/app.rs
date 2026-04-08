@@ -114,7 +114,7 @@ impl App {
     /// If the bottom pane is focused on the Snapshots tab and we have a selected
     /// snapshot that we haven't yet requested a diff for, submit the request.
     fn maybe_request_snapshot_diff(&mut self) {
-        if self.focused_pane != Pane::Bottom || self.bottom_tab != BottomTab::Snapshots {
+        if self.bottom_tab != BottomTab::Snapshots {
             return;
         }
 
