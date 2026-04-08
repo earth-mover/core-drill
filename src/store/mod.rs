@@ -43,8 +43,10 @@ pub enum DataRequest {
     /// Fetch ALL nodes in the tree for a branch in a single request.
     /// Results are organized by parent path so every group's children are cached at once.
     AllNodes { branch: String },
-    /// Fetch diff between a snapshot and its parent
-    SnapshotDiff { branch: String, snapshot_id: String },
+    /// Fetch diff between a snapshot and its parent.
+    /// `parent_id` is provided by the caller from the cached ancestry data so the
+    /// worker never needs to fetch the child snapshot — only the transaction log.
+    SnapshotDiff { snapshot_id: String },
     /// Fetch chunk type statistics for an array node
     ChunkStats { branch: String, path: String },
     #[allow(dead_code)]
@@ -257,8 +259,8 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
             let result = fetch_all_nodes(repo, &branch).await;
             DataResponse::AllNodes(result)
         }
-        DataRequest::SnapshotDiff { branch, snapshot_id } => {
-            let result = fetch_diff(repo, &branch, &snapshot_id).await;
+        DataRequest::SnapshotDiff { snapshot_id } => {
+            let result = fetch_diff(repo, &snapshot_id).await;
             DataResponse::SnapshotDiff {
                 snapshot_id,
                 result,
@@ -409,6 +411,7 @@ async fn fetch_all_nodes(
                 path: sanitize(&path_str),
                 name: sanitize(&name),
                 node_type,
+                node_id: node.id.to_string(),
             });
     }
 
@@ -471,7 +474,6 @@ async fn fetch_chunk_stats(repo: &Repository, branch: &str, path: &str) -> Resul
 /// (Previously required N ancestry fetches + 2 full snapshot fetches via Repository::diff().)
 async fn fetch_diff(
     repo: &Repository,
-    _branch: &str,
     snapshot_id: &str,
 ) -> Result<DiffSummary, String> {
     use icechunk::format::SnapshotId;

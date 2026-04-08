@@ -116,7 +116,6 @@ impl App {
 
         self.last_diff_requested = Some(sid.clone());
         self.store.submit(DataRequest::SnapshotDiff {
-            branch: self.current_branch.clone(),
             snapshot_id: sid,
         });
     }

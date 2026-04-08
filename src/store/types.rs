@@ -34,6 +34,8 @@ pub struct TreeNode {
     pub path: String,
     pub name: String,
     pub node_type: TreeNodeType,
+    /// Crockford Base32 NodeId string, used for diff resolution without a snapshot fetch.
+    pub node_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
