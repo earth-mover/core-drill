@@ -82,6 +82,28 @@ let diff = repo
 The result contains `new_arrays`, `new_groups`, `deleted_arrays`, `deleted_groups`,
 `updated_arrays`, `updated_groups`, and `updated_chunks`.
 
+### Fast diff via transaction log (bypass Repository::diff)
+
+`Repository::diff()` is expensive: fetches transaction log + 2 full snapshots + may preload manifests.
+
+For a parent→child diff, use this instead (min 2 S3 fetches):
+```rust
+// 1. Get snapshot to find parent_id (don't walk ancestry)
+let snap = repo.asset_manager().fetch_snapshot(&snap_id).await?;
+let parent_id = snap.parent_id(); // cheap, already have the snapshot
+
+// 2. Fetch transaction log (1 fetch)
+let tx_log = repo.asset_manager().fetch_transaction_log(&snap_id).await?;
+// tx_log has new_groups/arrays, deleted_groups/arrays, updated_groups/arrays (NodeIds)
+// moves have Paths directly
+
+// 3. Resolve NodeIds to Paths from child snapshot
+// tx_log nodes map to paths in snap (child snapshot has all nodes)
+```
+
+`TransactionLog` contains NodeIds (not paths). Only `Move` entries have paths directly.
+Deleted nodes require the parent snapshot to resolve — for the common case, skip or show NodeId fallback.
+
 ### Gotcha: ancestry requirement
 
 `Repository::diff(from, to)` requires `from` to be an **ancestor** of `to`.
