@@ -542,35 +542,79 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, summary: &crate::st
     lines.extend(labeled_lines("  Manifests:     ", summary.manifest_count.to_string(), app.theme.text_dim, app.theme.text, max_width));
 
     // ─── Chunk Types ─────────────────────
+    let chunk_section_header = format!(
+        "  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}",
+        separator
+    );
     match app.store.chunk_stats.get(path) {
         None | Some(LoadState::NotRequested) => {
-            // Not yet requested — skip section silently
+            // No full stats yet — show snapshot-derived total if available
+            if let Some(total) = summary.total_chunks {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
+                if total == 0 {
+                    lines.push(Line::from(Span::styled("  (no chunks written)", app.theme.text_dim)));
+                } else {
+                    lines.extend(labeled_lines(
+                        "  Total:         ",
+                        format!("{total}"),
+                        app.theme.text_dim,
+                        app.theme.text,
+                        max_width,
+                    ));
+                }
+            }
+            // If total_chunks is None (pre-V2 snapshot), skip section silently
         }
         Some(LoadState::Loading) => {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-                app.theme.text_dim,
-            )));
-            lines.push(Line::from(Span::styled("  Loading...", app.theme.loading)));
+            lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
+            if let Some(total) = summary.total_chunks {
+                lines.extend(labeled_lines(
+                    "  Total:         ",
+                    format!("{total} (loading type breakdown...)", ),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
+            } else {
+                lines.push(Line::from(Span::styled("  Loading...", app.theme.loading)));
+            }
         }
         Some(LoadState::Error(e)) => {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-                app.theme.text_dim,
-            )));
+            lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
             lines.push(Line::from(Span::styled(format!("  Error: {e}"), app.theme.error)));
         }
         Some(LoadState::Loaded(stats)) => {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("  {0}{0}{0} Chunk Types {0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}{0}", separator),
-                app.theme.text_dim,
-            )));
-            lines.extend(labeled_lines("  Total:         ", stats.total_chunks.to_string(), app.theme.text_dim, app.theme.text, max_width));
+            lines.push(Line::from(Span::styled(chunk_section_header, app.theme.text_dim)));
 
             let total = stats.total_chunks.max(1);
+
+            // Build the total line — include breakdown summary if all types present
+            let has_breakdown = stats.native_count > 0 || stats.inline_count > 0 || stats.virtual_count > 0;
+            if has_breakdown {
+                let mut parts = Vec::new();
+                if stats.native_count > 0 {
+                    parts.push(format!("{} native", stats.native_count));
+                }
+                if stats.inline_count > 0 {
+                    parts.push(format!("{} inline", stats.inline_count));
+                }
+                if stats.virtual_count > 0 {
+                    parts.push(format!("{} virtual", stats.virtual_count));
+                }
+                lines.extend(labeled_lines(
+                    "  Total:         ",
+                    format!("{}: {}", stats.total_chunks, parts.join(", ")),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
+            } else {
+                lines.extend(labeled_lines("  Total:         ", stats.total_chunks.to_string(), app.theme.text_dim, app.theme.text, max_width));
+            }
 
             if stats.native_count > 0 {
                 let pct = stats.native_count * 100 / total;

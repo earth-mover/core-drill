@@ -538,6 +538,7 @@ mod tests {
             dimension_names: dim_names,
             manifest_count: 1,
             zarr_metadata: zarr_meta.to_string(),
+            total_chunks: None,
         }
     }
 

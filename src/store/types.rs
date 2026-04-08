@@ -81,6 +81,9 @@ pub struct ArraySummary {
     pub dimension_names: Option<Vec<String>>,
     pub manifest_count: usize,
     pub zarr_metadata: String,
+    /// Total number of chunk references across all manifests, derived from snapshot metadata.
+    /// `None` if the snapshot predates V2 or the manifest info is unavailable.
+    pub total_chunks: Option<u64>,
 }
 
 /// Chunk type breakdown for an array

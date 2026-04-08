@@ -382,6 +382,15 @@ async fn fetch_all_nodes(
     let version = VersionInfo::BranchTipRef(branch.to_string());
     let session = repo.readonly_session(&version).await.map_err(|e| e.to_string())?;
 
+    // Fetch the snapshot once so we can cross-reference manifest metadata for chunk counts.
+    // This is the same snapshot already fetched internally by `readonly_session` — the asset
+    // manager caches it, so this is effectively a free in-memory lookup.
+    let snapshot = repo
+        .asset_manager()
+        .fetch_snapshot(session.snapshot_id())
+        .await
+        .map_err(|e| e.to_string())?;
+
     // Fetch ALL nodes from root — the snapshot has them sorted by path already
     let nodes_iter = session
         .list_nodes(&icechunk::format::Path::root())
@@ -425,11 +434,27 @@ async fn fetch_all_nodes(
                 });
                 let zarr_metadata = String::from_utf8_lossy(&node.user_data).to_string();
 
+                // Sum chunk refs across all manifests using snapshot metadata — zero extra fetches.
+                let total_chunks: Option<u64> = {
+                    let mut sum: u64 = 0;
+                    let mut all_found = true;
+                    for mref in manifests.iter() {
+                        if let Some(info) = snapshot.manifest_info(&mref.object_id) {
+                            sum += info.num_chunk_refs as u64;
+                        } else {
+                            all_found = false;
+                            break;
+                        }
+                    }
+                    if all_found { Some(sum) } else { None }
+                };
+
                 TreeNodeType::Array(ArraySummary {
                     shape: dims,
                     dimension_names: dim_names,
                     manifest_count: manifests.len(),
                     zarr_metadata: sanitize(&zarr_metadata),
+                    total_chunks,
                 })
             }
         };
