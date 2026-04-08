@@ -38,7 +38,9 @@ pub enum DataRequest {
     Branches,
     Tags,
     Ancestry { branch: String },
-    NodeChildren { branch: String, parent_path: String },
+    /// Fetch ALL nodes in the tree for a branch in a single request.
+    /// Results are organized by parent path so every group's children are cached at once.
+    AllNodes { branch: String },
     #[allow(dead_code)]
     OpsLog,
 }
@@ -52,10 +54,8 @@ pub enum DataResponse {
         branch: String,
         result: Result<Vec<SnapshotEntry>, String>,
     },
-    NodeChildren {
-        parent_path: String,
-        result: Result<Vec<TreeNode>, String>,
-    },
+    /// All nodes organized by parent path. One response populates the entire node_children cache.
+    AllNodes(Result<HashMap<String, Vec<TreeNode>>, String>),
     OpsLog(Result<Vec<String>, String>),
 }
 
@@ -105,8 +105,8 @@ impl DataStore {
             DataRequest::Ancestry { branch } => {
                 self.ancestry.insert(branch.clone(), LoadState::Loading);
             }
-            DataRequest::NodeChildren { parent_path, .. } => {
-                self.node_children.insert(parent_path.clone(), LoadState::Loading);
+            DataRequest::AllNodes { .. } => {
+                self.node_children.insert("/".to_string(), LoadState::Loading);
             }
             DataRequest::OpsLog => self.ops_log = LoadState::Loading,
         }
@@ -154,12 +154,17 @@ impl DataStore {
                 };
                 self.ancestry.insert(branch, state);
             }
-            DataResponse::NodeChildren { parent_path, result } => {
-                let state = match result {
-                    Ok(nodes) => LoadState::Loaded(nodes),
-                    Err(e) => LoadState::Error(e),
-                };
-                self.node_children.insert(parent_path, state);
+            DataResponse::AllNodes(result) => {
+                match result {
+                    Ok(children_by_parent) => {
+                        for (parent_path, nodes) in children_by_parent {
+                            self.node_children.insert(parent_path, LoadState::Loaded(nodes));
+                        }
+                    }
+                    Err(e) => {
+                        self.node_children.insert("/".to_string(), LoadState::Error(e));
+                    }
+                }
             }
             DataResponse::OpsLog(result) => {
                 self.ops_log = match result {
@@ -210,12 +215,9 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
                 result,
             }
         }
-        DataRequest::NodeChildren { branch, parent_path } => {
-            let result = fetch_node_children(repo, &branch, &parent_path).await;
-            DataResponse::NodeChildren {
-                parent_path,
-                result,
-            }
+        DataRequest::AllNodes { branch } => {
+            let result = fetch_all_nodes(repo, &branch).await;
+            DataResponse::AllNodes(result)
         }
         DataRequest::OpsLog => {
             // TODO: implement ops log fetching
@@ -287,51 +289,43 @@ async fn fetch_ancestry(repo: &Repository, branch: &str) -> Result<Vec<SnapshotE
     Ok(entries)
 }
 
-async fn fetch_node_children(
+/// Fetch ALL nodes from root in a single request and organize them by parent path.
+/// This populates the entire tree cache at once — expanding a group never needs another fetch.
+async fn fetch_all_nodes(
     repo: &Repository,
     branch: &str,
-    parent_path: &str,
-) -> Result<Vec<TreeNode>, String> {
+) -> Result<HashMap<String, Vec<TreeNode>>, String> {
     use icechunk::format::snapshot::NodeData;
     use icechunk::repository::VersionInfo;
 
     let version = VersionInfo::BranchTipRef(branch.to_string());
     let session = repo.readonly_session(&version).await.map_err(|e| e.to_string())?;
-    let path = icechunk::format::Path::root();
-    // If parent_path is not root, parse it
-    let path = if parent_path == "/" || parent_path.is_empty() {
-        path
-    } else {
-        icechunk::format::Path::new(parent_path).map_err(|e| e.to_string())?
-    };
-    let nodes_iter = session.list_nodes(&path).await.map_err(|e| e.to_string())?;
 
-    let parent_str = parent_path.to_string();
+    // Fetch ALL nodes from root — the snapshot has them sorted by path already
+    let nodes_iter = session
+        .list_nodes(&icechunk::format::Path::root())
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // Determine depth of parent so we can filter to direct children only.
-    // list_nodes() returns ALL descendants, but we only want one level deep.
-    // Root "/" has depth 0; "/foo" has depth 1; "/foo/bar" has depth 2.
-    let parent_depth: usize = if parent_str == "/" || parent_str.is_empty() {
-        0
-    } else {
-        parent_str.matches('/').count()
-    };
+    let mut children_by_parent: HashMap<String, Vec<TreeNode>> = HashMap::new();
+    // Ensure root always has an entry even if empty
+    children_by_parent.insert("/".to_string(), Vec::new());
 
-    let mut result = Vec::new();
     for node_result in nodes_iter {
         let node = node_result.map_err(|e| e.to_string())?;
         let path_str = node.path.to_string();
 
-        // Skip the parent node itself (list_nodes includes the queried node)
-        if path_str == parent_str || (parent_str == "/" && path_str == "/") {
+        // Skip the root node itself
+        if path_str == "/" {
             continue;
         }
 
-        // Only include direct children (one level deeper than parent).
-        let node_depth = path_str.matches('/').count();
-        if node_depth != parent_depth + 1 {
-            continue;
-        }
+        // Derive parent path: everything up to the last '/'
+        let parent_path = match path_str.rfind('/') {
+            Some(0) => "/".to_string(),
+            Some(idx) => path_str[..idx].to_string(),
+            None => "/".to_string(),
+        };
 
         let name = path_str.rsplit('/').next().unwrap_or("").to_string();
 
@@ -340,10 +334,13 @@ async fn fetch_node_children(
             NodeData::Array { shape, dimension_names, manifests } => {
                 let dims: Vec<u64> = shape.iter().map(|d| d.array_length()).collect();
                 let dim_names = dimension_names.as_ref().map(|names| {
-                    names.iter().filter_map(|n| {
-                        let opt: Option<String> = n.clone().into();
-                        opt
-                    }).collect()
+                    names
+                        .iter()
+                        .filter_map(|n| {
+                            let opt: Option<String> = n.clone().into();
+                            opt
+                        })
+                        .collect()
                 });
                 let zarr_metadata = String::from_utf8_lossy(&node.user_data).to_string();
 
@@ -356,11 +353,15 @@ async fn fetch_node_children(
             }
         };
 
-        result.push(TreeNode {
-            path: path_str,
-            name,
-            node_type,
-        });
+        children_by_parent
+            .entry(parent_path)
+            .or_default()
+            .push(TreeNode {
+                path: path_str,
+                name,
+                node_type,
+            });
     }
-    Ok(result)
+
+    Ok(children_by_parent)
 }

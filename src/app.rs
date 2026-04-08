@@ -1,4 +1,5 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::prelude::Rect;
 
 use crate::component::{Action, BottomTab, Pane};
 use crate::store::{DataRequest, DataStore};
@@ -25,6 +26,11 @@ pub struct App {
     pub tree_state: tui_tree_widget::TreeState<String>,
     pub detail_scroll: usize,
     pub bottom_selected: usize,
+
+    // Layout areas (updated each render for mouse hit-testing)
+    pub sidebar_area: Rect,
+    pub detail_area: Rect,
+    pub bottom_area: Option<Rect>,
 }
 
 impl App {
@@ -42,6 +48,9 @@ impl App {
             tree_state: tui_tree_widget::TreeState::<String>::default(),
             detail_scroll: 0,
             bottom_selected: 0,
+            sidebar_area: Rect::default(),
+            detail_area: Rect::default(),
+            bottom_area: None,
         }
     }
 
@@ -49,9 +58,8 @@ impl App {
     pub fn load_initial_data(&mut self) {
         self.store.submit(DataRequest::Branches);
         self.store.submit(DataRequest::Tags);
-        self.store.submit(DataRequest::NodeChildren {
+        self.store.submit(DataRequest::AllNodes {
             branch: self.current_branch.clone(),
-            parent_path: "/".to_string(),
         });
         self.store.submit(DataRequest::Ancestry {
             branch: self.current_branch.clone(),
@@ -229,6 +237,54 @@ impl App {
         }
     }
 
+    /// Handle a mouse event (click to focus pane, select item)
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+
+        let col = mouse.column;
+        let row = mouse.row;
+
+        // Determine which pane was clicked and focus it
+        if self.sidebar_area.contains((col, row).into()) {
+            self.focused_pane = Pane::Sidebar;
+
+            // Calculate which tree row was clicked relative to the sidebar inner area.
+            // The sidebar has a border (1 row) + branch selector (1 row), so content
+            // starts 2 rows below the sidebar_area top.
+            let content_top = self.sidebar_area.y + 2;
+            if row >= content_top {
+                let offset = (row - content_top) as usize;
+                // Navigate to the clicked row by selecting first and moving down
+                self.tree_state.select_first();
+                for _ in 0..offset {
+                    self.tree_state.key_down();
+                }
+            }
+        } else if self.detail_area.contains((col, row).into()) {
+            self.focused_pane = Pane::Detail;
+        } else if let Some(bottom) = self.bottom_area {
+            if bottom.contains((col, row).into()) {
+                if !self.bottom_visible {
+                    self.bottom_visible = true;
+                }
+                self.focused_pane = Pane::Bottom;
+
+                // The bottom panel has a 2-row tab bar, then content rows
+                let content_top = bottom.y + 2;
+                // Skip header row in table (1 row for snapshots table header)
+                let header_rows: u16 = match self.bottom_tab {
+                    BottomTab::Snapshots => 1,
+                    _ => 0,
+                };
+                if row >= content_top + header_rows {
+                    self.bottom_selected = (row - content_top - header_rows) as usize;
+                }
+            }
+        }
+    }
+
     fn handle_enter(&mut self) {
         match self.focused_pane {
             Pane::Sidebar => {
@@ -240,11 +296,11 @@ impl App {
                 if let Some(path) = selected.last()
                     && self.tree_state.opened().contains(&selected)
                 {
-                    // Just opened — request children if not loaded
+                    // All nodes are loaded upfront via AllNodes, but if somehow
+                    // children aren't cached yet, request them.
                     if !self.store.node_children.contains_key(path) {
-                        self.store.submit(DataRequest::NodeChildren {
+                        self.store.submit(DataRequest::AllNodes {
                             branch: self.current_branch.clone(),
-                            parent_path: path.clone(),
                         });
                     }
                 }
