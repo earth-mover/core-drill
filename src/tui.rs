@@ -27,7 +27,7 @@ fn init() -> Result<Tui> {
 /// Restore the terminal to its original state
 fn restore(terminal: &mut Tui) -> Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -40,7 +40,7 @@ pub async fn run(mut app: App) -> Result<()> {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         original_hook(panic_info);
     }));
 
@@ -56,10 +56,15 @@ pub async fn run(mut app: App) -> Result<()> {
         // to background data responses
         tokio::select! {
             maybe_event = event_stream.next() => {
-                if let Some(Ok(Event::Key(key))) = maybe_event
-                    && key.kind == KeyEventKind::Press {
+                match maybe_event {
+                    Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
                         app.handle_key(key);
                     }
+                    Some(Ok(Event::Mouse(mouse))) => {
+                        app.handle_mouse(mouse);
+                    }
+                    _ => {}
+                }
             }
             // Short sleep so we loop back to drain responses and redraw (~60fps)
             _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {}

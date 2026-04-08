@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use ratatui::prelude::Rect;
 
 use crate::component::{Action, BottomTab, Pane};
-use crate::store::{DataRequest, DataStore};
+use crate::store::{DataRequest, DataStore, LoadState, TreeNodeType};
 use crate::theme::Theme;
 
 /// Application coordinator.
@@ -26,6 +26,8 @@ pub struct App {
     pub tree_state: tui_tree_widget::TreeState<String>,
     pub detail_scroll: usize,
     pub bottom_selected: usize,
+    /// Whether we've already auto-expanded the tree after initial load
+    tree_auto_expanded: bool,
 
     // Layout areas (updated each render for mouse hit-testing)
     pub sidebar_area: Rect,
@@ -48,6 +50,7 @@ impl App {
             tree_state: tui_tree_widget::TreeState::<String>::default(),
             detail_scroll: 0,
             bottom_selected: 0,
+            tree_auto_expanded: false,
             sidebar_area: Rect::default(),
             detail_area: Rect::default(),
             bottom_area: None,
@@ -69,6 +72,15 @@ impl App {
     /// Drain all pending responses from background worker
     pub fn drain_responses(&mut self) {
         self.store.drain_responses();
+
+        // After AllNodes data arrives, auto-expand groups so the user sees
+        // meaningful content immediately instead of a collapsed root.
+        if !self.tree_auto_expanded {
+            if let Some(LoadState::Loaded(_)) = self.store.node_children.get("/") {
+                self.auto_expand_tree();
+                self.tree_auto_expanded = true;
+            }
+        }
     }
 
     /// Handle a key event
@@ -264,25 +276,87 @@ impl App {
             }
         } else if self.detail_area.contains((col, row).into()) {
             self.focused_pane = Pane::Detail;
-        } else if let Some(bottom) = self.bottom_area {
-            if bottom.contains((col, row).into()) {
-                if !self.bottom_visible {
-                    self.bottom_visible = true;
-                }
-                self.focused_pane = Pane::Bottom;
+        } else if let Some(bottom) = self.bottom_area
+            && bottom.contains((col, row).into())
+        {
+            if !self.bottom_visible {
+                self.bottom_visible = true;
+            }
+            self.focused_pane = Pane::Bottom;
 
-                // The bottom panel has a 2-row tab bar, then content rows
-                let content_top = bottom.y + 2;
-                // Skip header row in table (1 row for snapshots table header)
-                let header_rows: u16 = match self.bottom_tab {
-                    BottomTab::Snapshots => 1,
-                    _ => 0,
-                };
-                if row >= content_top + header_rows {
-                    self.bottom_selected = (row - content_top - header_rows) as usize;
-                }
+            // The bottom panel has a 2-row tab bar, then content rows
+            let content_top = bottom.y + 2;
+            // Skip header row in table (1 row for snapshots table header)
+            let header_rows: u16 = match self.bottom_tab {
+                BottomTab::Snapshots => 1,
+                _ => 0,
+            };
+            if row >= content_top + header_rows {
+                self.bottom_selected = (row - content_top - header_rows) as usize;
             }
         }
+    }
+
+    /// Auto-expand the tree when root children are all groups.
+    /// Drills down through single-child groups so the user lands on
+    /// the first meaningful level of the hierarchy.
+    fn auto_expand_tree(&mut self) {
+        let mut current_path = "/".to_string();
+        let mut identifier_path: Vec<String> = Vec::new();
+
+        loop {
+            let children = match self.store.node_children.get(&current_path) {
+                Some(LoadState::Loaded(nodes)) => nodes,
+                _ => break,
+            };
+
+            if children.is_empty() {
+                break;
+            }
+
+            let all_groups = children
+                .iter()
+                .all(|n| matches!(n.node_type, TreeNodeType::Group));
+
+            if all_groups && children.len() == 1 {
+                // Single group child — open it and keep drilling
+                let child = &children[0];
+                identifier_path.push(child.path.clone());
+                self.tree_state.open(identifier_path.clone());
+                current_path = child.path.clone();
+            } else if all_groups {
+                // Multiple group children — open them all, then select the first
+                for child in children {
+                    let mut id = identifier_path.clone();
+                    id.push(child.path.clone());
+                    self.tree_state.open(id);
+                }
+                // Select the first child
+                let first = &children[0];
+                let mut select_id = identifier_path.clone();
+                select_id.push(first.path.clone());
+                self.tree_state.select(select_id);
+                return;
+            } else {
+                // Mixed or all arrays — select the first leaf (array) or first node
+                if let Some(first_leaf) = children
+                    .iter()
+                    .find(|n| matches!(n.node_type, TreeNodeType::Array(_)))
+                {
+                    let mut select_id = identifier_path.clone();
+                    select_id.push(first_leaf.path.clone());
+                    self.tree_state.select(select_id);
+                } else {
+                    let mut select_id = identifier_path.clone();
+                    select_id.push(children[0].path.clone());
+                    self.tree_state.select(select_id);
+                }
+                return;
+            }
+        }
+
+        // Fallback: just select the first visible node
+        self.tree_state.select_first();
     }
 
     fn handle_enter(&mut self) {

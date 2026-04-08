@@ -1,3 +1,4 @@
+mod format;
 mod help;
 pub mod tree;
 
@@ -291,21 +292,55 @@ fn render_array_detail<'a>(app: &'a App, node: &crate::store::TreeNode, summary:
 
     // Pretty-print zarr metadata
     if !summary.zarr_metadata.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("  Zarr Metadata:", app.theme.text_dim)));
-        lines.push(Line::from(""));
-
-        // Try to pretty-print JSON; fall back to raw string
-        let formatted = serde_json::from_str::<serde_json::Value>(&summary.zarr_metadata)
-            .ok()
-            .and_then(|v| serde_json::to_string_pretty(&v).ok())
-            .unwrap_or_else(|| summary.zarr_metadata.clone());
-
-        for json_line in formatted.lines() {
-            lines.push(Line::from(Span::styled(
-                format!    ("  {json_line}"),
-                app.theme.text_dim,
-            )));
+        if let Some(meta) = format::ZarrMetadata::parse(&summary.zarr_metadata) {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  Zarr Metadata", app.theme.text_bold)));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  Data type:    ", app.theme.text_dim),
+                Span::styled(meta.data_type, app.theme.text),
+            ]));
+            let chunk_str = format!(
+                "[{}]",
+                meta.chunk_shape
+                    .iter()
+                    .map(|d| d.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            lines.push(Line::from(vec![
+                Span::styled("  Chunk shape:  ", app.theme.text_dim),
+                Span::styled(chunk_str, app.theme.text),
+            ]));
+            if !meta.codecs.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("  Codecs:       ", app.theme.text_dim),
+                    Span::styled(meta.codecs.join(" \u{2192} "), app.theme.text),
+                ]));
+            }
+            lines.push(Line::from(vec![
+                Span::styled("  Fill value:   ", app.theme.text_dim),
+                Span::styled(meta.fill_value, app.theme.text),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Zarr format:  ", app.theme.text_dim),
+                Span::styled(meta.zarr_format.to_string(), app.theme.text),
+            ]));
+        } else {
+            // Fall back to raw JSON if parsing fails
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  Zarr Metadata:", app.theme.text_dim)));
+            lines.push(Line::from(""));
+            let formatted = serde_json::from_str::<serde_json::Value>(&summary.zarr_metadata)
+                .ok()
+                .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                .unwrap_or_else(|| summary.zarr_metadata.clone());
+            for json_line in formatted.lines() {
+                lines.push(Line::from(Span::styled(
+                    format!("  {json_line}"),
+                    app.theme.text_dim,
+                )));
+            }
         }
     }
 
