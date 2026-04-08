@@ -1217,7 +1217,6 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                 .skip(visible_start)
                 .map(|(i, entry)| {
                     let is_selected = i == app.bottom_selected;
-                    let is_active = Some(i) == app.active_snapshot_index;
                     let short_id = if entry.id.len() > 12 {
                         &entry.id[..12]
                     } else {
@@ -1230,10 +1229,8 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                         )),
                         Cell::from(Span::raw(&entry.message)),
                     ]);
-                    if is_selected && focused {
-                        row.style(app.theme.selected)
-                    } else if is_active || is_selected {
-                        // Active snapshot stays highlighted regardless of focus
+                    if is_selected {
+                        // Cursor row stays highlighted regardless of focus
                         row.style(app.theme.selected)
                     } else {
                         row.style(app.theme.text)
