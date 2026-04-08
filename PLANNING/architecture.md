@@ -11,47 +11,86 @@ Both modes share the same data-fetching and parsing layers; only the rendering d
 
 ```
 src/
-  main.rs        — entry point, mode dispatch
-  cli.rs         — clap CLI definition with rich --help text
-  app.rs         — application state machine, navigation, event handling
-  tui.rs         — terminal setup/teardown, render loop
-  storage.rs     — async object_store abstraction (local/S3/GCS/Azure)
-  format.rs      — icechunk V2 binary parsing (header, decompression, flatbuffers)
+  main.rs              — entry point, mode dispatch
+  cli.rs               — clap CLI definition with rich --help text
+  app.rs               — coordinator: owns DataStore, Theme, NavigationContext
+  tui.rs               — terminal setup/teardown, tokio::select event loop
+  repo.rs              — thin wrapper for opening repos (local, S3, GCS, Azure, HTTP)
+  theme.rs             — Earthmover brand colors, shared styles, widget helpers
+  store/
+    mod.rs             — DataStore, LoadState, DataRequest/Response, background worker
+    types.rs           — owned domain types (BranchInfo, TagInfo, TreeNode, etc.)
+  component/
+    mod.rs             — Component trait, Action enum, NavigationTarget, View
+    (branch_list.rs)   — planned: BranchList component
+    (tag_list.rs)      — planned: TagList component
+    (snapshot_log.rs)  — planned: linear commit history
+    (diff_view.rs)     — planned: snapshot diff viewer
+    (node_tree.rs)     — planned: hierarchical node browser
+    (array_detail.rs)  — planned: array metadata detail
+    (ops_log.rs)       — planned: mutation history
   ui/
-    mod.rs       — view dispatch
-    overview.rs  — repo overview panel
-    help.rs      — keybinding help overlay
+    mod.rs             — top-level layout dispatch (status bar, tabs, content, hints)
+    overview.rs        — repo overview panel
+    help.rs            — keybinding help overlay
 ```
 
 ## Data Flow
 
 ```
-CLI args → storage backend init → fetch repo info (single cheap read)
-  → parse branches, tags, snapshots, ancestry, ops log, status
-  → lazy-load snapshots on demand (one fetch per snapshot)
-  → lazy-load manifests on demand (one fetch per manifest)
-  → never fetch chunks unless explicitly requested
+CLI args → repo::open (detect backend) → Repository
+  → DataStore::new(repo) spawns background worker
+  → App::load_initial_data() submits Branches + Tags requests
+  → Worker fetches via icechunk API, sends DataResponse via channel
+  → App::drain_responses() updates LoadState cache
+  → UI renders from LoadState (NotRequested | Loading | Loaded | Error)
+  → User navigates → new DataRequests submitted → lazy loading
 ```
+
+## Component Architecture
+
+```
+┌─────────────┐     DataRequest     ┌──────────────┐    icechunk     ┌────────────┐
+│  Components  │ ─────────────────> │   DataStore   │ ──────────────> │  Worker    │
+│  (UI state)  │ <───────────────── │   (cache)     │ <────────────── │  (Arc<Repo>)│
+└─────────────┘     LoadState       └──────────────┘   DataResponse   └────────────┘
+       │                                  │
+       │         ┌─────────┐              │
+       └────────>│   App   │<─────────────┘
+                 │(coordinator)
+                 └─────────┘
+```
+
+- **Components** own UI state (selection, scroll). Never touch icechunk.
+- **DataStore** owns cached data as `LoadState<T>`. Lives on main thread.
+- **Worker** owns `Arc<Repository>`, runs in background tokio task.
+- **App** is the coordinator: routes events, processes Actions, drains responses.
 
 ## Async Model
 
-- tokio runtime on main thread
-- UI rendering on main thread via ratatui
-- All I/O spawned as tokio tasks
-- `tokio::sync::mpsc` channels for background → UI communication
-- Loading states shown in UI while fetches are in-flight
+- tokio runtime, UI on main thread
+- `tokio::select!` with crossterm `EventStream` + 16ms timeout (~60fps)
+- All I/O spawned as tokio tasks in the worker
+- `mpsc::unbounded_channel` for request/response
+- `drain_responses()` called each frame before rendering
 
-## Metadata Fetch Hierarchy (cheap → expensive)
+## Navigation
 
-1. **Repo info file** (single fetch): branches, tags, all snapshot IDs + timestamps + messages, full ancestry graph (parent_offset), ops log, repo status, config, feature flags
-2. **Snapshot file** (one fetch per snapshot): complete node tree (sorted by path), array zarr metadata, shape, dimension names, manifest refs with extents
-3. **Manifest file** (one fetch per manifest): chunk coordinate → location mappings, inline chunks, virtual refs
-4. **Chunk files**: actual data — avoid unless user explicitly requests
+Actions carry transition-specific data (`NavigationTarget::Log { branch }`).
+App also maintains `NavigationContext` (current_branch, current_snapshot, current_path)
+as convenience state derived from the latest navigation.
+
+## Design Principles
+
+- **Thin layer on icechunk** — presentation only, never override icechunk defaults
+- **Metadata-first** — compute from cheap repo info before fetching snapshots/manifests
+- **LoadState pattern** — explicit four-state enum, components always know what to render
+- **Buy over build** — icechunk does parsing, caching, storage; we just display
 
 ## Performance Shortcuts from the Format
 
 - All lists are sorted → binary search for lookups
-- Ancestry encoded as parent_offset index → O(1) parent lookup, no sequential reads
-- Snapshot metadata in repo file → no need to fetch snapshot files just for timestamps/messages
-- ManifestRef extents → know which manifest has which chunks without reading all manifests
+- Ancestry encoded as parent_offset index → O(1) parent lookup
+- Snapshot metadata in repo file → no need to fetch snapshot files for timestamps/messages
+- ManifestRef extents → know which manifest covers which chunks
 - Node paths sorted component-wise → efficient tree reconstruction

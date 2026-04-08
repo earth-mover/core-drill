@@ -3,35 +3,78 @@ use ratatui::prelude::*;
 use ratatui::widgets::*;
 
 use crate::app::App;
+use crate::theme;
 
-pub fn render(_app: &App, frame: &mut Frame, area: Rect) {
+pub fn render(app: &App, frame: &mut Frame, area: Rect) {
+    let t = &app.theme;
+
     let help_text = vec![
         Line::from(""),
-        Line::from(Span::styled("  Navigation", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("  Navigation", t.text_bold)),
         Line::from(""),
-        Line::from("  1-6          Jump to view by number"),
-        Line::from("  j / ↓        Move selection down"),
-        Line::from("  k / ↑        Move selection up"),
-        Line::from("  Enter        Drill into selected item"),
-        Line::from("  Esc / Bksp   Go back"),
+        Line::from(vec![
+            Span::styled("  1-6          ", t.branch),
+            Span::styled("Jump to view by number", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  j / \u{2193}        ", t.branch),
+            Span::styled("Move selection down", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  k / \u{2191}        ", t.branch),
+            Span::styled("Move selection up", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  Enter        ", t.branch),
+            Span::styled("Drill into selected item", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  Esc / Bksp   ", t.branch),
+            Span::styled("Go back", t.text),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("  General", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("  General", t.text_bold)),
         Line::from(""),
-        Line::from("  ?            Toggle this help"),
-        Line::from("  q            Quit"),
+        Line::from(vec![
+            Span::styled("  ?            ", t.branch),
+            Span::styled("Toggle this help", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  q            ", t.branch),
+            Span::styled("Quit", t.text),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("  Views", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled("  Views", t.text_bold)),
         Line::from(""),
-        Line::from("  1  Overview      Repository summary"),
-        Line::from("  2  Branches      List all branches"),
-        Line::from("  3  Tags          List all tags"),
-        Line::from("  4  Log           Snapshot history"),
-        Line::from("  5  Tree          Node tree browser"),
-        Line::from("  6  Ops Log       Mutation history"),
+        Line::from(vec![
+            Span::styled("  1  Overview      ", t.tag),
+            Span::styled("Repository summary", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  2  Branches      ", t.tag),
+            Span::styled("List all branches", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  3  Tags          ", t.tag),
+            Span::styled("List all tags", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  4  Log           ", t.tag),
+            Span::styled("Snapshot history", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  5  Tree          ", t.tag),
+            Span::styled("Node tree browser", t.text),
+        ]),
+        Line::from(vec![
+            Span::styled("  6  Ops Log       ", t.tag),
+            Span::styled("Mutation history", t.text),
+        ]),
     ];
 
+    let block = theme::panel("Help", true, &app.theme);
     let help = Paragraph::new(help_text)
-        .block(Block::default().borders(Borders::ALL).title(" Help "))
-        .style(Style::default().fg(Color::White));
+        .block(block)
+        .style(t.text);
     frame.render_widget(help, area);
 }

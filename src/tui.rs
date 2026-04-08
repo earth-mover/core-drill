@@ -2,10 +2,11 @@ use std::io::{self, Stdout};
 
 use color_eyre::Result;
 use crossterm::{
-    event::{self, Event, KeyEventKind},
+    event::{Event, EventStream, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use futures::StreamExt;
 use ratatui::{Terminal, prelude::CrosstermBackend};
 
 use crate::app::App;
@@ -43,15 +44,25 @@ pub async fn run(mut app: App) -> Result<()> {
         original_hook(panic_info);
     }));
 
+    let mut event_stream = EventStream::new();
+
     loop {
+        // Drain any pending background responses before rendering
+        app.drain_responses();
+
         terminal.draw(|frame| ui::render(&app, frame))?;
 
-        // Poll for events with a timeout so we can handle async updates
-        if event::poll(std::time::Duration::from_millis(50))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            app.handle_key(key);
+        // Wait for either a terminal event or a short timeout to stay responsive
+        // to background data responses
+        tokio::select! {
+            maybe_event = event_stream.next() => {
+                if let Some(Ok(Event::Key(key))) = maybe_event
+                    && key.kind == KeyEventKind::Press {
+                        app.handle_key(key);
+                    }
+            }
+            // Short sleep so we loop back to drain responses and redraw (~60fps)
+            _ = tokio::time::sleep(std::time::Duration::from_millis(16)) => {}
         }
 
         if app.should_quit {

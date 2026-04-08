@@ -1,6 +1,9 @@
 mod app;
 mod cli;
+mod component;
 mod repo;
+mod store;
+mod theme;
 mod tui;
 mod ui;
 
@@ -12,9 +15,7 @@ use color_eyre::Result;
 async fn main() -> Result<()> {
     color_eyre::install()?;
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .init();
 
@@ -30,8 +31,9 @@ async fn main() -> Result<()> {
         }
         None => {
             // Interactive TUI mode
-            let mut app = app::App::new(repository);
-            app.load_repo_info().await?;
+            let data_store = store::DataStore::new(repository);
+            let mut app = app::App::new(data_store);
+            app.load_initial_data();
             tui::run(app).await?;
         }
     }

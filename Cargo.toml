@@ -15,7 +15,7 @@ icechunk = { path = "../icechunk/icechunk" }
 
 # TUI framework
 ratatui = { version = "0.29", features = ["crossterm"] }
-crossterm = "0.28"
+crossterm = { version = "0.28", features = ["event-stream"] }
 tui-input = "0.11"
 
 # Async runtime
