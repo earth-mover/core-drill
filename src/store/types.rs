@@ -109,3 +109,21 @@ pub struct ChunkStats {
     /// True when inline/native/virtual breakdown is fully populated.
     pub stats_complete: bool,
 }
+
+/// Repository-level configuration and status info
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoConfig {
+    pub spec_version: String,
+    pub inline_chunk_threshold: Option<u16>,
+    pub availability: String,
+    pub feature_flags: Vec<FeatureFlagInfo>,
+}
+
+/// A single feature flag with its state
+#[derive(Debug, Clone, Serialize)]
+pub struct FeatureFlagInfo {
+    pub name: String,
+    pub enabled: bool,
+    /// True if explicitly set by user, false if using default
+    pub explicit: bool,
+}

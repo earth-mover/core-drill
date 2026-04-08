@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::prelude::Rect;
 
-use crate::component::{Action, BottomTab, Pane};
+use crate::component::{Action, BottomTab, DetailMode, Pane};
 use crate::store::{DataRequest, DataStore, LoadState, TreeNodeType};
 use crate::theme::Theme;
 
@@ -12,29 +12,34 @@ pub struct App {
     pub theme: Theme,
     pub should_quit: bool,
 
-    // Layout
+    // ─── Version control state (source of truth) ─────────────
+    /// The active branch. Changing this reloads ancestry + tree.
+    pub current_branch: String,
+    /// The active snapshot ID. Derived from branch tip initially,
+    /// updated when navigating snapshots/tags. Drives tree + diffs.
+    pub current_snapshot: Option<String>,
+    pub repo_url: String,
+
+    // ─── View state (UI only) ────────────────────────────────
     pub focused_pane: Pane,
     pub bottom_visible: bool,
     pub bottom_tab: BottomTab,
+    pub detail_mode: DetailMode,
     pub show_help: bool,
 
-    // Navigation context
-    pub current_branch: String,
-    pub repo_url: String,
-
-    // Per-pane selection state
+    // ─── Selection state ─────────────────────────────────────
     pub tree_state: tui_tree_widget::TreeState<String>,
     pub detail_scroll: usize,
-    pub bottom_selected: usize,
-    /// The snapshot index whose tree is currently displayed (set on Enter, or auto on load)
-    pub active_snapshot_index: Option<usize>,
-    /// Scroll offset for the snapshot table in the bottom pane
-    pub bottom_table_offset: usize,
-    /// Whether we've already auto-expanded the tree after initial load
+    /// Per-tab selection index (not shared across tabs)
+    pub tab_selection: [usize; 3], // [Snapshots, Branches, Tags]
+    /// Per-tab scroll offset
+    pub tab_offset: [usize; 3],
+
+    // ─── Internal bookkeeping ────────────────────────────────
     tree_auto_expanded: bool,
-    /// The snapshot ID we last requested a diff for (to avoid re-requesting)
+    /// Dedup guard: last snapshot we requested a diff for
     pub last_diff_requested: Option<String>,
-    /// The snapshot ID we last requested a tree (AllNodes) for (to avoid re-requesting)
+    /// Dedup guard: last snapshot we requested a tree for
     pub last_tree_snapshot_requested: Option<String>,
 
     // Layout areas (updated each render for mouse hit-testing)
@@ -52,20 +57,122 @@ impl App {
             focused_pane: Pane::Sidebar,
             bottom_visible: true,
             bottom_tab: BottomTab::Snapshots,
+            detail_mode: DetailMode::Node,
             show_help: false,
             current_branch: "main".to_string(),
             repo_url,
             tree_state: tui_tree_widget::TreeState::<String>::default(),
+            current_snapshot: None,
             detail_scroll: 0,
-            bottom_selected: 0,
-            active_snapshot_index: None,
-            bottom_table_offset: 0,
+            tab_selection: [0; 3],
+            tab_offset: [0; 3],
             tree_auto_expanded: false,
             last_diff_requested: None,
             last_tree_snapshot_requested: None,
             sidebar_area: Rect::default(),
             detail_area: Rect::default(),
             bottom_area: None,
+        }
+    }
+
+    // ─── Tab selection accessors ────────────────────────────
+    fn tab_index(tab: BottomTab) -> usize {
+        match tab { BottomTab::Snapshots => 0, BottomTab::Branches => 1, BottomTab::Tags => 2 }
+    }
+    pub fn bottom_selected(&self) -> usize { self.tab_selection[Self::tab_index(self.bottom_tab)] }
+    pub fn bottom_offset(&self) -> usize { self.tab_offset[Self::tab_index(self.bottom_tab)] }
+    fn set_bottom_selected(&mut self, val: usize) { self.tab_selection[Self::tab_index(self.bottom_tab)] = val; }
+    fn set_bottom_offset(&mut self, val: usize) { self.tab_offset[Self::tab_index(self.bottom_tab)] = val; }
+
+    // ─── State setters that propagate to dependents ──────────
+
+    /// Change branch. Reloads ancestry + tree. Resets snapshot to branch tip.
+    fn set_branch(&mut self, branch: String) {
+        if branch == self.current_branch { return; }
+        self.current_branch = branch;
+        self.current_snapshot = None; // will resolve to tip once ancestry loads
+        self.tree_state = tui_tree_widget::TreeState::default();
+        self.tree_auto_expanded = false;
+        self.last_diff_requested = None;
+        self.last_tree_snapshot_requested = None;
+        // Fetch tree + ancestry for this branch (branches/tags/config don't change)
+        self.store.submit(DataRequest::AllNodes {
+            branch: self.current_branch.clone(),
+            snapshot_id: None,
+        });
+        self.store.submit(DataRequest::Ancestry {
+            branch: self.current_branch.clone(),
+        });
+    }
+
+    /// Change snapshot. Reloads tree at that snapshot and requests diff.
+    fn set_snapshot(&mut self, snapshot_id: Option<String>) {
+        if self.current_snapshot == snapshot_id { return; }
+        self.current_snapshot = snapshot_id;
+        self.tree_auto_expanded = false;
+        // Fetch tree at this snapshot (or branch tip if None)
+        let snap = self.current_snapshot.clone();
+        self.store.submit(DataRequest::AllNodes {
+            branch: self.current_branch.clone(),
+            snapshot_id: snap.clone(),
+        });
+        // Request diff if we have a snapshot
+        if let Some(ref sid) = self.current_snapshot {
+            if self.last_diff_requested.as_ref() != Some(sid) {
+                let parent_id = self.store.ancestry
+                    .get(&self.current_branch)
+                    .and_then(|s| s.as_loaded())
+                    .and_then(|entries| entries.iter().find(|e| e.id == *sid))
+                    .and_then(|e| e.parent_id.clone());
+                self.last_diff_requested = Some(sid.clone());
+                self.store.submit(DataRequest::SnapshotDiff {
+                    snapshot_id: sid.clone(),
+                    parent_id,
+                });
+            }
+        }
+    }
+
+    /// Called when tree selection changes — updates detail state.
+    fn on_tree_selection_changed(&mut self) {
+        self.detail_scroll = 0;
+        self.detail_mode = DetailMode::Node;
+        self.maybe_request_chunk_stats();
+    }
+
+    /// Called when any bottom-panel selection changes.
+    fn on_bottom_selection_changed(&mut self) {
+        self.detail_scroll = 0;
+        // Only switch to Node mode for Snapshots (where detail shows diffs).
+        // Branches/Tags may be browsed while viewing the Repo tab.
+        if self.bottom_tab == BottomTab::Snapshots {
+            self.detail_mode = DetailMode::Node;
+        }
+        self.clamp_bottom_table_offset();
+        match self.bottom_tab {
+            BottomTab::Snapshots => {
+                // Derive snapshot ID from selection index
+                let snap_id = self.store.ancestry
+                    .get(&self.current_branch)
+                    .and_then(|s| s.as_loaded())
+                    .and_then(|entries| entries.get(self.bottom_selected()))
+                    .map(|e| e.id.clone());
+                self.set_snapshot(snap_id);
+            }
+            BottomTab::Branches => {
+                if let Some(branches) = self.store.branches.as_loaded() {
+                    if let Some(branch) = branches.get(self.bottom_selected()) {
+                        self.set_branch(branch.name.clone());
+                    }
+                }
+            }
+            BottomTab::Tags => {
+                if let Some(tags) = self.store.tags.as_loaded() {
+                    if let Some(tag) = tags.get(self.bottom_selected()) {
+                        self.set_snapshot(Some(tag.snapshot_id.clone()));
+                    }
+                }
+            }
         }
     }
 
@@ -82,6 +189,7 @@ impl App {
         self.store.submit(DataRequest::Ancestry {
             branch: self.current_branch.clone(),
         });
+        self.store.submit(DataRequest::RepoConfig);
     }
 
     /// Drain all pending responses from background worker
@@ -98,11 +206,27 @@ impl App {
                 self.maybe_request_chunk_stats();
             }
 
-        // Auto-set the active snapshot to index 0 when ancestry first loads
-        if self.active_snapshot_index.is_none() {
+        // Once branches load, sync the Branches tab selection to current_branch.
+        // Also verify current_branch actually exists — fall back to first branch if not.
+        if let Some(LoadState::Loaded(branches)) = Some(&self.store.branches) {
+            if !branches.is_empty() {
+                let branch_exists = branches.iter().any(|b| b.name == self.current_branch);
+                if !branch_exists {
+                    // "main" doesn't exist — use the first branch
+                    self.current_branch = branches[0].name.clone();
+                }
+                // Sync Branches tab selection to current_branch
+                if let Some(idx) = branches.iter().position(|b| b.name == self.current_branch) {
+                    self.tab_selection[1] = idx; // 1 = Branches tab
+                }
+            }
+        }
+
+        // Auto-set the active snapshot to tip when ancestry first loads
+        if self.current_snapshot.is_none() {
             if let Some(LoadState::Loaded(entries)) = self.store.ancestry.get(&self.current_branch) {
-                if !entries.is_empty() {
-                    self.active_snapshot_index = Some(0);
+                if let Some(first) = entries.first() {
+                    self.current_snapshot = Some(first.id.clone());
                 }
             }
         }
@@ -138,7 +262,7 @@ impl App {
             .ancestry
             .get(&self.current_branch)
             .and_then(|s| s.as_loaded())
-            .and_then(|entries| entries.get(self.bottom_selected))
+            .and_then(|entries| entries.iter().find(|e| e.id == sid))
             .and_then(|e| e.parent_id.clone());
 
         self.last_diff_requested = Some(sid.clone());
@@ -198,14 +322,9 @@ impl App {
             .map(|b| b.snapshot_id.clone())
     }
 
-    /// Get the snapshot ID for the currently selected row in the bottom panel.
+    /// Get the snapshot ID for the currently selected snapshot.
     pub fn selected_snapshot_id(&self) -> Option<String> {
-        let ancestry = self
-            .store
-            .ancestry
-            .get(&self.current_branch)?
-            .as_loaded()?;
-        ancestry.get(self.bottom_selected).map(|e| e.id.clone())
+        self.current_snapshot.clone()
     }
 
     /// Handle a key event
@@ -224,6 +343,7 @@ impl App {
             }
             KeyCode::Char('t') => return Action::ToggleBottom,
             KeyCode::Char('1') => return Action::FocusPane(Pane::Sidebar),
+            KeyCode::Char('2') => return Action::FocusPane(Pane::Detail),
             KeyCode::Char('3') => {
                 if !self.bottom_visible {
                     self.bottom_visible = true;
@@ -277,19 +397,24 @@ impl App {
         match key.code {
             KeyCode::Tab => {
                 if self.focused_pane == Pane::Bottom {
-                    // Cycle bottom tabs forward
-                    self.bottom_tab = match self.bottom_tab {
+                    let next = match self.bottom_tab {
                         BottomTab::Snapshots => BottomTab::Branches,
                         BottomTab::Branches => BottomTab::Tags,
                         BottomTab::Tags => BottomTab::Snapshots,
                     };
+                    self.switch_bottom_tab(next);
+                } else if self.focused_pane == Pane::Detail {
+                    self.detail_mode = match self.detail_mode {
+                        DetailMode::Node => DetailMode::Repo,
+                        DetailMode::Repo => DetailMode::Node,
+                    };
+                    self.detail_scroll = 0;
                 } else {
-                    // Cycle panes forward: Sidebar -> Bottom -> Sidebar
                     let next = match self.focused_pane {
-                        Pane::Sidebar => {
+                        Pane::Sidebar => Pane::Detail,
+                        Pane::Detail => {
                             if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
                         }
-                        Pane::Detail => Pane::Sidebar,
                         Pane::Bottom => Pane::Sidebar,
                     };
                     return Action::FocusPane(next);
@@ -298,20 +423,26 @@ impl App {
             }
             KeyCode::BackTab => {
                 if self.focused_pane == Pane::Bottom {
-                    // Cycle bottom tabs backward
-                    self.bottom_tab = match self.bottom_tab {
+                    let prev = match self.bottom_tab {
                         BottomTab::Snapshots => BottomTab::Tags,
                         BottomTab::Branches => BottomTab::Snapshots,
                         BottomTab::Tags => BottomTab::Branches,
                     };
+                    self.switch_bottom_tab(prev);
+                } else if self.focused_pane == Pane::Detail {
+                    self.detail_mode = match self.detail_mode {
+                        DetailMode::Node => DetailMode::Repo,
+                        DetailMode::Repo => DetailMode::Node,
+                    };
+                    self.detail_scroll = 0;
                 } else {
-                    // Cycle panes backward: Sidebar -> Bottom -> Sidebar
+                    // Cycle panes backward: Sidebar -> Bottom -> Detail -> Sidebar
                     let prev = match self.focused_pane {
                         Pane::Sidebar => {
-                            if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
+                            if self.bottom_visible { Pane::Bottom } else { Pane::Detail }
                         }
                         Pane::Detail => Pane::Sidebar,
-                        Pane::Bottom => Pane::Sidebar,
+                        Pane::Bottom => Pane::Detail,
                     };
                     return Action::FocusPane(prev);
                 }
@@ -323,22 +454,50 @@ impl App {
         // Directional edge navigation (non-Ctrl)
         match key.code {
             KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Bottom => {
-                // Cycle bottom tabs backward
-                self.bottom_tab = match self.bottom_tab {
+                let prev = match self.bottom_tab {
                     BottomTab::Snapshots => BottomTab::Tags,
                     BottomTab::Branches => BottomTab::Snapshots,
                     BottomTab::Tags => BottomTab::Branches,
                 };
+                self.switch_bottom_tab(prev);
                 return Action::None;
             }
             KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Bottom => {
-                // Cycle bottom tabs forward
-                self.bottom_tab = match self.bottom_tab {
+                let next = match self.bottom_tab {
                     BottomTab::Snapshots => BottomTab::Branches,
                     BottomTab::Branches => BottomTab::Tags,
                     BottomTab::Tags => BottomTab::Snapshots,
                 };
+                self.switch_bottom_tab(next);
                 return Action::None;
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Sidebar => {
+                return Action::FocusPane(Pane::Detail);
+            }
+            KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Detail => {
+                match self.detail_mode {
+                    DetailMode::Repo => {
+                        self.detail_mode = DetailMode::Node;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
+                    DetailMode::Node => {
+                        return Action::FocusPane(Pane::Sidebar);
+                    }
+                }
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Detail => {
+                match self.detail_mode {
+                    DetailMode::Node => {
+                        self.detail_mode = DetailMode::Repo;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
+                    DetailMode::Repo => {
+                        // Already at rightmost tab, nowhere to go
+                        return Action::None;
+                    }
+                }
             }
             _ => {}
         }
@@ -389,23 +548,18 @@ impl App {
         match self.focused_pane {
             Pane::Sidebar => {
                 let moved = self.tree_state.key_down();
-                self.detail_scroll = 0; // reset when changing selection
-                self.maybe_request_chunk_stats();
+                self.on_tree_selection_changed();
                 if !moved && self.bottom_visible {
                     self.focused_pane = Pane::Bottom;
                 }
             }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_add(1),
             Pane::Bottom => {
-                self.bottom_selected = self.bottom_selected.saturating_add(1);
-                self.detail_scroll = 0; // reset when changing selection
-                self.clamp_bottom_table_offset();
-                // Active snapshot follows cursor in Snapshots tab
-                if self.bottom_tab == BottomTab::Snapshots {
-                    self.active_snapshot_index = Some(self.bottom_selected);
-                    self.maybe_request_tree_for_active_snapshot();
+                let max = self.bottom_list_len().saturating_sub(1);
+                if self.bottom_selected() < max {
+                    self.set_bottom_selected(self.bottom_selected() + 1);
                 }
-                self.maybe_request_snapshot_diff();
+                self.on_bottom_selection_changed();
             }
         }
     }
@@ -414,30 +568,41 @@ impl App {
         match self.focused_pane {
             Pane::Sidebar => {
                 self.tree_state.key_up();
-                self.detail_scroll = 0; // reset when changing selection
-                self.maybe_request_chunk_stats();
+                self.on_tree_selection_changed();
             }
             Pane::Detail => self.detail_scroll = self.detail_scroll.saturating_sub(1),
             Pane::Bottom => {
-                if self.bottom_selected == 0 {
+                if self.bottom_selected() == 0 {
                     self.focused_pane = Pane::Sidebar;
                 } else {
-                    self.bottom_selected -= 1;
-                    self.detail_scroll = 0; // reset when changing selection
-                    self.clamp_bottom_table_offset();
-                    // Active snapshot follows cursor in Snapshots tab
-                    if self.bottom_tab == BottomTab::Snapshots {
-                        self.active_snapshot_index = Some(self.bottom_selected);
-                        self.maybe_request_tree_for_active_snapshot();
-                    }
-                    self.maybe_request_snapshot_diff();
+                    self.set_bottom_selected(self.bottom_selected() - 1);
+                    self.on_bottom_selection_changed();
                 }
             }
         }
     }
 
-    /// Adjust bottom_table_offset so bottom_selected stays visible.
-    /// The visible rows = area height - 2 (border) - 1 (tab bar) - 1 (table header), minimum 1.
+    fn bottom_list_len(&self) -> usize {
+        match self.bottom_tab {
+            BottomTab::Snapshots => self.store.ancestry
+                .get(&self.current_branch)
+                .and_then(|s| s.as_loaded())
+                .map(|a| a.len())
+                .unwrap_or(0),
+            BottomTab::Branches => self.store.branches.as_loaded().map(|b| b.len()).unwrap_or(0),
+            BottomTab::Tags => self.store.tags.as_loaded().map(|t| t.len()).unwrap_or(0),
+        }
+    }
+
+    fn switch_bottom_tab(&mut self, tab: BottomTab) {
+        if self.bottom_tab != tab {
+            self.bottom_tab = tab;
+            // Per-tab selection is preserved in tab_selection/tab_offset arrays,
+            // so just switching the tab is enough — no need to reset to 0.
+            self.on_bottom_selection_changed();
+        }
+    }
+
     fn clamp_bottom_table_offset(&mut self) {
         let visible = self.bottom_area
             .map(|a| a.height as usize)
@@ -445,10 +610,12 @@ impl App {
             .saturating_sub(4)  // borders + header + tab bar
             .max(1);
 
-        if self.bottom_selected < self.bottom_table_offset {
-            self.bottom_table_offset = self.bottom_selected;
-        } else if self.bottom_selected >= self.bottom_table_offset + visible {
-            self.bottom_table_offset = self.bottom_selected + 1 - visible;
+        let sel = self.bottom_selected();
+        let off = self.bottom_offset();
+        if sel < off {
+            self.set_bottom_offset(sel);
+        } else if sel >= off + visible {
+            self.set_bottom_offset(sel + 1 - visible);
         }
     }
 
@@ -489,11 +656,11 @@ impl App {
             let content_top = self.sidebar_area.y + 2;
             if row >= content_top {
                 let offset = (row - content_top) as usize;
-                // Navigate to the clicked row by selecting first and moving down
                 self.tree_state.select_first();
                 for _ in 0..offset {
                     self.tree_state.key_down();
                 }
+                self.on_tree_selection_changed();
             }
         } else if let Some(bottom) = self.bottom_area
             && bottom.contains((col, row).into())
@@ -511,8 +678,10 @@ impl App {
                 _ => 0,
             };
             if row >= content_top + header_rows {
-                self.bottom_selected =
-                    (row - content_top - header_rows) as usize + self.bottom_table_offset;
+                let new_sel = (row - content_top - header_rows) as usize + self.bottom_offset();
+                let max = self.bottom_list_len().saturating_sub(1);
+                self.set_bottom_selected(new_sel.min(max));
+                self.on_bottom_selection_changed();
             }
         }
     }
@@ -580,6 +749,7 @@ impl App {
     }
 
     fn handle_enter(&mut self) {
+        self.detail_mode = DetailMode::Node;
         match self.focused_pane {
             Pane::Sidebar => {
                 // Toggle open/close on the selected tree node
@@ -610,28 +780,9 @@ impl App {
                 }
             }
             Pane::Bottom => {
-                self.active_snapshot_index = Some(self.bottom_selected);
-                self.maybe_request_tree_for_active_snapshot();
+                self.on_bottom_selection_changed();
             }
         }
     }
 
-    /// When the active snapshot changes, reload the tree sidebar for that snapshot's node tree.
-    /// Looks up the snapshot ID from the ancestry cache and submits AllNodes with it.
-    /// Deduplicates: if we already requested this snapshot's tree, does nothing.
-    fn maybe_request_tree_for_active_snapshot(&mut self) {
-        let snapshot_id = self.selected_snapshot_id();
-
-        // Don't re-request if already loading/loaded for this snapshot
-        if self.last_tree_snapshot_requested.as_deref() == snapshot_id.as_deref() {
-            return;
-        }
-
-        self.last_tree_snapshot_requested = snapshot_id.clone();
-        self.tree_auto_expanded = false;
-        self.store.submit(DataRequest::AllNodes {
-            branch: self.current_branch.clone(),
-            snapshot_id,
-        });
-    }
 }

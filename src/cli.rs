@@ -16,6 +16,12 @@ pub struct Cli {
     ///   gs://bucket/prefix           Google Cloud Storage
     ///   az://container/prefix        Azure Blob Storage
     ///   https://host/path            HTTP (read-only)
+    /// Path, URL, or Arraylake reference
+    ///
+    /// Examples:
+    ///   ./my-repo                    Local filesystem
+    ///   s3://bucket/prefix           AWS S3
+    ///   al:myorg/myrepo              Arraylake (credentials from ~/.arraylake/token.json)
     #[arg(value_name = "REPO")]
     pub repo: String,
 
@@ -30,6 +36,10 @@ pub struct Cli {
     #[arg(long)]
     pub endpoint_url: Option<String>,
 
+    /// Arraylake API endpoint (used when REPO is an org/repo reference)
+    #[arg(long, default_value = "https://dev.api.earthmover.io")]
+    pub arraylake_api: String,
+
     /// Output format for non-interactive use
     ///
     /// When set, disables the interactive TUI and prints results
@@ -38,6 +48,23 @@ pub struct Cli {
     #[arg(short, long, value_enum)]
     pub output: Option<OutputFormat>,
 
+    /// Start a persistent REPL session (repo stays open, reads commands from stdin)
+    ///
+    /// Each line is a subcommand (e.g. "tree -p /data", "log -n 5").
+    /// Responses are separated by "---END---" markers. Output format
+    /// defaults to markdown; override per-session with --output.
+    /// Ideal for agents that make multiple queries against a cloud repo.
+    #[arg(long)]
+    pub repl: bool,
+
+    /// Start as an MCP (Model Context Protocol) server on stdio
+    ///
+    /// Exposes repository inspection as MCP tools for AI agents.
+    /// Configure in your agent's MCP settings:
+    ///   {"command": "core-drill", "args": ["<repo>", "--serve"]}
+    #[arg(long)]
+    pub serve: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -45,8 +72,10 @@ pub struct Cli {
 /// Output format for structured (non-interactive) mode
 #[derive(Debug, Clone, ValueEnum, serde::Serialize)]
 pub enum OutputFormat {
-    /// JSON output (ideal for jq, scripts, and LLM agents)
+    /// JSON output (ideal for jq and scripts)
     Json,
+    /// Markdown output (ideal for LLM agents — compact, expressive)
+    Md,
     /// Human-readable table output
     Table,
 }

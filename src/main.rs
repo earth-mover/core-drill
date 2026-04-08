@@ -1,13 +1,17 @@
 mod app;
 mod cli;
 mod component;
+mod mcp;
 mod multiplexer;
+mod output;
 mod repo;
 pub mod sanitize;
 mod store;
 mod theme;
 mod tui;
 mod ui;
+
+use std::sync::Arc;
 
 use clap::Parser;
 use cli::Cli;
@@ -16,33 +20,137 @@ use color_eyre::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_writer(std::io::stderr)
-        .init();
 
     let cli = Cli::parse();
 
-    // Open the repository
-    let overrides = repo::StorageOverrides {
-        region: cli.region.clone(),
-        endpoint_url: cli.endpoint_url.clone(),
-    };
-    let repository = repo::open(&cli.repo, &overrides).await?;
+    // Suppress icechunk's internal ERROR logs by default — they fire during
+    // normal shutdown when manifest pre-load tasks are cancelled, and look
+    // like failures to users. RUST_LOG can still override for debugging.
+    let env_filter = tracing_subscriber::EnvFilter::new(
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "warn,icechunk=off".to_string()),
+    );
+    tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_writer(std::io::stderr)
+        .init();
 
-    match cli.output {
-        Some(_format) => {
-            // Structured output mode — no TUI
-            todo!("Structured output mode")
-        }
-        None => {
-            // Interactive TUI mode
-            let data_store = store::DataStore::new(repository);
-            let mut app = app::App::new(data_store, cli.repo.clone());
-            app.load_initial_data();
-            tui::run(app).await?;
-        }
+    // Open the repository
+    let (repository, repo_label) = if looks_like_arraylake_ref(&cli.repo) {
+        open_via_arraylake(&cli.repo, &cli.arraylake_api).await?
+    } else {
+        let overrides = repo::StorageOverrides {
+            region: cli.region.clone(),
+            endpoint_url: cli.endpoint_url.clone(),
+        };
+        let repo = repo::open(&cli.repo, &overrides).await?;
+        (repo, cli.repo.clone())
+    };
+
+    if cli.serve {
+        // MCP server mode: expose tools over stdio
+        mcp::serve(repository, repo_label.clone()).await?;
+    } else if cli.repl {
+        // REPL mode: persistent session, reads commands from stdin
+        let format = cli.output.unwrap_or(cli::OutputFormat::Md);
+        output::run_repl(repository, format, &repo_label).await?;
+    } else if let Some(format) = cli.output {
+        // Single-shot structured output
+        output::run(repository, format, cli.command, &repo_label).await?;
+    } else {
+        // Interactive TUI mode
+        let data_store = store::DataStore::new(repository);
+        let mut app = app::App::new(data_store, repo_label.clone());
+        app.load_initial_data();
+        tui::run(app).await?;
     }
 
     Ok(())
+}
+
+/// Detect if a repo string is an Arraylake reference.
+/// Explicit: `al:org/repo`. Implicit: `org/repo` that doesn't exist on disk.
+fn looks_like_arraylake_ref(s: &str) -> bool {
+    s.starts_with("al:")
+}
+
+/// Open a repo via Arraylake, handling credentials automatically.
+/// Reads the OAuth token from ~/.arraylake/token.json.
+async fn open_via_arraylake(al_ref: &str, api_url: &str) -> Result<(icechunk::Repository, String)> {
+    let ref_str = al_ref.strip_prefix("al:").unwrap_or(al_ref);
+    let (org, repo_name) = ref_str.split_once('/')
+        .ok_or_else(|| color_eyre::eyre::eyre!(
+            "Invalid Arraylake ref: expected 'al:org/repo', got '{al_ref}'"
+        ))?;
+
+    // Read token from ~/.arraylake/token.json
+    let home = std::env::var("HOME")
+        .map_err(|_| color_eyre::eyre::eyre!("Cannot determine home directory"))?;
+    let token_path = std::path::PathBuf::from(home).join(".arraylake/token.json");
+
+    let token_json = std::fs::read_to_string(&token_path)
+        .map_err(|e| color_eyre::eyre::eyre!(
+            "Cannot read Arraylake token at {}: {}. Run `arraylake auth login` first.",
+            token_path.display(), e
+        ))?;
+
+    let token_data: serde_json::Value = serde_json::from_str(&token_json)?;
+    let id_token = token_data["id_token"].as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("No id_token in Arraylake token file"))?;
+
+    let client = Arc::new(
+        arraylake::ALClient::new(Some(api_url.to_string()), id_token.to_string())
+            .map_err(|e| color_eyre::eyre::eyre!("Failed to create Arraylake client: {e}"))?
+    );
+
+    // Fetch repo info first to get bucket details for display
+    let repo_info = client.get_repo_info(org, repo_name).await
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to get Arraylake repo info for '{ref_str}': {e}"))?;
+
+    let bucket_desc = repo_info.bucket.as_ref().map(|b| {
+        let region = b.extra_config.get("region_name")
+            .map(|v| match v {
+                arraylake::ALBucketExtraConfigValue::S(s) => s.as_str(),
+                arraylake::ALBucketExtraConfigValue::B(_) => "?",
+            })
+            .unwrap_or("?");
+        format!("{} ({:?}, {})", b.name, b.platform, region)
+    }).unwrap_or_else(|| "unknown bucket".to_string());
+
+    eprintln!("Arraylake: {org}/{repo_name}  →  {bucket_desc}");
+
+    let storage = client.get_storage_for_repo(&repo_info).await
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to get storage for '{ref_str}': {e}"))?;
+
+    let repository = icechunk::Repository::open(None, storage, std::collections::HashMap::new()).await
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to open Icechunk repo for '{ref_str}': {e}"))?;
+
+    // Pack structured info into the label — the UI parses it back out.
+    // Format: "al:org/repo|bucket_name|platform|region"
+    let region = repo_info.bucket.as_ref().and_then(|b| {
+        b.extra_config.get("region_name").map(|v| match v {
+            arraylake::ALBucketExtraConfigValue::S(s) => s.clone(),
+            arraylake::ALBucketExtraConfigValue::B(_) => "?".to_string(),
+        })
+    }).unwrap_or_else(|| "?".to_string());
+    let bucket_name = repo_info.bucket.as_ref().map(|b| b.name.as_str()).unwrap_or("?");
+    let platform = repo_info.bucket.as_ref().map(|b| {
+        // Detect R2 from endpoint URL (like the Python client does)
+        let endpoint = b.extra_config.get("endpoint_url").and_then(|v| match v {
+            arraylake::ALBucketExtraConfigValue::S(s) => Some(s.as_str()),
+            _ => None,
+        });
+        let is_r2 = endpoint.is_some_and(|u| u.contains(".r2."));
+        let is_tigris = endpoint.is_some_and(|u| u.contains("tigris.dev") || u.contains("t3.storage.dev"));
+        match b.platform {
+            arraylake::ALBucketPlatform::S3 => "S3".to_string(),
+            arraylake::ALBucketPlatform::S3Compatible if is_r2 => "Cloudflare R2".to_string(),
+            arraylake::ALBucketPlatform::S3Compatible if is_tigris => "Tigris".to_string(),
+            arraylake::ALBucketPlatform::S3Compatible => "S3-compatible".to_string(),
+            arraylake::ALBucketPlatform::Minio => "MinIO".to_string(),
+            arraylake::ALBucketPlatform::GS => "GCS".to_string(),
+        }
+    }).unwrap_or_else(|| "?".to_string());
+
+    let label = format!("al:{org}/{repo_name}|{bucket_name}|{platform}|{region}");
+    Ok((repository, label))
 }

@@ -416,6 +416,40 @@ print(f"  Added: /climate_data_qc  shape=(12,4) int8 — inline chunks (4 bytes 
 print(f"  Added: /derived/anomaly  shape=(12,4) float32 — stored chunks")
 
 # ---------------------------------------------------------------------------
+# Commit 6: Add a sparse forecast array (only 3 of 12 months written)
+# ---------------------------------------------------------------------------
+# This demonstrates the "Initialized" fraction: 3 of 12 grid positions (25%).
+repo = open_repo(inline_threshold=0)
+session = repo.writable_session("main")
+store = session.store
+
+root = zarr.open_group(store, mode="a", zarr_format=3)
+
+forecast_arr = root.require_array(
+    name="forecast",
+    shape=(12, 4),
+    chunks=(1, 4),
+    dtype="<f4",
+    compressors=None,
+    fill_value=float("nan"),
+)
+forecast_arr.attrs["description"] = (
+    "Forecast temperature for 4 stations across 12 months. "
+    "Only months 0, 5, 11 are written — rest are uninitialized (fill value NaN). "
+    "This demonstrates sparse arrays with initialized fraction < 100%."
+)
+forecast_arr.attrs["units"] = "Kelvin"
+
+# Write only 3 months: 0, 5, 11 (Jan, Jun, Dec)
+forecast_arr[0, :] = np.array([268.0, 269.0, 270.0, 271.0], dtype="<f4")
+forecast_arr[5, :] = np.array([295.0, 296.0, 297.0, 298.0], dtype="<f4")
+forecast_arr[11, :] = np.array([267.0, 268.0, 269.0, 270.0], dtype="<f4")
+
+commit6 = session.commit("Add sparse forecast array (3 of 12 months initialized)")
+print(f"\nCommit 6: {commit6}")
+print(f"  Added: /forecast  shape=(12,4) float32 — only months 0, 5, 11 written (3/12 = 25% initialized)")
+
+# ---------------------------------------------------------------------------
 # Verification read-back
 # ---------------------------------------------------------------------------
 print("\n--- Verification read-back ---")
@@ -513,6 +547,8 @@ print(f"  4: {commit4}")
 print(f"       /stations/latitude, /stations/longitude, /stations/elevation")
 print(f"  5: {commit5}")
 print(f"       /climate_data_qc (inline int8 flags), /derived/anomaly (stored float32)")
+print(f"  6: {commit6}")
+print(f"       /forecast (sparse: 3/12 months initialized, demonstrates initialized fraction)")
 print()
 print("To explore with core-drill:")
 print(f"  cargo run -- {REPO_DIR}")

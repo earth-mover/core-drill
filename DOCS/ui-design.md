@@ -54,6 +54,49 @@ Context-dependent content based on what is selected:
 | Nothing selected | Repo overview: repository URL, current branch, branch/tag/snapshot counts |
 | Snapshot in bottom panel (when focused) | Snapshot diff: parent->child comparison showing added/removed/modified arrays and groups, chunk change counts |
 
+#### Array Detail — Section Breakdown
+
+The array detail is rendered in two functions (`src/ui/mod.rs`):
+
+- `render_array_detail_header` — upper sections (Shape & Layout)
+- `render_array_detail_storage` — lower sections (Storage, Chunk Types, Attributes, Raw Metadata)
+
+**Shape & Layout section** (from `ArraySummary` + parsed `ZarrMetadata`):
+- Array name and path
+- Shape (e.g. `100 × 200 × 3`)
+- Chunk shape (from zarr metadata)
+- Data type
+- Dimension names
+- Chunks per dimension: `ceil(shape[i] / chunk_shape[i])` per axis
+- Storage order (v2 C/F)
+- Chunk grid summary line (textual, from `shape_viz::chunk_summary_line`)
+
+**Storage section** (from `ZarrMetadata`):
+- Codec chain / compressor
+- Fill value, zarr format, dimension separator
+- Storage transformers
+- Manifest count
+
+**Chunk Types section** (from `ArraySummary::total_chunks` + async `ChunkStats`):
+
+| State | What's shown |
+|-------|-------------|
+| `NotRequested` / `None` | Total from `summary.total_chunks` (cheap, from snapshot manifest metadata) + Initialized fraction |
+| `Loading` | Total with "(loading type breakdown...)" + Initialized fraction |
+| `Loaded(stats)` | Full breakdown: native / inline / virtual counts, sizes, virtual source URLs + Initialized fraction |
+| `Error` | Error message |
+
+**Initialized fraction** — added to all states where `total_chunks` is known:
+- Formula: `written_chunks / grid_chunks` where `grid_chunks = ∏ ceil(shape[i] / chunk_shape[i])`
+- Displayed as: `X of Y  (Z%)`
+- Computed by `compute_grid_chunks(summary, meta)` in `src/ui/mod.rs`
+- Requires both `summary.shape` and `meta.chunk_shape` to be non-empty and same length
+- Sparse arrays (e.g. ERA5 on a sparse grid) will show low percentages
+
+**Attributes section**: key/value pairs from zarr metadata rendered with `json_view`.
+
+**Raw Metadata section**: extra unrecognized zarr metadata fields, rendered with `json_view`.
+
 ### Bottom Panel (Pane 3)
 
 Toggleable (press `t`) panel with three tabs:

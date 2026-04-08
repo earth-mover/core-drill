@@ -70,4 +70,4 @@ src/
 - `PLANNING/roadmap.md` — phased delivery plan with completion status
 - `DOCS/icechunk-rust-api.md` — API cookbook, AllNodes pattern, diff gotchas
 - `DOCS/icechunk-v2-format.md` — binary format quick reference
-- `DOCS/ui-design.md` — three-pane TUI layout and interaction design
+- `DOCS/ui-design.md` — three-pane TUI layout, navigation, **array detail pane sections** (Shape & Layout, Storage, Chunk Types including initialized fraction, Attributes)

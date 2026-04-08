@@ -50,6 +50,8 @@ pub enum DataRequest {
     SnapshotDiff { snapshot_id: String, parent_id: Option<String> },
     /// Fetch chunk type statistics for an array node at a specific snapshot
     ChunkStats { snapshot_id: String, path: String },
+    /// Fetch repository configuration, status, and feature flags.
+    RepoConfig,
     #[allow(dead_code)]
     OpsLog,
 }
@@ -76,6 +78,7 @@ pub enum DataResponse {
         path: String,
         result: Result<ChunkStats, String>,
     },
+    RepoConfig(Result<RepoConfig, String>),
     OpsLog(Result<Vec<String>, String>),
 }
 
@@ -89,6 +92,7 @@ pub struct DataStore {
     pub node_children: HashMap<String, LoadState<Vec<TreeNode>>>,
     pub diffs: HashMap<String, LoadState<DiffSummary>>,
     pub chunk_stats: HashMap<(String, String), LoadState<ChunkStats>>,
+    pub repo_config: LoadState<RepoConfig>,
     pub ops_log: LoadState<Vec<String>>,
 
     // Channel for sending requests to background worker
@@ -113,6 +117,7 @@ impl DataStore {
             node_children: HashMap::new(),
             diffs: HashMap::new(),
             chunk_stats: HashMap::new(),
+            repo_config: LoadState::NotRequested,
             ops_log: LoadState::NotRequested,
             request_tx,
             response_rx,
@@ -139,6 +144,7 @@ impl DataStore {
             DataRequest::ChunkStats { snapshot_id, path } => {
                 self.chunk_stats.insert((snapshot_id.clone(), path.clone()), LoadState::Loading);
             }
+            DataRequest::RepoConfig => self.repo_config = LoadState::Loading,
             DataRequest::OpsLog => self.ops_log = LoadState::Loading,
         }
 
@@ -241,6 +247,12 @@ impl DataStore {
                 };
                 self.chunk_stats.insert((snapshot_id, path), state);
             }
+            DataResponse::RepoConfig(result) => {
+                self.repo_config = match result {
+                    Ok(config) => LoadState::Loaded(config),
+                    Err(e) => LoadState::Error(e),
+                };
+            }
             DataResponse::OpsLog(result) => {
                 self.ops_log = match result {
                     Ok(entries) => LoadState::Loaded(entries),
@@ -305,6 +317,10 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
             let result = fetch_chunk_stats(repo, &snapshot_id, &path).await;
             DataResponse::ChunkStats { snapshot_id, path, result }
         }
+        DataRequest::RepoConfig => {
+            let result = fetch_repo_config(repo).await;
+            DataResponse::RepoConfig(result)
+        }
         DataRequest::OpsLog => {
             // TODO: implement ops log fetching
             DataResponse::OpsLog(Ok(vec![]))
@@ -330,6 +346,12 @@ async fn fetch_branches(repo: &Repository) -> Result<Vec<BranchInfo>, String> {
             tip_message: None,
         });
     }
+    // Put "main" first so it's always visible at the top
+    result.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
+        ("main", _) => std::cmp::Ordering::Less,
+        (_, "main") => std::cmp::Ordering::Greater,
+        (a, b) => a.cmp(b),
+    });
     Ok(result)
 }
 
@@ -611,5 +633,37 @@ async fn fetch_diff(
         modified_group_ids,
         chunk_change_ids,
         is_initial_commit: false,
+    })
+}
+
+/// Fetch repository configuration, status, and feature flags.
+async fn fetch_repo_config(repo: &Repository) -> Result<RepoConfig, String> {
+    let config = repo.config();
+    let spec_version = repo.spec_version().to_string();
+    let inline_threshold = config.inline_chunk_threshold_bytes;
+
+    // Fetch status
+    let availability = match repo.get_status().await {
+        Ok(status) => format!("{:?}", status.availability),
+        Err(_) => "unknown".to_string(),
+    };
+
+    // Fetch feature flags
+    let flags = match repo.feature_flags().await {
+        Ok(iter) => iter
+            .map(|f| FeatureFlagInfo {
+                name: sanitize(f.name()),
+                enabled: f.enabled(),
+                explicit: f.setting().is_some(),
+            })
+            .collect(),
+        Err(_) => vec![],
+    };
+
+    Ok(RepoConfig {
+        spec_version,
+        inline_chunk_threshold: inline_threshold,
+        availability,
+        feature_flags: flags,
     })
 }

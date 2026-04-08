@@ -13,6 +13,9 @@ path = "src/main.rs"
 # Icechunk — the library does all format parsing and storage I/O
 icechunk = { path = "../icechunk/icechunk" }
 
+# Arraylake — credential vending for cloud repos
+arraylake = { path = "../arraylake/arraylake-rs" }
+
 # TUI framework
 ratatui = { version = "0.30", features = ["crossterm"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
@@ -35,10 +38,17 @@ color-eyre = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# MCP server (agent tooling)
+rmcp = { version = "1", features = ["server", "transport-io"] }
+schemars = "0.8"
+
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 humansize = "2"
 strip-ansi-escapes = "0.2"
+
+[patch.crates-io]
+icechunk = { path = "../icechunk/icechunk" }
 
 [profile.release]
 lto = true

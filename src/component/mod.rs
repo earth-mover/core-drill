@@ -21,6 +21,15 @@ pub enum BottomTab {
     Tags,
 }
 
+/// What the detail pane is showing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailMode {
+    /// Show node detail (array/group metadata) based on tree selection
+    Node,
+    /// Show repository overview (config, feature flags, status)
+    Repo,
+}
+
 /// Actions that components can return from key handling
 #[allow(dead_code)]
 pub enum Action {
