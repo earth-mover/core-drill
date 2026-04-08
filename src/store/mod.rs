@@ -19,6 +19,7 @@ pub enum LoadState<T> {
 }
 
 impl<T> LoadState<T> {
+    #[allow(dead_code)]
     pub fn is_loaded(&self) -> bool {
         matches!(self, LoadState::Loaded(_))
     }
@@ -38,6 +39,7 @@ pub enum DataRequest {
     Tags,
     Ancestry { branch: String },
     NodeChildren { branch: String, parent_path: String },
+    #[allow(dead_code)]
     OpsLog,
 }
 
@@ -126,6 +128,7 @@ impl DataStore {
     }
 
     /// Check if response channel has a message (for tokio::select wakeup)
+    #[allow(dead_code)]
     pub async fn recv_response(&mut self) -> Option<DataResponse> {
         self.response_rx.recv().await
     }
@@ -303,10 +306,33 @@ async fn fetch_node_children(
     };
     let nodes_iter = session.list_nodes(&path).await.map_err(|e| e.to_string())?;
 
+    let parent_str = parent_path.to_string();
+
+    // Determine depth of parent so we can filter to direct children only.
+    // list_nodes() returns ALL descendants, but we only want one level deep.
+    // Root "/" has depth 0; "/foo" has depth 1; "/foo/bar" has depth 2.
+    let parent_depth: usize = if parent_str == "/" || parent_str.is_empty() {
+        0
+    } else {
+        parent_str.matches('/').count()
+    };
+
     let mut result = Vec::new();
     for node_result in nodes_iter {
         let node = node_result.map_err(|e| e.to_string())?;
         let path_str = node.path.to_string();
+
+        // Skip the parent node itself (list_nodes includes the queried node)
+        if path_str == parent_str || (parent_str == "/" && path_str == "/") {
+            continue;
+        }
+
+        // Only include direct children (one level deeper than parent).
+        let node_depth = path_str.matches('/').count();
+        if node_depth != parent_depth + 1 {
+            continue;
+        }
+
         let name = path_str.rsplit('/').next().unwrap_or("").to_string();
 
         let node_type = match &node.node_data {

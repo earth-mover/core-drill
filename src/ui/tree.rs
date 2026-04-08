@@ -13,6 +13,7 @@ use crate::store::types::TreeNodeType;
 use crate::theme::Theme;
 
 /// A flattened tree entry ready for rendering
+#[allow(dead_code)]
 pub struct FlatEntry {
     pub path: String,
     pub name: String,
@@ -23,6 +24,8 @@ pub struct FlatEntry {
 }
 
 /// Tree state: which nodes are expanded, which is selected
+#[derive(Default)]
+#[allow(dead_code)]
 pub struct TreeViewState {
     pub expanded: HashSet<String>,
     pub selected_index: usize,
@@ -30,16 +33,7 @@ pub struct TreeViewState {
     pub flat_entries: Vec<FlatEntry>,
 }
 
-impl Default for TreeViewState {
-    fn default() -> Self {
-        Self {
-            expanded: HashSet::new(),
-            selected_index: 0,
-            flat_entries: Vec::new(),
-        }
-    }
-}
-
+#[allow(dead_code)]
 impl TreeViewState {
     pub fn move_up(&mut self) {
         self.selected_index = self.selected_index.saturating_sub(1);
@@ -52,14 +46,14 @@ impl TreeViewState {
     }
 
     pub fn toggle_selected(&mut self) {
-        if let Some(entry) = self.flat_entries.get(self.selected_index) {
-            if matches!(entry.node_type, TreeNodeType::Group) {
-                let path = entry.path.clone();
-                if self.expanded.contains(&path) {
-                    self.expanded.remove(&path);
-                } else {
-                    self.expanded.insert(path);
-                }
+        if let Some(entry) = self.flat_entries.get(self.selected_index)
+            && matches!(entry.node_type, TreeNodeType::Group)
+        {
+            let path = entry.path.clone();
+            if self.expanded.contains(&path) {
+                self.expanded.remove(&path);
+            } else {
+                self.expanded.insert(path);
             }
         }
     }
@@ -114,26 +108,26 @@ impl TreeViewState {
         // If group is expanded and children are loaded, recurse
         if matches!(node.node_type, TreeNodeType::Group)
             && self.expanded.contains(&node.path)
+            && let Some(LoadState::Loaded(children)) = store.node_children.get(&node.path)
         {
-            if let Some(LoadState::Loaded(children)) = store.node_children.get(&node.path) {
-                let child_prefix = if depth == 0 {
-                    String::new()
-                } else if is_last {
-                    format!("{}  ", parent_prefix)
-                } else {
-                    format!("{}│ ", parent_prefix)
-                };
+            let child_prefix = if depth == 0 {
+                String::new()
+            } else if is_last {
+                format!("{}  ", parent_prefix)
+            } else {
+                format!("{}│ ", parent_prefix)
+            };
 
-                let count = children.len();
-                for (i, child) in children.iter().enumerate() {
-                    self.flatten_node(child, store, depth + 1, i == count - 1, child_prefix.clone());
-                }
+            let count = children.len();
+            for (i, child) in children.iter().enumerate() {
+                self.flatten_node(child, store, depth + 1, i == count - 1, child_prefix.clone());
             }
         }
     }
 }
 
 /// Render the tree into the given area
+#[allow(dead_code)]
 pub fn render_tree(
     state: &TreeViewState,
     theme: &Theme,

@@ -22,6 +22,7 @@ pub enum BottomTab {
 }
 
 /// Actions that components can return from key handling
+#[allow(dead_code)]
 pub enum Action {
     /// Key was not consumed
     None,
@@ -41,6 +42,7 @@ pub enum Action {
 ///
 /// Components own their view state (selection index, scroll offset, etc.)
 /// but never access icechunk directly. All data comes from the DataStore.
+#[allow(dead_code)]
 pub trait Component {
     /// Handle a key event. Return an Action for the app to process.
     fn handle_key(&mut self, key: KeyEvent) -> Action;

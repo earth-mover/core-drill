@@ -237,15 +237,15 @@ impl App {
 
                 // If a group just opened, trigger loading its children
                 let selected = self.tree_state.selected().to_vec();
-                if let Some(path) = selected.last() {
-                    if self.tree_state.opened().contains(&selected) {
-                        // Just opened — request children if not loaded
-                        if !self.store.node_children.contains_key(path) {
-                            self.store.submit(DataRequest::NodeChildren {
-                                branch: self.current_branch.clone(),
-                                parent_path: path.clone(),
-                            });
-                        }
+                if let Some(path) = selected.last()
+                    && self.tree_state.opened().contains(&selected)
+                {
+                    // Just opened — request children if not loaded
+                    if !self.store.node_children.contains_key(path) {
+                        self.store.submit(DataRequest::NodeChildren {
+                            branch: self.current_branch.clone(),
+                            parent_path: path.clone(),
+                        });
                     }
                 }
             }

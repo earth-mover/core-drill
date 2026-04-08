@@ -133,7 +133,7 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
         LoadState::Loaded(nodes) => {
             let tree_items: Vec<tui_tree_widget::TreeItem<String>> = nodes
                 .iter()
-                .map(|node| build_tree_item(node, &app.store))
+                .map(|node| build_tree_item(node, &app.store, 0))
                 .collect();
 
             let tree = tui_tree_widget::Tree::new(&tree_items)
@@ -148,10 +148,15 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
     }
 }
 
-/// Build a TreeItem from a store TreeNode, recursively including cached children
+/// Maximum recursion depth for tree building (safety limit)
+const MAX_TREE_DEPTH: usize = 64;
+
+/// Build a TreeItem from a store TreeNode, recursively including cached children.
+/// `depth` tracks recursion depth to prevent stack overflow from circular references.
 fn build_tree_item<'a>(
     node: &crate::store::TreeNode,
     store: &crate::store::DataStore,
+    depth: usize,
 ) -> tui_tree_widget::TreeItem<'a, String> {
     let label = match &node.node_type {
         TreeNodeType::Group => node.name.clone(),
@@ -168,14 +173,18 @@ fn build_tree_item<'a>(
 
     match &node.node_type {
         TreeNodeType::Group => {
-            // Check if children are cached
+            // Safety: stop recursing if we've gone too deep
             let children: Vec<tui_tree_widget::TreeItem<String>> =
-                if let Some(LoadState::Loaded(child_nodes)) =
+                if depth >= MAX_TREE_DEPTH {
+                    vec![]
+                } else if let Some(LoadState::Loaded(child_nodes)) =
                     store.node_children.get(&node.path)
                 {
                     child_nodes
                         .iter()
-                        .map(|child| build_tree_item(child, store))
+                        // Skip any child whose path matches this node (circular ref guard)
+                        .filter(|child| child.path != node.path)
+                        .map(|child| build_tree_item(child, store, depth + 1))
                         .collect()
                 } else {
                     // No children loaded yet — show as expandable but empty
