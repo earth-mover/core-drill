@@ -3,6 +3,7 @@ mod cli;
 mod component;
 mod multiplexer;
 mod repo;
+pub mod sanitize;
 mod store;
 mod theme;
 mod tui;

@@ -7,6 +7,8 @@ use icechunk::Repository;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+use crate::sanitize::sanitize;
+
 pub use types::*;
 
 /// Loading state for cached data
@@ -263,7 +265,7 @@ async fn fetch_branches(repo: &Repository) -> Result<Vec<BranchInfo>, String> {
             .unwrap_or_else(|_| "unknown".to_string());
 
         result.push(BranchInfo {
-            name,
+            name: sanitize(&name),
             snapshot_id,
             tip_timestamp: None,
             tip_message: None,
@@ -284,7 +286,7 @@ async fn fetch_tags(repo: &Repository) -> Result<Vec<TagInfo>, String> {
             .unwrap_or_else(|_| "unknown".to_string());
 
         result.push(TagInfo {
-            name,
+            name: sanitize(&name),
             snapshot_id,
             tip_timestamp: None,
             tip_message: None,
@@ -308,7 +310,7 @@ async fn fetch_ancestry(repo: &Repository, branch: &str) -> Result<Vec<SnapshotE
             id: info.id.to_string(),
             parent_id: info.parent_id.map(|id| id.to_string()),
             timestamp: info.flushed_at,
-            message: info.message.clone(),
+            message: sanitize(&info.message),
         });
     }
     Ok(entries)
@@ -363,7 +365,7 @@ async fn fetch_all_nodes(
                         .iter()
                         .filter_map(|n| {
                             let opt: Option<String> = n.clone().into();
-                            opt
+                            opt.map(|s| sanitize(&s))
                         })
                         .collect()
                 });
@@ -373,7 +375,7 @@ async fn fetch_all_nodes(
                     shape: dims,
                     dimension_names: dim_names,
                     manifest_count: manifests.len(),
-                    zarr_metadata,
+                    zarr_metadata: sanitize(&zarr_metadata),
                 })
             }
         };
@@ -382,8 +384,8 @@ async fn fetch_all_nodes(
             .entry(parent_path)
             .or_default()
             .push(TreeNode {
-                path: path_str,
-                name,
+                path: sanitize(&path_str),
+                name: sanitize(&name),
                 node_type,
             });
     }
@@ -429,16 +431,16 @@ async fn fetch_diff(
     Ok(DiffSummary {
         snapshot_id: snapshot_id.to_string(),
         parent_id: Some(parent_id.clone()),
-        added_arrays: diff.new_arrays.iter().map(|p| p.to_string()).collect(),
-        added_groups: diff.new_groups.iter().map(|p| p.to_string()).collect(),
-        deleted_arrays: diff.deleted_arrays.iter().map(|p| p.to_string()).collect(),
-        deleted_groups: diff.deleted_groups.iter().map(|p| p.to_string()).collect(),
-        modified_arrays: diff.updated_arrays.iter().map(|p| p.to_string()).collect(),
-        modified_groups: diff.updated_groups.iter().map(|p| p.to_string()).collect(),
+        added_arrays: diff.new_arrays.iter().map(|p| sanitize(&p.to_string())).collect(),
+        added_groups: diff.new_groups.iter().map(|p| sanitize(&p.to_string())).collect(),
+        deleted_arrays: diff.deleted_arrays.iter().map(|p| sanitize(&p.to_string())).collect(),
+        deleted_groups: diff.deleted_groups.iter().map(|p| sanitize(&p.to_string())).collect(),
+        modified_arrays: diff.updated_arrays.iter().map(|p| sanitize(&p.to_string())).collect(),
+        modified_groups: diff.updated_groups.iter().map(|p| sanitize(&p.to_string())).collect(),
         chunk_changes: diff
             .updated_chunks
             .iter()
-            .map(|(p, chunks)| (p.to_string(), chunks.len()))
+            .map(|(p, chunks)| (sanitize(&p.to_string()), chunks.len()))
             .collect(),
     })
 }
