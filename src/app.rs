@@ -149,11 +149,11 @@ impl App {
                 }
                 return Action::FocusPane(Pane::Bottom);
             }
-            KeyCode::PageDown => {
+            KeyCode::Char('d') => {
                 self.detail_scroll = self.detail_scroll.saturating_add(3);
                 return Action::None;
             }
-            KeyCode::PageUp => {
+            KeyCode::Char('u') => {
                 self.detail_scroll = self.detail_scroll.saturating_sub(3);
                 return Action::None;
             }
@@ -343,6 +343,24 @@ impl App {
 
     /// Handle a mouse event (click to focus pane, select item)
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
+        // Handle scroll events on the detail area
+        let mouse_pos = ratatui::prelude::Position { x: mouse.column, y: mouse.row };
+        match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                if self.detail_area.contains(mouse_pos) {
+                    self.detail_scroll = self.detail_scroll.saturating_add(2);
+                }
+                return;
+            }
+            MouseEventKind::ScrollUp => {
+                if self.detail_area.contains(mouse_pos) {
+                    self.detail_scroll = self.detail_scroll.saturating_sub(2);
+                }
+                return;
+            }
+            _ => {}
+        }
+
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return;
         }

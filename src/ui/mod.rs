@@ -290,7 +290,9 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                         .split(inner);
 
                     frame.render_widget(
-                        Paragraph::new(pre_text).wrap(Wrap { trim: false }),
+                        Paragraph::new(pre_text)
+                            .wrap(Wrap { trim: false })
+                            .scroll((app.detail_scroll as u16, 0)),
                         chunks[0],
                     );
 
@@ -1132,9 +1134,9 @@ fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
 
 fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
     let hints = match app.focused_pane {
-        Pane::Sidebar => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  PgDn/PgUp:detail-scroll  Enter:expand ",
+        Pane::Sidebar => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  d/u:detail-scroll  Enter:expand ",
         Pane::Detail => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:scroll ",
-        Pane::Bottom => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  PgDn/PgUp:detail-scroll  Tab:next tab  Shift+Tab:prev tab  Enter:select ",
+        Pane::Bottom => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  d/u:detail-scroll  Tab:next tab  Shift+Tab:prev tab  Enter:select ",
     };
     frame.render_widget(
         Paragraph::new(Span::styled(hints, app.theme.text_dim)),
