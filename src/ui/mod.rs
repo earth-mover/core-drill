@@ -962,15 +962,17 @@ fn render_array_detail_storage<'a>(
                 if !stats.virtual_prefixes.is_empty() {
                     lines.push(Line::from(Span::styled("    Sources:", app.theme.text_dim)));
                     for (prefix, count) in &stats.virtual_prefixes {
-                        // Strip vcc:// scheme for cleaner display
-                        let display = prefix
-                            .strip_prefix("vcc://")
-                            .and_then(|rest| {
-                                // vcc://container_name/path → show as container:path
-                                rest.split_once('/')
-                                    .map(|(container, path)| format!("      {container}: {path}/"))
-                            })
-                            .unwrap_or_else(|| format!("      {prefix}/"));
+                        let display = if let Some(rest) = prefix.strip_prefix("vcc://") {
+                            if let Some((container, path)) = rest.split_once('/') {
+                                format!("      {container}: {path}/")
+                            } else {
+                                // Just a container name, no subpath
+                                format!("      {rest} (managed)")
+                            }
+                        } else {
+                            // Non-VCC URL (e.g., s3://, file://)
+                            format!("      {prefix}/")
+                        };
                         lines.push(Line::from(vec![
                             Span::styled(display, app.theme.text),
                             Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
