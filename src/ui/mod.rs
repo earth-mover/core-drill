@@ -945,7 +945,16 @@ fn render_array_detail_storage<'a>(
                 let size_str = humansize::format_size(stats.virtual_total_bytes, humansize::BINARY);
                 lines.extend(labeled_lines(
                     "  Virtual:       ",
-                    format!("{} ({pct}%)   {size_str}", stats.virtual_count),
+                    format!(
+                        "{} ({pct}%)   {size_str}   {} source{}",
+                        stats.virtual_count,
+                        stats.virtual_source_count,
+                        if stats.virtual_source_count == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ),
                     app.theme.text_dim,
                     app.theme.text,
                     max_width,
@@ -953,10 +962,33 @@ fn render_array_detail_storage<'a>(
                 if !stats.virtual_prefixes.is_empty() {
                     lines.push(Line::from(Span::styled("    Sources:", app.theme.text_dim)));
                     for (prefix, count) in &stats.virtual_prefixes {
+                        // Strip vcc:// scheme for cleaner display
+                        let display = prefix
+                            .strip_prefix("vcc://")
+                            .and_then(|rest| {
+                                // vcc://container_name/path → show as container:path
+                                rest.split_once('/')
+                                    .map(|(container, path)| format!("      {container}: {path}/"))
+                            })
+                            .unwrap_or_else(|| format!("      {prefix}/"));
                         lines.push(Line::from(vec![
-                            Span::styled(format!("      {prefix}/"), app.theme.text),
+                            Span::styled(display, app.theme.text),
                             Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
                         ]));
+                    }
+                    if stats.virtual_source_count > stats.virtual_prefixes.len() {
+                        lines.push(Line::from(Span::styled(
+                            format!(
+                                "      ... and {} more source{}",
+                                stats.virtual_source_count - stats.virtual_prefixes.len(),
+                                if stats.virtual_source_count - stats.virtual_prefixes.len() == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                }
+                            ),
+                            app.theme.text_dim,
+                        )));
                     }
                 }
             }

@@ -627,9 +627,10 @@ async fn fetch_chunk_stats(
         }
     }
 
+    let virtual_source_count = url_counts.len();
     let mut virtual_prefixes: Vec<(String, usize)> = url_counts.into_iter().collect();
     virtual_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
-    virtual_prefixes.truncate(5);
+    virtual_prefixes.truncate(10);
 
     Ok(ChunkStats {
         total_chunks: total,
@@ -639,6 +640,7 @@ async fn fetch_chunk_stats(
         native_total_bytes,
         virtual_count,
         virtual_prefixes,
+        virtual_source_count,
         virtual_total_bytes,
         stats_complete: true,
     })

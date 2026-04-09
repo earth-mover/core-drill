@@ -20,7 +20,10 @@ use color_eyre::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    color_eyre::install()?;
+    // Clean error display: no backtrace unless RUST_BACKTRACE is set
+    color_eyre::config::HookBuilder::default()
+        .display_env_section(false)
+        .install()?;
 
     let cli = Cli::parse();
 

@@ -97,8 +97,10 @@ pub struct ChunkStats {
     pub inline_count: usize,
     pub native_count: usize,
     pub virtual_count: usize,
-    /// Common URL prefixes for virtual chunks, with counts
+    /// Common URL prefixes for virtual chunks, with counts (top 10)
     pub virtual_prefixes: Vec<(String, usize)>,
+    /// Number of distinct source files referenced by virtual chunks
+    pub virtual_source_count: usize,
     /// Total size of native (Ref) chunks in bytes (sum of length fields)
     pub native_total_bytes: u64,
     /// Total size of inline chunks in bytes (sum of byte lengths)
