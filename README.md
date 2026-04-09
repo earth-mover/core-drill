@@ -1,0 +1,43 @@
+# 🔩 core-drill
+
+Terminal UI for inspecting [Icechunk](https://icechunk.io) V2 repositories.
+
+## Install
+
+```bash
+cargo install --git https://github.com/earth-mover/core-drill
+```
+
+## Usage
+
+```bash
+# Local repo
+core-drill ./my-repo
+
+# S3
+core-drill s3://bucket/prefix --region us-east-1
+
+# S3-compatible (R2, MinIO, Tigris)
+core-drill s3://bucket/prefix --endpoint-url https://...
+
+# GCS
+core-drill gs://bucket/prefix
+
+# Arraylake
+core-drill al:org/repo
+
+# CLI output (markdown or JSON, no TUI)
+core-drill s3://bucket/prefix --output md
+core-drill s3://bucket/prefix --output json
+
+# MCP server for AI agents
+core-drill --serve
+```
+
+## Design
+
+core-drill tries to be **fast**, not light. It aggressively fetches and caches metadata so navigation feels instant — branches, tags, ancestry, tree, and chunk stats are all kept in memory once loaded. On a slow S3 connection the first load may take a moment, but subsequent interactions are immediate.
+
+## License
+
+MIT
