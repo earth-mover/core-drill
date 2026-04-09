@@ -6,7 +6,7 @@ use crate::app::App;
 use crate::component::Pane;
 use crate::store::LoadState;
 use crate::store::types::TreeNodeType;
-use super::widgets::{clamped_scroll, labeled_lines, section_header, format_vcc_prefix, compute_grid_chunks, fmt_initialized, render_tabbed_panel};
+use super::widgets::{clamped_scroll, labeled_lines, section_header, format_vcc_prefix, compute_grid_chunks, fmt_initialized, render_tabbed_panel, split_wrap_tokens};
 use super::diff::render_snapshot_diff_detail;
 
 /// Aggregated storage stats computed from the current tree + chunk stats cache.
@@ -1168,9 +1168,9 @@ fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_current: bool) -
                 let indent = " ".repeat(prefix_len);
                 let mut first = true;
                 let mut current = String::new();
-                for word in msg.split_inclusive(' ') {
+                for word in split_wrap_tokens(&msg) {
                     if current.len() + word.len() <= available || current.is_empty() {
-                        current.push_str(word);
+                        current.push_str(&word);
                     } else {
                         if first {
                             lines.push(Line::from(vec![

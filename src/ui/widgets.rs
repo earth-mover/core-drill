@@ -4,6 +4,25 @@ use ratatui::widgets::*;
 use crate::app::App;
 use crate::component::BottomTab;
 
+/// Split a string into wrap-friendly tokens, breaking on spaces and path separators.
+/// Keeps the delimiter at the end of each token (like `split_inclusive`) so
+/// reassembly is lossless. This allows long paths like
+/// "included/array-a-2026-04-08T23:12:59.721280" to wrap at `/` boundaries.
+pub(super) fn split_wrap_tokens(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for ch in s.chars() {
+        current.push(ch);
+        if ch == ' ' || ch == '/' {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 /// Render a tabbed panel: outer border with title, a tab bar, and return the content area.
 /// Used by both the Detail pane and the Bottom (Version Control) pane.
 /// Render a tabbed panel. Returns `(content_area, tab_bar_area)` if there's enough space.
@@ -93,15 +112,16 @@ pub(super) fn labeled_lines<'a>(
     }
 
     // Split the value into chunks that fit within `available` columns.
-    // We split on spaces so we don't break inside tokens.
+    // Split on spaces and path separators (/) so long paths like
+    // "included/array-a-2026-04-08T23:12:59.721280" get wrapped properly.
     let indent = " ".repeat(label_len);
     let mut result: Vec<Line<'a>> = Vec::new();
     let mut current_line = String::new();
     let mut first = true;
 
-    for word in value.split_inclusive(' ') {
+    for word in split_wrap_tokens(&value) {
         if current_line.len() + word.len() <= available || current_line.is_empty() {
-            current_line.push_str(word);
+            current_line.push_str(&word);
         } else {
             // Flush the current line.
             if first {
@@ -117,7 +137,7 @@ pub(super) fn labeled_lines<'a>(
                     Span::styled(current_line.trim_end().to_string(), value_style),
                 ]));
             }
-            current_line = word.to_string();
+            current_line = word;
         }
     }
 
