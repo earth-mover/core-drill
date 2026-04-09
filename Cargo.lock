@@ -2029,9 +2029,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de1bd88d92fdc876fb2e84eef1410517bd9d7994343fce2ea2296e5255b0ae1"
+checksum = "41df75acde30410a8aa5e93de69acdcc6a243e8c8ebcb77786d94c4d680e599b"
 dependencies = [
  "async-compression",
  "async-recursion",
@@ -2071,9 +2071,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-arrow-object-store"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49cd3fdbe764b4f5d3b6d332136799a79d09b247a6dbc6c5f5985db9cb7c7837"
+checksum = "a10701f5ee0d401bd2be5a47a1118549bd23130346ba0696bc0d327c36644994"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2093,9 +2093,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-format"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e173fb4a4044d78058efb6565574727ab7e2405510d80509aafbc7b5cfe8d418"
+checksum = "92be8df0ca8329a4e622ca9eb57b517210bbb929aa19732c0c8f674a18629e7c"
 dependencies = [
  "base32",
  "bytes",
@@ -2119,9 +2119,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-s3"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eba0eddd4a27629ef55ec9006a09bd0a22851568634c0a845035277bf8aa86e8"
+checksum = "53e027d3d4666fb8ce3cfd56b54c47a7da343b04164db3545b6a8d7a40367c5e"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2144,9 +2144,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-storage"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02808d09853a901fcc354a2568d5868e98b21fb672578d91895c5a8aac9d4a73"
+checksum = "6992ca8faf59f61160089043d79b7120c970a2746f8e7f2972adf611c6e310f8"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2165,9 +2165,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-types"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d52ef17b6978895ec57412169c44b5503c1f26e74e8ac1a2d22edbe04f94023"
+checksum = "216a9d0f873e6f85cb721bca1a19b57a3826a46ef66cfea3e3392c47fa1cca1b"
 dependencies = [
  "serde",
  "serde_with",
@@ -4472,9 +4472,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.51.0"
+version = "1.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bd1c4c0fc4a7ab90fc15ef6daaa3ec3b893f004f915f2392557ed23237820cd"
+checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
 dependencies = [
  "bytes",
  "libc",
