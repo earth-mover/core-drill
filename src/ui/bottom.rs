@@ -110,7 +110,7 @@ fn render_branch_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
             render_scrollable_list(
                 branches,
                 |b| &b.name,
-                app.theme.branch,
+                app.theme.text,
                 app,
                 focused,
                 frame,
@@ -136,7 +136,7 @@ fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
                 );
                 return;
             }
-            render_scrollable_list(tags, |t| &t.name, app.theme.tag, app, focused, frame, area);
+            render_scrollable_list(tags, |t| &t.name, app.theme.text, app, focused, frame, area);
         }
     }
 }

@@ -45,7 +45,7 @@ src/
     mod.rs             — Pane, BottomTab, DetailMode, Action enums
   ui/
     mod.rs             — three-pane layout: sidebar (tree), detail, bottom (tabs)
-    detail.rs          — detail pane: Node/Repo/OpsLog/Branch/Snapshot tabs
+    detail.rs          — detail pane: Node/Repo/Branch/Snap/OpsLog tabs
     bottom.rs          — bottom panel: Snapshots/Branches/Tags lists
     diff.rs            — snapshot diff rendering
     widgets.rs         — shared: tabbed panels, scrollable lists, text wrapping
@@ -57,8 +57,9 @@ src/
 ## Key Patterns
 
 - **Three-pane layout**: Sidebar (tree) | Detail (5 tabs) | Bottom (Version Control, 3 tabs)
-- **Detail tabs**: Node | Repo | Ops Log | Branch | Snapshot — auto-switch when browsing bottom panel
-- **Pane focus model**: `Pane::Sidebar | Detail | Bottom` — not a View enum
+- **Detail tabs**: Node | Repo | Branch | Snap | Ops Log — auto-switch when browsing bottom panel
+- **Pane focus model**: `Pane::Sidebar | Detail | Bottom` — initial focus on Detail/Repo
+- **Pane sync**: `set_detail_mode()` syncs bottom panel (Branch↔Branches, Snap↔Snapshots); `on_bottom_selection_changed()` syncs detail to bottom
 - **AllNodes single-fetch**: `list_nodes("/")` loads entire tree; no per-group lazy loading
 - **RepoInfo API**: `fetch_repo_info()` for branches/tags/ancestry — single cached fetch, all in-memory
 - **LoadState<T>**: `NotRequested | Loading | Loaded(T) | Error(String)` — keep old data during re-fetch (no loading flash)

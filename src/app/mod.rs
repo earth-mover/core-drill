@@ -101,7 +101,7 @@ impl App {
             store,
             theme: Theme::default(),
             should_quit: false,
-            focused_pane: Pane::Sidebar,
+            focused_pane: Pane::Detail,
             bottom_visible: true,
             bottom_tab: BottomTab::Snapshots,
             detail_mode: DetailMode::Repo,
@@ -598,6 +598,19 @@ impl App {
                 .map(|b| b.len())
                 .unwrap_or(0),
             BottomTab::Tags => self.store.tags.as_loaded().map(|t| t.len()).unwrap_or(0),
+        }
+    }
+
+    /// Set the detail mode and sync the bottom panel to match.
+    /// Use this instead of setting `detail_mode` directly to keep panes in sync.
+    pub(crate) fn set_detail_mode(&mut self, mode: DetailMode) {
+        self.detail_mode = mode;
+        self.detail_scroll = 0;
+        // Sync bottom panel to match
+        match mode {
+            DetailMode::Branch => self.switch_bottom_tab(BottomTab::Branches),
+            DetailMode::Snapshot => self.switch_bottom_tab(BottomTab::Snapshots),
+            _ => {}
         }
     }
 

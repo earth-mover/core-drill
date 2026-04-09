@@ -14,6 +14,8 @@ struct StorageStats {
     total_arrays: usize,
     total_groups: usize,
     total_written: u64,
+    empty_arrays: usize,
+    filled_arrays: usize,
     known_native: usize,
     known_inline: usize,
     known_virtual: usize,
@@ -30,6 +32,8 @@ impl StorageStats {
             total_arrays: 0,
             total_groups: 0,
             total_written: 0,
+            empty_arrays: 0,
+            filled_arrays: 0,
             known_native: 0,
             known_inline: 0,
             known_virtual: 0,
@@ -49,6 +53,11 @@ impl StorageStats {
                             s.total_arrays += 1;
                             if let Some(tc) = summary.total_chunks {
                                 s.total_written += tc;
+                                if tc == 0 {
+                                    s.empty_arrays += 1;
+                                } else {
+                                    s.filled_arrays += 1;
+                                }
                             }
                         }
                     }
@@ -119,13 +128,13 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     let active_tab = match app.detail_mode {
         DetailMode::Node => 0,
         DetailMode::Repo => 1,
-        DetailMode::OpsLog => 2,
-        DetailMode::Branch => 3,
-        DetailMode::Snapshot => 4,
+        DetailMode::Branch => 2,
+        DetailMode::Snapshot => 3,
+        DetailMode::OpsLog => 4,
     };
     let (content_area, _tab_bar) = match render_tabbed_panel(
         "[2] Detail",
-        &["Node", "Repo", "Ops Log", "Branch", "Snap"],
+        &["Node", "Repo", "Branch", "Snap", "Ops Log"],
         active_tab,
         focused,
         &app.theme,
@@ -898,6 +907,16 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                 Span::styled("  Arrays:      ", app.theme.text_dim),
                 Span::styled(ss.total_arrays.to_string(), app.theme.text),
             ]));
+            if ss.empty_arrays > 0 || ss.filled_arrays > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled("    Filled:    ", app.theme.text_dim),
+                    Span::styled(ss.filled_arrays.to_string(), app.theme.text),
+                    Span::styled(
+                        format!("  empty: {}", ss.empty_arrays),
+                        app.theme.text_dim,
+                    ),
+                ]));
+            }
             lines.push(Line::from(vec![
                 Span::styled("  Groups:      ", app.theme.text_dim),
                 Span::styled(ss.total_groups.to_string(), app.theme.text),
@@ -1227,6 +1246,16 @@ fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_current: bool) -
                 Span::styled("  Arrays:      ", app.theme.text_dim),
                 Span::styled(ss.total_arrays.to_string(), app.theme.text),
             ]));
+            if ss.empty_arrays > 0 || ss.filled_arrays > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled("    Filled:    ", app.theme.text_dim),
+                    Span::styled(ss.filled_arrays.to_string(), app.theme.text),
+                    Span::styled(
+                        format!("  empty: {}", ss.empty_arrays),
+                        app.theme.text_dim,
+                    ),
+                ]));
+            }
             lines.push(Line::from(vec![
                 Span::styled("  Groups:      ", app.theme.text_dim),
                 Span::styled(ss.total_groups.to_string(), app.theme.text),

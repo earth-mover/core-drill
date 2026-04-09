@@ -217,14 +217,14 @@ impl App {
                     };
                     self.switch_bottom_tab(next);
                 } else if self.focused_pane == Pane::Detail {
-                    self.detail_mode = match self.detail_mode {
+                    let next = match self.detail_mode {
                         DetailMode::Node => DetailMode::Repo,
-                        DetailMode::Repo => DetailMode::OpsLog,
-                        DetailMode::OpsLog => DetailMode::Branch,
+                        DetailMode::Repo => DetailMode::Branch,
                         DetailMode::Branch => DetailMode::Snapshot,
-                        DetailMode::Snapshot => DetailMode::Node,
+                        DetailMode::Snapshot => DetailMode::OpsLog,
+                        DetailMode::OpsLog => DetailMode::Node,
                     };
-                    self.detail_scroll = 0;
+                    self.set_detail_mode(next);
                 } else {
                     let next = match self.focused_pane {
                         Pane::Sidebar => Pane::Detail,
@@ -250,14 +250,14 @@ impl App {
                     };
                     self.switch_bottom_tab(prev);
                 } else if self.focused_pane == Pane::Detail {
-                    self.detail_mode = match self.detail_mode {
-                        DetailMode::Node => DetailMode::Snapshot,
+                    let prev = match self.detail_mode {
+                        DetailMode::Node => DetailMode::OpsLog,
                         DetailMode::Repo => DetailMode::Node,
-                        DetailMode::OpsLog => DetailMode::Repo,
-                        DetailMode::Branch => DetailMode::OpsLog,
+                        DetailMode::Branch => DetailMode::Repo,
                         DetailMode::Snapshot => DetailMode::Branch,
+                        DetailMode::OpsLog => DetailMode::Snapshot,
                     };
-                    self.detail_scroll = 0;
+                    self.set_detail_mode(prev);
                 } else {
                     // Cycle panes backward: Sidebar -> Bottom -> Detail -> Sidebar
                     let prev = match self.focused_pane {
@@ -307,23 +307,19 @@ impl App {
                         return Action::FocusPane(Pane::Sidebar);
                     }
                     DetailMode::Repo => {
-                        self.detail_mode = DetailMode::Node;
-                        self.detail_scroll = 0;
-                        return Action::None;
-                    }
-                    DetailMode::OpsLog => {
-                        self.detail_mode = DetailMode::Repo;
-                        self.detail_scroll = 0;
+                        self.set_detail_mode(DetailMode::Node);
                         return Action::None;
                     }
                     DetailMode::Branch => {
-                        self.detail_mode = DetailMode::OpsLog;
-                        self.detail_scroll = 0;
+                        self.set_detail_mode(DetailMode::Repo);
                         return Action::None;
                     }
                     DetailMode::Snapshot => {
-                        self.detail_mode = DetailMode::Branch;
-                        self.detail_scroll = 0;
+                        self.set_detail_mode(DetailMode::Branch);
+                        return Action::None;
+                    }
+                    DetailMode::OpsLog => {
+                        self.set_detail_mode(DetailMode::Snapshot);
                         return Action::None;
                     }
                 }
@@ -331,26 +327,22 @@ impl App {
             KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Detail => {
                 match self.detail_mode {
                     DetailMode::Node => {
-                        self.detail_mode = DetailMode::Repo;
-                        self.detail_scroll = 0;
+                        self.set_detail_mode(DetailMode::Repo);
                         return Action::None;
                     }
                     DetailMode::Repo => {
-                        self.detail_mode = DetailMode::OpsLog;
-                        self.detail_scroll = 0;
-                        return Action::None;
-                    }
-                    DetailMode::OpsLog => {
-                        self.detail_mode = DetailMode::Branch;
-                        self.detail_scroll = 0;
+                        self.set_detail_mode(DetailMode::Branch);
                         return Action::None;
                     }
                     DetailMode::Branch => {
-                        self.detail_mode = DetailMode::Snapshot;
-                        self.detail_scroll = 0;
+                        self.set_detail_mode(DetailMode::Snapshot);
                         return Action::None;
                     }
                     DetailMode::Snapshot => {
+                        self.set_detail_mode(DetailMode::OpsLog);
+                        return Action::None;
+                    }
+                    DetailMode::OpsLog => {
                         return Action::None;
                     }
                 }

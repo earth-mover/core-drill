@@ -51,12 +51,12 @@ Context-dependent content based on what is selected:
 |-----------|---------------|
 | Array node in sidebar | Array metadata: name, path, shape, dimensions, manifest count, zarr metadata (data type, chunk shape, codecs, fill value) |
 | Group node in sidebar | Group info: path, child count, child listing with type icons |
-| Nothing selected | Repo overview: repository URL, current branch, branch/tag/snapshot counts |
+| Nothing selected / startup | Repo overview: repository URL, current branch, branch/tag/snapshot counts, storage summary with filled/empty array counts |
 | Snapshot in bottom panel (when focused) | Snapshot diff: parent->child comparison showing added/removed/modified arrays and groups, chunk change counts |
 
 #### Array Detail — Section Breakdown
 
-The array detail is rendered in two functions (`src/ui/mod.rs`):
+The array detail is rendered in two functions (`src/ui/detail.rs`):
 
 - `render_array_detail_header` — upper sections (Shape & Layout)
 - `render_array_detail_storage` — lower sections (Storage, Chunk Types, Attributes, Raw Metadata)
