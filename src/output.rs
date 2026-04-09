@@ -187,8 +187,9 @@ async fn run_json(
             let tree = fetch_tree_flat(&repo, r#ref, path.as_deref()).await?;
             println!("{}", serde_json::to_string_pretty(&tree)?);
         }
-        Some(Command::OpsLog { .. }) => {
-            eprintln!("ops-log not yet implemented");
+        Some(Command::OpsLog { limit }) => {
+            let entries = fetch_ops_log(&repo, limit).await?;
+            println!("{}", serde_json::to_string_pretty(&entries)?);
         }
     }
     Ok(())
@@ -281,8 +282,19 @@ async fn run_md(
         }) => {
             print_md_tree(&repo, r#ref, path.as_deref()).await?;
         }
-        Some(Command::OpsLog { .. }) => {
-            eprintln!("ops-log not yet implemented");
+        Some(Command::OpsLog { limit }) => {
+            let entries = fetch_ops_log(&repo, limit).await?;
+            println!("# Operations Log\n");
+            if entries.is_empty() {
+                println!("(no operations recorded)");
+            } else {
+                println!("| Time | Operation |");
+                println!("|------|-----------|");
+                for entry in &entries {
+                    let ts = entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC");
+                    println!("| {} | {} |", ts, entry.description);
+                }
+            }
         }
     }
     Ok(())
@@ -828,4 +840,77 @@ pub(crate) async fn fetch_tree_flat(
 
 pub(crate) fn truncate(s: &str, max: usize) -> &str {
     if s.len() <= max { s } else { &s[..max] }
+}
+
+pub(crate) async fn fetch_ops_log(
+    repo: &Repository,
+    limit: Option<usize>,
+) -> color_eyre::Result<Vec<OpsLogEntry>> {
+    use futures::StreamExt;
+    use icechunk::format::repo_info::UpdateType;
+
+    let (stream, _repo_info, _version) = repo.ops_log().await?;
+    futures::pin_mut!(stream);
+
+    let max = limit.unwrap_or(usize::MAX);
+    let mut entries = Vec::new();
+    while let Some(result) = stream.next().await {
+        let (timestamp, update_type, backup_path) = result?;
+
+        let description = match &update_type {
+            UpdateType::RepoInitializedUpdate => "Repository initialized".to_string(),
+            UpdateType::RepoMigratedUpdate {
+                from_version,
+                to_version,
+            } => format!("Migrated from v{from_version} to v{to_version}"),
+            UpdateType::RepoStatusChangedUpdate { status } => {
+                format!("Status changed to {status:?}")
+            }
+            UpdateType::ConfigChangedUpdate => "Configuration changed".to_string(),
+            UpdateType::MetadataChangedUpdate => "Metadata changed".to_string(),
+            UpdateType::TagCreatedUpdate { name } => format!("Tag created: {}", sanitize(name)),
+            UpdateType::TagDeletedUpdate { name, .. } => {
+                format!("Tag deleted: {}", sanitize(name))
+            }
+            UpdateType::BranchCreatedUpdate { name } => {
+                format!("Branch created: {}", sanitize(name))
+            }
+            UpdateType::BranchDeletedUpdate { name, .. } => {
+                format!("Branch deleted: {}", sanitize(name))
+            }
+            UpdateType::BranchResetUpdate { name, .. } => {
+                format!("Branch reset: {}", sanitize(name))
+            }
+            UpdateType::NewCommitUpdate {
+                branch,
+                new_snap_id,
+            } => format!(
+                "Commit on {}: {}",
+                sanitize(branch),
+                &new_snap_id.to_string()[..12]
+            ),
+            UpdateType::CommitAmendedUpdate { branch, .. } => {
+                format!("Commit amended on {}", sanitize(branch))
+            }
+            UpdateType::NewDetachedSnapshotUpdate { new_snap_id } => {
+                format!("Detached snapshot: {}", &new_snap_id.to_string()[..12])
+            }
+            UpdateType::GCRanUpdate => "Garbage collection ran".to_string(),
+            UpdateType::ExpirationRanUpdate => "Snapshot expiration ran".to_string(),
+            UpdateType::FeatureFlagChanged { id, new_value } => {
+                format!("Feature flag '{id}' → {new_value:?}")
+            }
+        };
+
+        entries.push(OpsLogEntry {
+            timestamp,
+            description,
+            backup_path,
+        });
+
+        if entries.len() >= max {
+            break;
+        }
+    }
+    Ok(entries)
 }

@@ -80,28 +80,41 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 // ─── Status Bar ──────────────────────────────────────────────
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let status = match (&app.store.branches, &app.store.tags) {
-        (LoadState::Loading, _) | (_, LoadState::Loading) => "connecting...",
-        (LoadState::Error(_), _) | (_, LoadState::Error(_)) => "error",
-        (LoadState::Loaded(_), LoadState::Loaded(_)) => "ready",
-        _ => "",
+    use crate::store::{ErrorKind, classify_error};
+
+    // Determine overall status and optional detail message
+    let (status, detail, style) = match (&app.store.branches, &app.store.tags) {
+        (LoadState::Error(e), _) | (_, LoadState::Error(e)) => {
+            let kind = classify_error(e);
+            let (label, hint) = match kind {
+                ErrorKind::Auth => ("auth error", "credentials may be expired — R to retry"),
+                ErrorKind::Network => ("network error", "connection failed — R to retry"),
+                ErrorKind::NotFound => ("not found", "repo or branch missing — R to retry"),
+                ErrorKind::Other => ("error", "R to retry"),
+            };
+            (label, Some(hint), app.theme.error)
+        }
+        (LoadState::Loading, _) | (_, LoadState::Loading) => {
+            ("connecting...", None, app.theme.loading)
+        }
+        (LoadState::Loaded(_), LoadState::Loaded(_)) => ("ready", None, app.theme.status_ok),
+        _ => ("", None, app.theme.text_dim),
     };
 
     let display_url = app.repo_info.display_short();
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" ", app.theme.text),
         Span::styled(display_url, app.theme.branch),
         Span::styled("  ", app.theme.text_dim),
-        Span::styled(
-            status,
-            if status == "ready" {
-                app.theme.status_ok
-            } else {
-                app.theme.loading
-            },
-        ),
-    ]);
+        Span::styled(status, style),
+    ];
+    if let Some(hint) = detail {
+        spans.push(Span::styled("  ", app.theme.text_dim));
+        spans.push(Span::styled(hint, app.theme.text_dim));
+    }
+
+    let line = Line::from(spans);
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -520,6 +533,46 @@ fn render_tabbed_panel(
 
 /// Build a section-header `Line` with consistent width and dark-gray styling.
 /// Total visual width is kept near 40 characters by padding with `─` on the right.
+/// Format a VCC prefix URL for display. Resolves `__al_source` container names
+/// to the Arraylake repo's bucket name when available.
+fn format_vcc_prefix(prefix: &str, repo_info: &crate::app::RepoIdentity) -> String {
+    if let Some(rest) = prefix.strip_prefix("vcc://") {
+        if let Some((container, path)) = rest.split_once('/') {
+            // For __al_source in Arraylake repos, show the bucket name
+            let display_name = if container == "__al_source" {
+                if let crate::app::RepoIdentity::Arraylake {
+                    org, repo, bucket, platform, ..
+                } = repo_info
+                {
+                    format!("{org}/{repo} \u{2192} {bucket} ({platform})")
+                } else {
+                    format!("{container} (managed)")
+                }
+            } else {
+                container.to_string()
+            };
+            format!("      {display_name}: {path}/")
+        } else {
+            // Just a container name, no subpath
+            if rest == "__al_source" {
+                if let crate::app::RepoIdentity::Arraylake {
+                    org, repo, bucket, platform, ..
+                } = repo_info
+                {
+                    format!("      {org}/{repo} \u{2192} {bucket} ({platform})")
+                } else {
+                    format!("      {rest} (managed)")
+                }
+            } else {
+                format!("      {rest}")
+            }
+        }
+    } else {
+        // Non-VCC URL (e.g., s3://, file://)
+        format!("      {prefix}/")
+    }
+}
+
 fn section_header(label: &str) -> Line<'static> {
     let prefix = format!("  ─── {label} ");
     let remaining = 36usize.saturating_sub(prefix.chars().count());
@@ -962,17 +1015,7 @@ fn render_array_detail_storage<'a>(
                 if !stats.virtual_prefixes.is_empty() {
                     lines.push(Line::from(Span::styled("    Sources:", app.theme.text_dim)));
                     for (prefix, count) in &stats.virtual_prefixes {
-                        let display = if let Some(rest) = prefix.strip_prefix("vcc://") {
-                            if let Some((container, path)) = rest.split_once('/') {
-                                format!("      {container}: {path}/")
-                            } else {
-                                // Just a container name, no subpath
-                                format!("      {rest} (managed)")
-                            }
-                        } else {
-                            // Non-VCC URL (e.g., s3://, file://)
-                            format!("      {prefix}/")
-                        };
+                        let display = format_vcc_prefix(prefix, &app.repo_info);
                         lines.push(Line::from(vec![
                             Span::styled(display, app.theme.text),
                             Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
@@ -1348,6 +1391,44 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
         }
     }
 
+    // ─── Operations Log ─────────────────
+    match &app.store.ops_log {
+        crate::store::LoadState::Loaded(entries) if !entries.is_empty() => {
+            lines.push(Line::from(""));
+            lines.push(section_header("Operations Log"));
+            for entry in entries.iter().take(50) {
+                let ts = entry.timestamp.format("%Y-%m-%d %H:%M:%S UTC");
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {ts}  "), app.theme.text_dim),
+                    Span::styled(entry.description.clone(), app.theme.text),
+                ]));
+            }
+            if entries.len() > 50 {
+                lines.push(Line::from(Span::styled(
+                    format!("  … and {} more", entries.len() - 50),
+                    app.theme.text_dim,
+                )));
+            }
+        }
+        crate::store::LoadState::Loading => {
+            lines.push(Line::from(""));
+            lines.push(section_header("Operations Log"));
+            lines.push(Line::from(Span::styled(
+                "  Loading...",
+                app.theme.loading,
+            )));
+        }
+        crate::store::LoadState::Error(e) => {
+            lines.push(Line::from(""));
+            lines.push(section_header("Operations Log"));
+            lines.push(Line::from(Span::styled(
+                format!("  Error: {e}"),
+                app.theme.error,
+            )));
+        }
+        _ => {}
+    }
+
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "  Navigate the tree or select a snapshot to see details.",
@@ -1570,18 +1651,20 @@ fn render_snapshot_diff_detail<'a>(
                                     let i = stats.inline_count;
                                     if v > 0 && s == 0 && i == 0 {
                                         if stats.virtual_prefixes.len() == 1 {
-                                            // Exactly one source — show inline
-                                            let p = &stats.virtual_prefixes[0].0;
-                                            (format!("  (virtual \u{2192} {p})"), vec![])
+                                            // Exactly one source — show inline with resolved name
+                                            let resolved = format_vcc_prefix(&stats.virtual_prefixes[0].0, &app.repo_info);
+                                            let resolved = resolved.trim();
+                                            (format!("  (virtual \u{2192} {resolved})"), vec![])
                                         } else {
                                             // Multiple sources — list them indented below
                                             let source_lines: Vec<Line> = stats
                                                 .virtual_prefixes
                                                 .iter()
                                                 .map(|(prefix, cnt)| {
+                                                    let resolved = format_vcc_prefix(prefix, &app.repo_info);
                                                     Line::from(vec![
                                                         Span::styled(
-                                                            format!("    {prefix}/"),
+                                                            resolved,
                                                             app.theme.text,
                                                         ),
                                                         Span::styled(
@@ -1949,10 +2032,10 @@ fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
     }
 
     let hints = match app.focused_pane {
-        Pane::Sidebar => " q:quit  ?:help  t:toggle log  /:search  j/k:navigate  Enter:expand ",
-        Pane::Detail => " q:quit  ?:help  t:toggle log  j/k:scroll  h/l:Node/Repo ",
+        Pane::Sidebar => " q:quit  ?:help  R:retry  t:toggle log  /:search  j/k:navigate  Enter:expand ",
+        Pane::Detail => " q:quit  ?:help  R:retry  t:toggle log  j/k:scroll  h/l:Node/Repo ",
         Pane::Bottom => {
-            " q:quit  ?:help  t:toggle log  /:search  j/k:navigate  Tab:next tab  Enter:select "
+            " q:quit  ?:help  R:retry  t:toggle log  /:search  j/k:navigate  Tab:next tab  Enter:select "
         }
     };
     frame.render_widget(

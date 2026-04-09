@@ -131,3 +131,13 @@ pub struct FeatureFlagInfo {
     /// True if explicitly set by user, false if using default
     pub explicit: bool,
 }
+
+/// A single entry from the repository operations log
+#[derive(Debug, Clone, Serialize)]
+pub struct OpsLogEntry {
+    pub timestamp: DateTime<Utc>,
+    /// Human-readable description of the operation
+    pub description: String,
+    /// Optional backup path associated with the operation
+    pub backup_path: Option<String>,
+}

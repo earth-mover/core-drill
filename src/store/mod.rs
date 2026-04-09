@@ -11,6 +11,56 @@ use crate::sanitize::sanitize;
 
 pub use types::*;
 
+/// Broad error categories for user-friendly display
+#[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
+pub enum ErrorKind {
+    /// 401/403, expired tokens, access denied
+    Auth,
+    /// Connection timeout, DNS failure, network unreachable
+    Network,
+    /// 404, missing repo, missing branch
+    NotFound,
+    /// Anything else
+    Other,
+}
+
+/// Classify an error string into a user-facing category.
+/// Pattern-matches common substrings from icechunk/object_store/reqwest errors.
+#[allow(dead_code)]
+pub fn classify_error(msg: &str) -> ErrorKind {
+    let lower = msg.to_lowercase();
+    if lower.contains("403")
+        || lower.contains("401")
+        || lower.contains("access denied")
+        || lower.contains("forbidden")
+        || lower.contains("expired")
+        || lower.contains("not authorized")
+        || lower.contains("authentication")
+        || lower.contains("invalid token")
+    {
+        ErrorKind::Auth
+    } else if lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("connection refused")
+        || lower.contains("dns")
+        || lower.contains("network")
+        || lower.contains("unreachable")
+        || lower.contains("connect error")
+        || lower.contains("no such host")
+    {
+        ErrorKind::Network
+    } else if lower.contains("404")
+        || lower.contains("not found")
+        || lower.contains("no such")
+        || lower.contains("does not exist")
+    {
+        ErrorKind::NotFound
+    } else {
+        ErrorKind::Other
+    }
+}
+
 /// Loading state for cached data
 #[derive(Debug, Clone)]
 pub enum LoadState<T> {
@@ -29,6 +79,13 @@ impl<T> LoadState<T> {
     pub fn as_loaded(&self) -> Option<&T> {
         match self {
             LoadState::Loaded(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn error_kind(&self) -> Option<ErrorKind> {
+        match self {
+            LoadState::Error(msg) => Some(classify_error(msg)),
             _ => None,
         }
     }
@@ -90,7 +147,7 @@ pub enum DataResponse {
         result: Result<ChunkStats, String>,
     },
     RepoConfig(Result<RepoConfig, String>),
-    OpsLog(Result<Vec<String>, String>),
+    OpsLog(Result<Vec<OpsLogEntry>, String>),
 }
 
 /// Central data cache. Lives on the main thread.
@@ -104,7 +161,7 @@ pub struct DataStore {
     pub diffs: HashMap<String, LoadState<DiffSummary>>,
     pub chunk_stats: HashMap<(String, String), LoadState<ChunkStats>>,
     pub repo_config: LoadState<RepoConfig>,
-    pub ops_log: LoadState<Vec<String>>,
+    pub ops_log: LoadState<Vec<OpsLogEntry>>,
 
     // Channel for sending requests to background worker
     request_tx: mpsc::UnboundedSender<DataRequest>,
@@ -379,8 +436,8 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
             DataResponse::RepoConfig(result)
         }
         DataRequest::OpsLog => {
-            // TODO: implement ops log fetching
-            DataResponse::OpsLog(Ok(vec![]))
+            let result = fetch_ops_log(repo).await;
+            DataResponse::OpsLog(result)
         }
     }
 }
@@ -754,4 +811,70 @@ async fn fetch_repo_config(repo: &Repository) -> Result<RepoConfig, String> {
         feature_flags: flags,
         virtual_chunk_containers: vcc,
     })
+}
+
+/// Fetch the repository operations log (mutation history).
+async fn fetch_ops_log(repo: &Repository) -> Result<Vec<OpsLogEntry>, String> {
+    use futures::StreamExt;
+    use icechunk::format::repo_info::UpdateType;
+
+    let (stream, _repo_info, _version) = repo.ops_log().await.map_err(|e| e.to_string())?;
+    futures::pin_mut!(stream);
+
+    let mut entries = Vec::new();
+    while let Some(result) = stream.next().await {
+        let (timestamp, update_type, backup_path) = result.map_err(|e| e.to_string())?;
+
+        let description = match &update_type {
+            UpdateType::RepoInitializedUpdate => "Repository initialized".to_string(),
+            UpdateType::RepoMigratedUpdate {
+                from_version,
+                to_version,
+            } => format!("Migrated from v{from_version} to v{to_version}"),
+            UpdateType::RepoStatusChangedUpdate { status } => {
+                format!("Status changed to {status:?}")
+            }
+            UpdateType::ConfigChangedUpdate => "Configuration changed".to_string(),
+            UpdateType::MetadataChangedUpdate => "Metadata changed".to_string(),
+            UpdateType::TagCreatedUpdate { name } => format!("Tag created: {}", sanitize(name)),
+            UpdateType::TagDeletedUpdate { name, .. } => {
+                format!("Tag deleted: {}", sanitize(name))
+            }
+            UpdateType::BranchCreatedUpdate { name } => {
+                format!("Branch created: {}", sanitize(name))
+            }
+            UpdateType::BranchDeletedUpdate { name, .. } => {
+                format!("Branch deleted: {}", sanitize(name))
+            }
+            UpdateType::BranchResetUpdate { name, .. } => {
+                format!("Branch reset: {}", sanitize(name))
+            }
+            UpdateType::NewCommitUpdate {
+                branch,
+                new_snap_id,
+            } => format!(
+                "Commit on {}: {}",
+                sanitize(branch),
+                &new_snap_id.to_string()[..12]
+            ),
+            UpdateType::CommitAmendedUpdate { branch, .. } => {
+                format!("Commit amended on {}", sanitize(branch))
+            }
+            UpdateType::NewDetachedSnapshotUpdate { new_snap_id } => {
+                format!("Detached snapshot: {}", &new_snap_id.to_string()[..12])
+            }
+            UpdateType::GCRanUpdate => "Garbage collection ran".to_string(),
+            UpdateType::ExpirationRanUpdate => "Snapshot expiration ran".to_string(),
+            UpdateType::FeatureFlagChanged { id, new_value } => {
+                format!("Feature flag '{id}' → {new_value:?}")
+            }
+        };
+
+        entries.push(OpsLogEntry {
+            timestamp,
+            description,
+            backup_path,
+        });
+    }
+    Ok(entries)
 }

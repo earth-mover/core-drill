@@ -77,6 +77,8 @@ pub struct App {
     pub last_diff_requested: Option<String>,
     /// Dedup guard: last snapshot we requested a tree for
     pub last_tree_snapshot_requested: Option<String>,
+    /// Cached tree search candidates — invalidated when node_children changes.
+    tree_candidate_cache: Option<Vec<String>>,
 
     // Layout areas (updated each render for mouse hit-testing)
     pub sidebar_area: Rect,
@@ -106,6 +108,7 @@ impl App {
             tree_auto_expanded: false,
             last_diff_requested: None,
             last_tree_snapshot_requested: None,
+            tree_candidate_cache: None,
             sidebar_area: Rect::default(),
             detail_area: Rect::default(),
             bottom_area: None,
@@ -290,11 +293,51 @@ impl App {
             branch: self.current_branch.clone(),
         });
         self.store.submit(DataRequest::RepoConfig);
+        self.store.submit(DataRequest::OpsLog);
+    }
+
+    /// Re-submit requests for any data currently in an Error state.
+    #[allow(dead_code)]
+    pub fn retry_failed(&mut self) {
+        // Top-level data
+        if matches!(self.store.branches, LoadState::Error(_)) {
+            self.store.submit(DataRequest::Branches);
+        }
+        if matches!(self.store.tags, LoadState::Error(_)) {
+            self.store.submit(DataRequest::Tags);
+        }
+        if matches!(self.store.repo_config, LoadState::Error(_)) {
+            self.store.submit(DataRequest::RepoConfig);
+        }
+        if matches!(self.store.ops_log, LoadState::Error(_)) {
+            self.store.submit(DataRequest::OpsLog);
+        }
+
+        // Ancestry for current branch
+        if let Some(LoadState::Error(_)) = self.store.ancestry.get(&self.current_branch) {
+            self.store.submit(DataRequest::Ancestry {
+                branch: self.current_branch.clone(),
+            });
+        }
+
+        // Node tree (check root key)
+        if let Some(LoadState::Error(_)) = self.store.node_children.get("/") {
+            self.tree_auto_expanded = false;
+            self.last_tree_snapshot_requested = None;
+            self.store.submit(DataRequest::AllNodes {
+                branch: self.current_branch.clone(),
+                snapshot_id: self.current_snapshot.clone(),
+            });
+        }
     }
 
     /// Drain all pending responses from background worker
     pub fn drain_responses(&mut self) {
-        self.store.drain_responses();
+        let had_responses = self.store.drain_responses();
+        if had_responses {
+            // Invalidate search candidate cache when data changes
+            self.tree_candidate_cache = None;
+        }
 
         // After AllNodes data arrives, auto-expand groups so the user sees
         // meaningful content immediately instead of a collapsed root.
@@ -431,9 +474,15 @@ impl App {
     }
 
     /// Get the searchable strings for the current pane context.
-    fn search_candidates(&self) -> Vec<String> {
+    fn search_candidates(&mut self) -> Vec<String> {
         match self.focused_pane {
-            Pane::Sidebar => crate::search::tree_candidates(&self.store),
+            Pane::Sidebar => {
+                if self.tree_candidate_cache.is_none() {
+                    self.tree_candidate_cache =
+                        Some(crate::search::tree_candidates(&self.store));
+                }
+                self.tree_candidate_cache.clone().unwrap()
+            }
             Pane::Bottom => match self.bottom_tab {
                 BottomTab::Snapshots => self
                     .store
@@ -562,6 +611,10 @@ impl App {
             }
             KeyCode::Char('u') => {
                 self.detail_scroll = self.detail_scroll.saturating_sub(3);
+                return Action::None;
+            }
+            KeyCode::Char('R') => {
+                self.retry_failed();
                 return Action::None;
             }
             _ => {}

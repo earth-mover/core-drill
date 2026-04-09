@@ -117,7 +117,17 @@ pub fn loading_widget(theme: &Theme) -> Paragraph<'static> {
     Paragraph::new("  Loading...").style(theme.loading)
 }
 
-/// Render an error message
+/// Render an error message with classification hint
 pub fn error_widget<'a>(msg: &'a str, theme: &Theme) -> Paragraph<'a> {
-    Paragraph::new(format!("  Error: {}", msg)).style(theme.error)
+    let kind = crate::store::classify_error(msg);
+    let hint = match kind {
+        crate::store::ErrorKind::Auth => "  (credentials may be expired — press R to retry)",
+        crate::store::ErrorKind::Network => "  (network issue — press R to retry)",
+        crate::store::ErrorKind::NotFound => "  (not found — press R to retry)",
+        crate::store::ErrorKind::Other => "  (press R to retry)",
+    };
+    Paragraph::new(Line::from(vec![
+        Span::styled(format!("  Error: {}", msg), theme.error),
+        Span::styled(hint, theme.text_dim),
+    ]))
 }
