@@ -28,33 +28,46 @@ cargo build --release              # optimized build
 src/
   main.rs              — entry point, mode dispatch
   cli.rs               — clap CLI definition
-  app.rs               — coordinator: pane focus, layout areas, key/mouse handling, auto-expand
   tui.rs               — terminal init (mouse capture), tokio::select event loop
   repo.rs              — open repos (local, S3, GCS, Azure, HTTP)
   theme.rs             — Earthmover brand colors, panel/widget helpers
   multiplexer.rs       — zellij/tmux detection, Ctrl+hjkl passthrough at pane edges
+  mcp.rs               — MCP server (11 tools), glob matching, collapsed tree output
+  output.rs            — canonical fetch functions (RepoInfo API), CLI output formatting
+  app/
+    mod.rs             — App struct, state management, data loading, drain_responses
+    keys.rs            — keyboard/mouse input handling, search, vim fold commands
+    tree.rs            — tree manipulation: expand/collapse, auto-expand, path helpers
   store/
     mod.rs             — DataStore (cache), DataRequest/Response, background worker
     types.rs           — BranchInfo, TagInfo, TreeNode, DiffSummary, ArraySummary
   component/
-    mod.rs             — Pane, BottomTab, Action enums; Component trait (not yet used)
+    mod.rs             — Pane, BottomTab, DetailMode, Action enums
   ui/
     mod.rs             — three-pane layout: sidebar (tree), detail, bottom (tabs)
+    detail.rs          — detail pane: Node/Repo/OpsLog/Branch/Snapshot tabs
+    bottom.rs          — bottom panel: Snapshots/Branches/Tags lists
+    diff.rs            — snapshot diff rendering
+    widgets.rs         — shared: tabbed panels, scrollable lists, text wrapping
     format.rs          — ZarrMetadata parser (data type, chunk shape, codecs, fill value)
-    help.rs            — full-screen help overlay
+    help.rs            — full-screen help overlay (mirrors TUI layout)
     tree.rs            — flat-tree renderer (legacy; sidebar uses tui_tree_widget now)
 ```
 
 ## Key Patterns
 
-- **Three-pane layout**: Sidebar (tree) | Detail (context-dependent) | Bottom (togglable tabs)
+- **Three-pane layout**: Sidebar (tree) | Detail (5 tabs) | Bottom (Version Control, 3 tabs)
+- **Detail tabs**: Node | Repo | Ops Log | Branch | Snapshot — auto-switch when browsing bottom panel
 - **Pane focus model**: `Pane::Sidebar | Detail | Bottom` — not a View enum
 - **AllNodes single-fetch**: `list_nodes("/")` loads entire tree; no per-group lazy loading
-- **LoadState<T>**: `NotRequested | Loading | Loaded(T) | Error(String)` — always know what to render
+- **RepoInfo API**: `fetch_repo_info()` for branches/tags/ancestry — single cached fetch, all in-memory
+- **LoadState<T>**: `NotRequested | Loading | Loaded(T) | Error(String)` — keep old data during re-fetch (no loading flash)
+- **Reactive search**: `/` starts fuzzy search, all panes update as you type (branches switch, tree follows)
+- **Vim fold commands**: zo/zc/zO/zC/zR/zM — zc on leaf bubbles to parent
 - **Multiplexer passthrough**: Ctrl+hjkl at pane edges delegates to zellij/tmux
 - **Mouse support**: click to focus pane and select row, using stored layout Rects
 - **Auto-expand tree**: on initial load, drill through single-child groups to first meaningful level
-- **Snapshot diffs**: auto-requested when bottom pane focused on Snapshots tab, uses `VersionInfo::SnapshotId`
+- **Snapshot diffs**: auto-requested when browsing Snapshots tab, uses `VersionInfo::SnapshotId`
 
 ## Critical Rules
 
