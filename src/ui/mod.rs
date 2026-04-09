@@ -985,6 +985,18 @@ fn render_array_detail_storage<'a>(
                 ));
             }
 
+            // Total data size across all chunk types
+            let total_data = stats.native_total_bytes + stats.inline_total_bytes + stats.virtual_total_bytes;
+            if total_data > 0 {
+                lines.extend(labeled_lines(
+                    "  Data size:     ",
+                    humansize::format_size(total_data, humansize::BINARY),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
+            }
+
             if stats.native_count > 0 {
                 let pct = stats.native_count * 100 / total;
                 let size_str = humansize::format_size(stats.native_total_bytes, humansize::BINARY);
@@ -1329,7 +1341,7 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
 
             if stats_loaded > 0 {
                 let total_bytes = native_bytes + inline_bytes + virtual_bytes;
-                let size_str = humansize::format_size(total_bytes, humansize::BINARY);
+                let stored_bytes = native_bytes + inline_bytes;
 
                 let mut parts = Vec::new();
                 if known_native > 0 {
@@ -1353,9 +1365,30 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                     Span::styled(format!("{}{}", parts.join(", "), suffix), app.theme.text),
                 ]));
                 lines.push(Line::from(vec![
-                    Span::styled("  Total size:  ", app.theme.text_dim),
-                    Span::styled(size_str, app.theme.text),
+                    Span::styled("  Data size:   ", app.theme.text_dim),
+                    Span::styled(
+                        humansize::format_size(total_bytes, humansize::BINARY),
+                        app.theme.text,
+                    ),
                 ]));
+                if virtual_bytes > 0 && stored_bytes > 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled("    Stored:    ", app.theme.text_dim),
+                        Span::styled(
+                            humansize::format_size(stored_bytes, humansize::BINARY),
+                            app.theme.text,
+                        ),
+                        Span::styled("  (in this repo)", app.theme.text_dim),
+                    ]));
+                    lines.push(Line::from(vec![
+                        Span::styled("    Virtual:   ", app.theme.text_dim),
+                        Span::styled(
+                            humansize::format_size(virtual_bytes, humansize::BINARY),
+                            app.theme.text,
+                        ),
+                        Span::styled("  (external sources)", app.theme.text_dim),
+                    ]));
+                }
             }
 
             // ─── Virtual Sources ─────────────
