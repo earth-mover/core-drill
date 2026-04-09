@@ -19,6 +19,17 @@ The MCP server is the primary interface for AI agents. It needs feature parity a
 - **`array-detail`** — Detailed array inspection: shape, dtype, codecs, chunk stats (inline/native/virtual breakdown), virtual source URLs. Currently `tree --path` gives metadata but not chunk stats. Params: `path`, `ref`.
 - **`config`** — Repository config, feature flags, virtual chunk containers, status. Currently only in `info` output but buried.
 
+### MCP installation & launch
+The key value of MCP is a **long-lived session** — open the repo once, then make many queries without re-connecting. Agents need a way to discover and launch core-drill.
+
+- **Claude Code config**: Document how to add core-drill as an MCP server in `.claude/settings.json`. Example:
+  ```json
+  {"mcpServers": {"core-drill": {"command": "core-drill", "args": ["al:org/repo", "--serve"]}}}
+  ```
+- **`cargo install`**: Ensure `cargo install core-drill` works (publish to crates.io or document `--git` install).
+- **Dynamic repo**: Consider a way for the agent to specify the repo at runtime rather than hardcoding in config. Options: (a) an `open-repo` MCP tool that takes a path/URL, (b) environment variable, (c) multiple server configs per-repo.
+- **Session lifecycle**: Document that the server stays alive for the connection lifetime — no need to re-open the repo between tool calls. This is the key advantage over CLI `--output` mode.
+
 ### MCP polish
 - Tool descriptions should guide agents on WHEN to use each tool, not just what it does.
 - `info` tool currently dumps everything — consider making it lighter (overview only) and pointing agents to drill-down tools.
@@ -28,7 +39,15 @@ The MCP server is the primary interface for AI agents. It needs feature parity a
 - Ensure `--output md` and `--output json` cover all the same data as MCP tools.
 - Test token efficiency — are the markdown tables too wide? Should we truncate snapshot IDs shorter?
 
-## Priority 2: Clipboard & Export
+## Priority 2: Instant TUI Startup
+
+Currently the repo is opened before the TUI starts, which blocks on S3/Arraylake. The TUI should appear immediately with a "connecting..." state.
+
+**Approach**: Make `App` hold `Option<DataStore>`. Start TUI immediately. Open repo in a background tokio task. When it resolves, create the DataStore and kick off initial loads. All UI code already handles `LoadState::NotRequested` and `Loading` gracefully — just need to also handle "no store yet".
+
+**Quick win already done**: Detail pane defaults to Repo tab so users see the overview filling in first.
+
+## Priority 3: Clipboard & Export
 
 Users inspecting repos need to copy things out.
 

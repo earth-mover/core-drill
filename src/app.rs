@@ -100,7 +100,7 @@ impl App {
             focused_pane: Pane::Sidebar,
             bottom_visible: true,
             bottom_tab: BottomTab::Snapshots,
-            detail_mode: DetailMode::Node,
+            detail_mode: DetailMode::Repo,
             show_help: false,
             current_branch: "main".to_string(),
             repo_info,
