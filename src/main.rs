@@ -174,7 +174,14 @@ async fn open_via_arraylake(
 
     // Resolve API endpoint: CLI flag > env var > crate default (None)
     let env_api = std::env::var("ARRAYLAKE_SERVICE__URI").ok();
-    let api_url = api_url.or(env_api.as_deref());
+    let api_url_owned: Option<String> = api_url.or(env_api.as_deref()).map(|url| {
+        if !url.contains("://") {
+            format!("https://{url}")
+        } else {
+            url.to_string()
+        }
+    });
+    let api_url = api_url_owned.as_deref();
 
     // Read token from ~/.arraylake/token.json
     let home = std::env::var("HOME")
