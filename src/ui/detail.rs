@@ -1145,21 +1145,62 @@ fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_current: bool) -
         lines.push(Line::from(""));
         lines.push(section_header(&format!("Recent Commits ({})", ancestry.len())));
 
+        let max_width = app.detail_area.width.saturating_sub(2) as usize;
         for entry in ancestry.iter().take(10) {
             let ts = entry.timestamp.format("%Y-%m-%d %H:%M");
+            let snap = crate::output::truncate(&entry.id, 8);
+            let prefix = format!("  {ts}  {snap}  ");
             let msg = if entry.message.is_empty() {
                 "(no message)".to_string()
             } else {
                 entry.message.clone()
             };
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {ts}  "), app.theme.text_dim),
-                Span::styled(
-                    crate::output::truncate(&entry.id, 8).to_string(),
-                    app.theme.text_dim,
-                ),
-                Span::styled(format!("  {msg}"), app.theme.text),
-            ]));
+            let prefix_len = prefix.len();
+            let available = max_width.saturating_sub(prefix_len);
+
+            if msg.len() <= available || available == 0 {
+                lines.push(Line::from(vec![
+                    Span::styled(prefix, app.theme.text_dim),
+                    Span::styled(msg, app.theme.text),
+                ]));
+            } else {
+                // Wrap: first line gets the prefix, continuations get indented
+                let indent = " ".repeat(prefix_len);
+                let mut first = true;
+                let mut current = String::new();
+                for word in msg.split_inclusive(' ') {
+                    if current.len() + word.len() <= available || current.is_empty() {
+                        current.push_str(word);
+                    } else {
+                        if first {
+                            lines.push(Line::from(vec![
+                                Span::styled(prefix.clone(), app.theme.text_dim),
+                                Span::styled(current.trim_end().to_string(), app.theme.text),
+                            ]));
+                            first = false;
+                        } else {
+                            lines.push(Line::from(vec![
+                                Span::styled(indent.clone(), app.theme.text_dim),
+                                Span::styled(current.trim_end().to_string(), app.theme.text),
+                            ]));
+                        }
+                        current = word.to_string();
+                    }
+                }
+                if !current.is_empty() {
+                    if first {
+                        lines.push(Line::from(vec![
+                            Span::styled(prefix, app.theme.text_dim),
+                            Span::styled(current.trim_end().to_string(), app.theme.text),
+                        ]));
+                    } else {
+                        lines.push(Line::from(vec![
+                            Span::styled(indent, app.theme.text_dim),
+                            Span::styled(current.trim_end().to_string(), app.theme.text),
+                        ]));
+                    }
+                }
+            }
         }
         if ancestry.len() > 10 {
             lines.push(Line::from(Span::styled(
