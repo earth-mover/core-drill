@@ -17,6 +17,8 @@ use rmcp::{
 };
 use tokio::sync::RwLock;
 
+use tracing::info;
+
 use crate::output;
 use crate::repo;
 
@@ -97,6 +99,8 @@ impl CoreDrillServer {
         description = "Open an Icechunk repository for inspection. Must be called before other tools. Accepts local paths, S3/GCS URLs, S3-compatible (R2, MinIO, Tigris via endpoint_url), or Arraylake refs (al:org/repo)."
     )]
     async fn open(&self, Parameters(params): Parameters<OpenParams>) -> String {
+        let _start = std::time::Instant::now();
+        info!("MCP open: repo={}", params.repo);
         let arraylake_api = params
             .arraylake_api
             .unwrap_or_else(|| "https://dev.api.earthmover.io".to_string());
@@ -105,7 +109,7 @@ impl CoreDrillServer {
             endpoint_url: params.endpoint_url,
         };
 
-        match crate::open_repo(&params.repo, &arraylake_api, &overrides).await {
+        let result = match crate::open_repo(&params.repo, &arraylake_api, &overrides).await {
             Ok((repository, identity)) => {
                 let label = identity.display_short();
                 let msg = format!("Opened repository: {label}");
@@ -116,13 +120,17 @@ impl CoreDrillServer {
                 msg
             }
             Err(e) => format!("Error opening repository: {e}"),
-        }
+        };
+        info!("MCP open completed in {:?}", _start.elapsed());
+        result
     }
 
     #[tool(
         description = "Repository overview: branches, tags, recent snapshots, and node tree. Good starting point after opening a repo."
     )]
     async fn info(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
+        let _start = std::time::Instant::now();
+        info!("MCP info");
         let repo = require_repo!(self);
         let repo_url = self.repo_url.read().await;
 
@@ -211,13 +219,15 @@ impl CoreDrillServer {
         }
 
         out.push_str("\n---\n*Drill deeper: `tree` with `path` for array detail, `log` for history, `branches`/`tags` for refs*");
+        info!("MCP info completed in {:?}", _start.elapsed());
         out
     }
 
     #[tool(description = "List all branches with their tip snapshot IDs.")]
     async fn branches(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
+        let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        match output::fetch_branches(&repo).await {
+        let result = match output::fetch_branches(&repo).await {
             Ok(branches) => {
                 let mut out = format!("# Branches ({})\n\n", branches.len());
                 out.push_str("| Branch | Snapshot |\n|--------|----------|\n");
@@ -231,13 +241,16 @@ impl CoreDrillServer {
                 out
             }
             Err(e) => format!("Error: {e}"),
-        }
+        };
+        info!("MCP branches completed in {:?}", _start.elapsed());
+        result
     }
 
     #[tool(description = "List all tags with their snapshot IDs.")]
     async fn tags(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
+        let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        match output::fetch_tags(&repo).await {
+        let result = match output::fetch_tags(&repo).await {
             Ok(tags) if tags.is_empty() => "(no tags)".to_string(),
             Ok(tags) => {
                 let mut out = format!("# Tags ({})\n\n", tags.len());
@@ -251,15 +264,18 @@ impl CoreDrillServer {
                 out
             }
             Err(e) => format!("Error: {e}"),
-        }
+        };
+        info!("MCP tags completed in {:?}", _start.elapsed());
+        result
     }
 
     #[tool(
         description = "Show snapshot history (commit log) for a branch, tag, or snapshot ID."
     )]
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
+        let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        match output::fetch_ancestry(&repo, &params.r#ref).await {
+        let result = match output::fetch_ancestry(&repo, &params.r#ref).await {
             Ok(entries) => {
                 let entries: Vec<_> = if let Some(n) = params.limit {
                     entries.into_iter().take(n).collect()
@@ -284,15 +300,18 @@ impl CoreDrillServer {
                 out
             }
             Err(e) => format!("Error: {e}"),
-        }
+        };
+        info!("MCP log completed in {:?}", _start.elapsed());
+        result
     }
 
     #[tool(
         description = "Browse the node tree. Without `path`: lists all groups and arrays. With `path`: shows detailed array metadata (shape, dtype, chunks, codecs, fill value)."
     )]
     async fn tree(&self, Parameters(params): Parameters<TreeParams>) -> String {
+        let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        match output::fetch_tree_flat(&repo, &params.r#ref, params.path.as_deref()).await {
+        let result = match output::fetch_tree_flat(&repo, &params.r#ref, params.path.as_deref()).await {
             Ok(tree) => {
                 if let Some(ref filter_path) = params.path {
                     if let Some(node) = tree.iter().find(|n| n.path == *filter_path) {
@@ -321,7 +340,9 @@ impl CoreDrillServer {
                 }
             }
             Err(e) => format!("Error: {e}"),
-        }
+        };
+        info!("MCP tree completed in {:?}", _start.elapsed());
+        result
     }
 }
 
