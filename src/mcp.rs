@@ -390,7 +390,7 @@ impl CoreDrillServer {
             }
         }
 
-        out.push_str("\n---\n*Tools: `tree` (with `path` for array detail + chunk stats), `log` (history), `branches`/`tags` (refs), `diff` (snapshot changes), `ops_log` (mutation history), `config` (repo settings), `search` (fuzzy find)*");
+        out.push_str("\n---\n*This overview already includes the full tree. Use `tree` with a `path` to drill into a specific array (metadata + chunk stats). Other tools: `log` (history), `diff` (snapshot changes), `ops_log` (mutation history), `config` (repo settings), `search` (fuzzy find)*");
         info!("MCP info completed in {:?}", _start.elapsed());
         out
     }
@@ -621,9 +621,9 @@ impl CoreDrillServer {
                     out.push('\n');
                 }
                 if !detail.chunk_changes.is_empty() {
-                    out.push_str(&format!("## Chunk Changes ({})\n\n", detail.chunk_changes.len()));
+                    out.push_str(&format!("## Updated Chunks ({} arrays)\n\n", detail.chunk_changes.len()));
                     for (path, count) in &detail.chunk_changes {
-                        out.push_str(&format!("- {path}: {count} chunks\n"));
+                        out.push_str(&format!("- {path}: {count} chunks written\n"));
                     }
                     out.push('\n');
                 }
@@ -732,13 +732,10 @@ impl CoreDrillServer {
                         params.query,
                         scored.len()
                     );
-                    for (i, score) in &scored {
+                    for (i, _score) in &scored {
                         let node = &tree[*i];
                         let kind = if node.is_array() { "array" } else { "group" };
-                        out.push_str(&format!(
-                            "- `{}` ({}, score: {})\n",
-                            node.path, kind, score
-                        ));
+                        out.push_str(&format!("- `{}` ({})\n", node.path, kind));
                     }
                     out
                 }
@@ -767,7 +764,9 @@ impl ServerHandler for CoreDrillServer {
         .with_instructions(
             "Icechunk repository inspector. The repo connection stays open for the session — \
              subsequent calls are fast (no re-auth or re-fetch). \
-             Start with `open`, then use `info`, `tree`, `log`, `branches`, `tags`, `diff`, `ops_log`, `config`, `search` to explore.",
+             Start with `open`, then `info` for a full overview (branches, snapshots, tree). \
+             Use `tree` with a `path` param to drill into a specific array. \
+             Use `log`/`diff` for history, `search` for fuzzy find, `ops_log`/`config` for repo metadata.",
         )
     }
 }
