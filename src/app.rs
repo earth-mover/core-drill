@@ -79,6 +79,11 @@ pub struct App {
     pub last_tree_snapshot_requested: Option<String>,
     /// Cached tree search candidates — invalidated when node_children changes.
     tree_candidate_cache: Option<Vec<String>>,
+    /// Queue of array paths waiting to have chunk stats scanned.
+    /// Drip-fed a few per frame to avoid blocking startup.
+    chunk_scan_queue: Vec<String>,
+    /// Snapshot ID for the current scan queue (invalidated on branch/snapshot change).
+    chunk_scan_snapshot: Option<String>,
 
     // Layout areas (updated each render for mouse hit-testing)
     pub sidebar_area: Rect,
@@ -109,6 +114,8 @@ impl App {
             last_diff_requested: None,
             last_tree_snapshot_requested: None,
             tree_candidate_cache: None,
+            chunk_scan_queue: Vec::new(),
+            chunk_scan_snapshot: None,
             sidebar_area: Rect::default(),
             detail_area: Rect::default(),
             bottom_area: None,
@@ -348,8 +355,8 @@ impl App {
             self.tree_auto_expanded = true;
             // Kick off chunk stats for whatever array got auto-selected
             self.maybe_request_chunk_stats();
-            // Start scanning all arrays in the background
-            self.scan_all_chunk_stats();
+            // Queue up chunk stats scan for all arrays
+            self.start_chunk_scan();
         }
 
         // Once branches load, sync the Branches tab selection to current_branch.
@@ -374,14 +381,17 @@ impl App {
             && let Some(first) = entries.first()
         {
             self.current_snapshot = Some(first.id.clone());
-            // Now that we have a snapshot ID, scan any arrays that were waiting
+            // Now that we have a snapshot ID, start scanning if tree is ready
             if self.tree_auto_expanded {
-                self.scan_all_chunk_stats();
+                self.start_chunk_scan();
             }
         }
 
         // Auto-request diff when bottom pane is focused on Snapshots tab
         self.maybe_request_snapshot_diff();
+
+        // Drip-feed chunk stats requests from the background scan queue
+        self.drain_chunk_scan_queue();
     }
 
     /// If the bottom pane is focused on the Snapshots tab and we have a selected
@@ -465,9 +475,9 @@ impl App {
         }
     }
 
-    /// Submit chunk stats requests for all arrays in the tree.
-    /// Each request is a separate background task, so they run concurrently.
-    fn scan_all_chunk_stats(&mut self) {
+    /// Populate the chunk scan queue with all array paths in the tree.
+    /// Actual requests are dripped via `drain_chunk_scan_queue()` each frame.
+    fn start_chunk_scan(&mut self) {
         let snapshot_id = self
             .selected_snapshot_id()
             .or_else(|| self.get_branch_tip_snapshot_id());
@@ -475,7 +485,6 @@ impl App {
             return;
         };
 
-        // Collect all array paths first to avoid borrow conflict with submit()
         let array_paths: Vec<String> = self
             .store
             .node_children
@@ -490,15 +499,46 @@ impl App {
             })
             .collect();
 
-        for path in array_paths {
+        self.chunk_scan_snapshot = Some(snapshot_id);
+        self.chunk_scan_queue = array_paths;
+    }
+
+    /// Submit a small batch of chunk stats requests from the scan queue.
+    /// Called each frame tick so requests drip in without blocking.
+    fn drain_chunk_scan_queue(&mut self) {
+        let Some(ref snapshot_id) = self.chunk_scan_snapshot else {
+            return;
+        };
+        let snapshot_id = snapshot_id.clone();
+
+        // How many are currently in-flight (Loading state)?
+        let in_flight = self
+            .store
+            .chunk_stats
+            .values()
+            .filter(|s| matches!(s, LoadState::Loading))
+            .count();
+
+        // Keep at most ~4 concurrent requests to avoid overwhelming the connection
+        let budget = 4usize.saturating_sub(in_flight);
+        if budget == 0 {
+            return;
+        }
+
+        let mut submitted = 0;
+        while submitted < budget {
+            let Some(path) = self.chunk_scan_queue.pop() else {
+                break;
+            };
             let key = (snapshot_id.clone(), path.clone());
             if self.store.chunk_stats.contains_key(&key) {
-                continue;
+                continue; // already cached or loading, skip
             }
             self.store.submit(DataRequest::ChunkStats {
                 snapshot_id: snapshot_id.clone(),
                 path,
             });
+            submitted += 1;
         }
     }
 
