@@ -390,7 +390,16 @@ impl App {
         // Auto-request diff when bottom pane is focused on Snapshots tab
         self.maybe_request_snapshot_diff();
 
-        // Drip-feed chunk stats requests from the background scan queue
+        // Drip-feed chunk stats requests from the background scan queue.
+        // If the queue is empty but we have a snapshot and tree, restart the scan
+        // (handles the race where start_chunk_scan ran before data was ready).
+        if self.chunk_scan_queue.is_empty()
+            && self.chunk_scan_snapshot.is_none()
+            && self.tree_auto_expanded
+            && self.current_snapshot.is_some()
+        {
+            self.start_chunk_scan();
+        }
         self.drain_chunk_scan_queue();
     }
 
