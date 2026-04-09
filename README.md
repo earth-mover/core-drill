@@ -8,10 +8,10 @@
     ║  └──┬┬──┘  ║
     ╚═════╪╪═════╝
     ──────╫╫──────
-    ░░░░░░╫╫░░░░░░  ◄ snow
-    ▒▒▒▒▒▒╫╫▒▒▒▒▒▒  ◄ firn
-    ▓▓▓▓▓▓╫╫▓▓▓▓▓▓  ◄ ice  (snapshots)
-    ██████╫╫██████  ◄ deep ice  (history)
+    ░░░░░░╫╫░░░░░░  ◄ snow (repo name)
+    ▒▒▒▒▒▒╫╫▒▒▒▒▒▒  ◄ firn (snapshots)
+    ▓▓▓▓▓▓╫╫▓▓▓▓▓▓  ◄ ice  (group hierarchy)
+    ██████╫╫██████  ◄ deep ice  (virtual chunk sources)
     ██████╨╨██████
 ```
 
