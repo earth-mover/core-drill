@@ -34,6 +34,16 @@ core-drill s3://bucket/prefix --output json
 core-drill --serve
 ```
 
+## MCP setup
+
+Add core-drill as an MCP server so Claude Code (or any MCP client) can inspect Icechunk repos:
+
+```bash
+claude mcp add --transport stdio core-drill -- core-drill --serve
+```
+
+Then from Claude Code, call `open` with any repo path/URL to start exploring.
+
 ## Design
 
 core-drill tries to be **fast**, not light. It aggressively fetches and caches metadata so navigation feels instant — branches, tags, ancestry, tree, and chunk stats are all kept in memory once loaded. On a slow S3 connection the first load may take a moment, but subsequent interactions are immediate.
