@@ -103,7 +103,7 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
             (label, Some(hint), app.theme.error)
         }
         (LoadState::Loading, _) | (_, LoadState::Loading) => {
-            ("connecting...", None, app.theme.loading)
+            ("drilling...", None, app.theme.loading)
         }
         (LoadState::Loaded(_), LoadState::Loaded(_)) => ("ready", None, app.theme.status_ok),
         _ => ("", None, app.theme.text_dim),
