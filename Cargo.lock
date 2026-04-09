@@ -113,6 +113,8 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 [[package]]
 name = "arraylake"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aae6424b9484a4bc7b3cd0e122dff88c95fb8b76ea398a8370e32b7e4753cf53"
 dependencies = [
  "anyhow",
  "async-stream",

@@ -14,7 +14,7 @@ path = "src/main.rs"
 icechunk = "2.0.0"
 
 # Arraylake — credential vending for cloud repos
-arraylake = { path = "../arraylake/arraylake-rs" }
+arraylake = "0.2.0"
 
 # TUI framework
 ratatui = { version = "0.30", features = ["crossterm"] }
