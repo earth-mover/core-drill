@@ -45,14 +45,25 @@ This is the smoothest UX — one command to install + configure.
 
 **Session lifecycle**: Document that the server stays alive for the connection lifetime — no need to re-open the repo between tool calls. This is the key advantage over CLI `--output` mode.
 
-### MCP polish
-- Tool descriptions should guide agents on WHEN to use each tool, not just what it does.
-- `info` tool currently dumps everything — consider making it lighter (overview only) and pointing agents to drill-down tools.
-- Test with Claude Code: configure as MCP server, have an agent investigate `al:earthmover/...` repo. Capture what's missing or confusing.
+### Agent-tested feedback (from real MCP session 2026-04-09)
 
-### CLI output
-- Ensure `--output md` and `--output json` cover all the same data as MCP tools.
-- Test token efficiency — are the markdown tables too wide? Should we truncate snapshot IDs shorter?
+Quick wins:
+- **Timestamps**: Append `UTC` to all displayed times (log, info)
+- **`info` ref param**: Accept `ref` parameter so agents can inspect any branch, not just main
+- **Zarr attributes**: Show user attributes in `tree` detail when present
+
+New tools needed:
+- **`diff`**: Show changes between two snapshots (already in TUI, just expose via MCP)
+- **`ops-log`**: Expose mutation history (already implemented in CLI, wire to MCP)
+- **`snapshot`**: Inspect a single snapshot's metadata, parent pointer, change summary
+
+Output improvements:
+- **Storage size**: Add `total_bytes` to array detail (sum of chunk sizes) and aggregate in `info`
+- **JSON output mode**: Optional `format: "json"` parameter on all tools for easier agent parsing
+
+### Performance (done)
+- `info` now fetches branches/tags/ancestry/tree in parallel via `tokio::join!`
+- All tools have timing logs (`RUST_LOG=info` to see)
 
 ## Priority 2: Instant TUI Startup
 
