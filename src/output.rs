@@ -217,7 +217,7 @@ async fn run_md(
                 for b in &branches {
                     let ts = b
                         .tip_timestamp
-                        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
                         .unwrap_or_default();
                     let msg = b.tip_message.as_deref().unwrap_or("");
                     println!(
@@ -241,7 +241,7 @@ async fn run_md(
                 for t in &tags {
                     let ts = t
                         .tip_timestamp
-                        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
                         .unwrap_or_default();
                     let msg = t.tip_message.as_deref().unwrap_or("");
                     println!(
@@ -265,7 +265,7 @@ async fn run_md(
             println!("| # | Snapshot | Time | Message |");
             println!("|---|----------|------|---------|");
             for (i, e) in entries.iter().enumerate() {
-                let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
+                let ts = e.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
                 println!(
                     "| {} | `{}` | {} | {} |",
                     i + 1,
@@ -314,7 +314,7 @@ async fn print_md_overview(repo: &Repository, repo_url: &str) -> color_eyre::Res
     for b in &branches {
         let ts = b
             .tip_timestamp
-            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
             .unwrap_or_default();
         let msg = b.tip_message.as_deref().unwrap_or("");
         let msg_part = if msg.is_empty() {
@@ -352,7 +352,7 @@ async fn print_md_overview(repo: &Repository, repo_url: &str) -> color_eyre::Res
         println!("| # | Snapshot | Time | Message |");
         println!("|---|----------|------|---------|");
         for (i, e) in recent.iter().enumerate() {
-            let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
+            let ts = e.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
             println!(
                 "| {} | `{}` | {} | {} |",
                 i + 1,
@@ -672,7 +672,7 @@ pub(crate) async fn fetch_tags(repo: &Repository) -> color_eyre::Result<Vec<TagI
 }
 
 /// Resolve a ref string to a VersionInfo. Tries: branch, tag, then snapshot ID.
-async fn resolve_ref(
+pub(crate) async fn resolve_ref(
     repo: &Repository,
     r: &str,
 ) -> color_eyre::Result<icechunk::repository::VersionInfo> {
@@ -692,6 +692,16 @@ async fn resolve_ref(
     }
 
     color_eyre::eyre::bail!("ref not found: '{r}' (not a branch, tag, or snapshot ID)")
+}
+
+/// Resolve a ref to a snapshot ID string.
+pub(crate) async fn resolve_ref_to_snapshot_id(
+    repo: &Repository,
+    r: &str,
+) -> color_eyre::Result<String> {
+    let version = resolve_ref(repo, r).await?;
+    let session = repo.readonly_session(&version).await?;
+    Ok(session.snapshot_id().to_string())
 }
 
 pub(crate) async fn fetch_ancestry(
