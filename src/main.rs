@@ -38,41 +38,77 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    // Open the repository
-    let (repository, repo_id) = if looks_like_arraylake_ref(&cli.repo) {
-        open_via_arraylake(&cli.repo, &cli.arraylake_api).await?
-    } else {
+    // For TUI mode (no --output, --serve, --repl), show loading screen while opening
+    let is_tui = !cli.serve && !cli.repl && cli.output.is_none();
+
+    if is_tui {
+        let repo_str = cli.repo.clone();
+        let is_arraylake = looks_like_arraylake_ref(&cli.repo);
+        let api_url = cli.arraylake_api.clone();
         let overrides = repo::StorageOverrides {
             region: cli.region.clone(),
             endpoint_url: cli.endpoint_url.clone(),
         };
-        let repo = repo::open(&cli.repo, &overrides).await?;
-        let identity = if cli.repo.contains("://") {
-            app::RepoIdentity::S3 {
-                url: cli.repo.clone(),
-            }
+
+        let label = if is_arraylake {
+            format!("Connecting to {}...", repo_str.strip_prefix("al:").unwrap_or(&repo_str))
         } else {
-            app::RepoIdentity::Local {
-                path: cli.repo.clone(),
-            }
+            format!("Opening {}...", repo_str)
         };
-        (repo, identity)
-    };
 
-    let display_label = repo_id.display_short();
-
-    if cli.serve {
-        mcp::serve(repository, display_label.clone()).await?;
-    } else if cli.repl {
-        let format = cli.output.unwrap_or(cli::OutputFormat::Md);
-        output::run_repl(repository, format, &display_label).await?;
-    } else if let Some(format) = cli.output {
-        output::run(repository, format, cli.command, &display_label).await?;
+        tui::run_with_loading(
+            &label,
+            async move {
+                if is_arraylake {
+                    open_via_arraylake(&repo_str, &api_url).await
+                } else {
+                    let repo = repo::open(&repo_str, &overrides).await?;
+                    let identity = if repo_str.contains("://") {
+                        app::RepoIdentity::S3 { url: repo_str }
+                    } else {
+                        app::RepoIdentity::Local { path: repo_str }
+                    };
+                    Ok((repo, identity))
+                }
+            },
+            |(repository, repo_id)| {
+                let data_store = store::DataStore::new(repository);
+                app::App::new(data_store, repo_id)
+            },
+        )
+        .await?;
     } else {
-        let data_store = store::DataStore::new(repository);
-        let mut app = app::App::new(data_store, repo_id);
-        app.load_initial_data();
-        tui::run(app).await?;
+        // Non-TUI modes: open repo synchronously (no loading screen needed)
+        let (repository, repo_id) = if looks_like_arraylake_ref(&cli.repo) {
+            open_via_arraylake(&cli.repo, &cli.arraylake_api).await?
+        } else {
+            let overrides = repo::StorageOverrides {
+                region: cli.region.clone(),
+                endpoint_url: cli.endpoint_url.clone(),
+            };
+            let repo = repo::open(&cli.repo, &overrides).await?;
+            let identity = if cli.repo.contains("://") {
+                app::RepoIdentity::S3 {
+                    url: cli.repo.clone(),
+                }
+            } else {
+                app::RepoIdentity::Local {
+                    path: cli.repo.clone(),
+                }
+            };
+            (repo, identity)
+        };
+
+        let display_label = repo_id.display_short();
+
+        if cli.serve {
+            mcp::serve(repository, display_label.clone()).await?;
+        } else if cli.repl {
+            let format = cli.output.unwrap_or(cli::OutputFormat::Md);
+            output::run_repl(repository, format, &display_label).await?;
+        } else if let Some(format) = cli.output {
+            output::run(repository, format, cli.command, &display_label).await?;
+        }
     }
 
     Ok(())
