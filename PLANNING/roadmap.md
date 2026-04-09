@@ -19,23 +19,28 @@
 ## Phase 2 — Remote Repos & Polish
 
 - [DONE] S3/GCS/Azure via object_store
-- Credential handling (env vars, profiles)
-- Connection status in UI
+- [DONE] Branch switching (select branch in bottom panel to reload tree)
+- [DONE] Search / filter within tree and lists (fuzzy search with nucleo)
+- [DONE] Chunk type info in array detail (inline/native/virtual breakdown)
+- [DONE] Error classification (auth/network/not-found) with retry (R key)
+- [DONE] Background chunk stats scanning (drip-fed, non-blocking)
+- [DONE] Search candidate caching
+- Credential handling (env vars, profiles, mid-session 403 detection)
+- Connection status in UI (cancel with Esc, timeout handling)
 - Caching layer for repeated reads
-- Branch switching (select branch in bottom panel to reload tree)
-- Search / filter within tree and lists
-- Chunk type info in array detail (data type, codec chain summary)
 
 ## Phase 3 — Deep Inspection
 
-- Manifest viewer: chunk stats, storage distribution
-- Virtual ref analysis: external file locations, coverage
-- Transaction log viewer: what changed per commit
-- Ops log viewer: mutation history
+- [DONE] Ops log viewer: mutation history (dedicated detail tab + CLI + MCP)
+- [DONE] Virtual source aggregation in repo overview (resolved VCC → bucket/org)
+- Manifest viewer: per-manifest chunk stats, storage distribution
+- Virtual ref analysis: dedicated view of all virtual refs for an array
+- Transaction log viewer: what changed per commit (beyond current diff view)
 
 ## Phase 4 — Advanced
 
-- Search across nodes/metadata
-- Export views as JSON/CSV
+- Export detail pane content to file / clipboard
+- Copy snapshot ID / array path to clipboard
+- Branch/tag timestamp enrichment from ancestry cache
 - Bookmarks / saved queries
 - TUI screenshots for documentation

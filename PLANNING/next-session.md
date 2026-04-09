@@ -1,53 +1,48 @@
 # Next Session Plan
 
-## Priority 1: Agent Testing & Polish
+## What was done last session
 
-The MCP server and CLI output modes need real-world testing with agents. Key areas:
+- Error classification (auth/network/not-found) with retry (R key), improved status bar
+- Ops log as dedicated detail pane tab (Node / Repo / Ops Log), plus CLI and MCP
+- Search candidate caching (invalidated on data change)
+- VCC display: `__al_source` resolves to `org/repo → bucket (platform)`
+- Aggregated virtual sources in repo overview with de-duplicated counts
+- Background chunk stats scan: drip-fed at 4 concurrent, non-blocking startup
 
-- **MCP server with Claude Code**: Configure as an MCP server in Claude Code settings, have an agent use it to investigate a real arraylake repo. Capture friction.
-- **CLI markdown output**: Have an agent pipe `--output md` commands and verify the output is token-efficient and actionable.
-- **Search UX**: Test fuzzy search on large repos — does it perform well? Does the tree filtering feel right?
-- **Arraylake repos**: Test with real org/repo on dev API. Virtual chunk display needs verification.
+## Priority 1: Agent Testing & Real-World Polish
 
-## Priority 2: Virtual Chunk Deep Inspection
+The MCP server and CLI output are functional but untested with real agents.
 
-Virtual chunks are a key use case. Current state:
-- We show virtual chunk counts, sizes, and source prefixes per array
-- VCC prefixes show `__al_source: path/` but the actual base URL is unknown for arraylake-managed containers
-- Repo overview shows "Virtual Sources" section from config (empty for arraylake repos since VCC is session-level)
+- **MCP server**: Configure in Claude Code settings, have an agent investigate a real arraylake repo. Capture friction points.
+- **CLI markdown**: Have an agent pipe `--output md` commands. Is the output token-efficient and actionable?
+- **Large repo perf**: Test fuzzy search and background scan on repos with 100+ arrays. Does the drip-feed feel right? Should the concurrency be tunable?
+- **Arraylake repos**: Test with real org/repo on dev API. Verify VCC display, ops log, credential flow.
 
-**To do:**
-- Consider calling arraylake API to resolve VCC container → actual S3 prefix mapping
-- Add a dedicated "Virtual Refs" view that shows a table of all virtual refs for an array: source URL, offset, length
-- Show whether virtual sources are accessible (HEAD check?)
+## Priority 2: Clipboard & Export
 
-## Priority 3: Ops Log
+Users inspecting repos need to copy things out.
 
-The `OpsLog` subcommand/tab is stubbed. Implement:
-- `repo.ops_log()` returns mutation history
-- Display in a new bottom tab or as a CLI subcommand
-- Show: operation type, timestamp, user, affected paths
+- **Copy to clipboard**: `y` to yank snapshot ID, array path, or current detail content
+- **Export detail**: Write current detail pane content to a file (markdown or JSON)
+- Use `arboard` or `cli-clipboard` crate for cross-platform clipboard
 
-## Priority 4: Graceful Error Handling
+## Priority 3: Performance Refinements
 
-- **Network timeout**: Show "connecting..." in status bar, allow Esc to cancel
-- **Mid-session 403**: Detect expired credentials, show "credentials expired — press R to retry"
-- **Corrupt/missing repo**: Clear error message instead of backtrace
-- **Partial load**: If ancestry loads but tree fails, show what we have
+- **Cache storage summary aggregation**: Currently recomputed every frame in `render_repo_overview`. Cache and invalidate when chunk_stats changes.
+- **`find_node_by_path` index**: Currently O(N×M) linear scan per frame. Build a HashMap<path, &TreeNode> on data change.
+- **Branch switching debounce**: Rapid j/k in branches tab fires many AllNodes requests. Debounce with a short delay.
 
-## Priority 5: Performance for Large Repos
+## Priority 4: Credential & Connection UX
 
-- Cache search candidates (currently rebuilt every keypress)
-- Cache Storage Summary aggregation (currently computed every frame)
-- Consider `find_node_by_path` index (currently O(N×M) linear scan per frame)
-- Branch switching debounce for rapid j/k navigation
+- **Mid-session 403**: Detect expired credentials on background fetch errors. Show "credentials expired — press R to retry" prominently (not just in error widget).
+- **Esc to cancel**: Allow cancelling a long initial connection with Esc (requires CancellationToken in the worker).
+- **Partial load**: If ancestry loads but tree fails, show what we have instead of full error.
 
-## Priority 6: Quality of Life
+## Priority 5: Deeper Inspection Views
 
-- Copy snapshot ID / array path to clipboard
-- Export detail pane content to file
-- Branch/tag timestamp enrichment from ancestry cache
-- More array attributes in CLI/MCP output (zarr attributes, not just metadata)
+- **Per-manifest stats**: Break down chunk stats by manifest (useful for repos with multiple manifests per array).
+- **Virtual refs table**: Dedicated view showing all virtual refs for an array: source URL, offset, length, grouped by source file.
+- **Transaction log detail**: Expand diff view to show actual chunk-level changes, not just counts.
 
 ## Architecture Notes
 
@@ -57,3 +52,4 @@ Read these memory files for context:
 - `feedback_reusable_components.md` — shared UI helpers, don't duplicate
 - `reference_arraylake_integration.md` — how al:org/repo works
 - `feedback_reactive_displays.md` — cache keys must include snapshot+branch context
+- `feedback_detail_on_select.md` — detail pane updates on j/k selection, not Enter
