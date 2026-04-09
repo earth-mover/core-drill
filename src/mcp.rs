@@ -94,7 +94,7 @@ macro_rules! require_repo {
 #[tool_router]
 impl CoreDrillServer {
     #[tool(
-        description = "Open an Icechunk repository. Supports local paths, S3/GCS/Azure URLs, and Arraylake references (al:org/repo). Call this before using other tools if the server was started without a repo."
+        description = "Open an Icechunk repository for inspection. Must be called before other tools. Accepts local paths, S3/GCS URLs, S3-compatible (R2, MinIO, Tigris via endpoint_url), or Arraylake refs (al:org/repo)."
     )]
     async fn open(&self, Parameters(params): Parameters<OpenParams>) -> String {
         let arraylake_api = params
@@ -120,7 +120,7 @@ impl CoreDrillServer {
     }
 
     #[tool(
-        description = "Get repository overview: branches, tags, recent snapshots, and full node tree. Call this first to understand what's in the repo."
+        description = "Repository overview: branches, tags, recent snapshots, and node tree. Good starting point after opening a repo."
     )]
     async fn info(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let repo = require_repo!(self);
@@ -210,11 +210,11 @@ impl CoreDrillServer {
             }
         }
 
-        out.push_str("\n---\n*Tools: `open`, `info`, `branches`, `tags`, `log`, `tree`*");
+        out.push_str("\n---\n*Drill deeper: `tree` with `path` for array detail, `log` for history, `branches`/`tags` for refs*");
         out
     }
 
-    #[tool(description = "List all branches with their tip snapshot IDs")]
+    #[tool(description = "List all branches with their tip snapshot IDs.")]
     async fn branches(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let repo = require_repo!(self);
         match output::fetch_branches(&repo).await {
@@ -234,7 +234,7 @@ impl CoreDrillServer {
         }
     }
 
-    #[tool(description = "List all tags")]
+    #[tool(description = "List all tags with their snapshot IDs.")]
     async fn tags(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let repo = require_repo!(self);
         match output::fetch_tags(&repo).await {
@@ -255,7 +255,7 @@ impl CoreDrillServer {
     }
 
     #[tool(
-        description = "Show snapshot history (commit log). Use ref to specify a branch, tag, or snapshot ID."
+        description = "Show snapshot history (commit log) for a branch, tag, or snapshot ID."
     )]
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
         let repo = require_repo!(self);
@@ -288,7 +288,7 @@ impl CoreDrillServer {
     }
 
     #[tool(
-        description = "Browse the node tree. Use path to inspect a specific array's detailed metadata (shape, dtype, chunks, codecs, fill value, initialization %)."
+        description = "Browse the node tree. Without `path`: lists all groups and arrays. With `path`: shows detailed array metadata (shape, dtype, chunks, codecs, fill value)."
     )]
     async fn tree(&self, Parameters(params): Parameters<TreeParams>) -> String {
         let repo = require_repo!(self);
@@ -330,7 +330,22 @@ impl CoreDrillServer {
 // ─── ServerHandler trait ────────────────────────────────────
 
 #[tool_handler(router = self.tool_router)]
-impl ServerHandler for CoreDrillServer {}
+impl ServerHandler for CoreDrillServer {
+    fn get_info(&self) -> rmcp::model::ServerInfo {
+        rmcp::model::ServerInfo::new(
+            rmcp::model::ServerCapabilities::builder().enable_tools().build(),
+        )
+        .with_server_info(rmcp::model::Implementation::new(
+            "core-drill",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(
+            "Icechunk repository inspector. The repo connection stays open for the session — \
+             subsequent calls are fast (no re-auth or re-fetch). \
+             Start with `open`, then use `info`, `tree`, `log`, `branches`, `tags` to explore.",
+        )
+    }
+}
 
 /// Start the MCP server on stdio transport.
 pub async fn serve(repo: Option<Repository>, repo_url: String) -> color_eyre::Result<()> {
