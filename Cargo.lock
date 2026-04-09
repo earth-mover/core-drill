@@ -112,7 +112,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "arraylake"
-version = "0.1.0-alpha.9"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1030,6 +1030,7 @@ dependencies = [
  "futures",
  "humansize",
  "icechunk",
+ "nucleo",
  "ratatui 0.30.0",
  "rmcp",
  "schemars 0.8.22",
@@ -1122,6 +1123,31 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "crossbeam-deque"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd111b7b7f7d55b72c0a6ae361660ee5853c9af73f70c3c2ef6858b950e2e51"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b82ac4a3c2ca9c3460964f020e1402edd5753411d7737aa39c3714ad1b5420e"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "crossterm"
@@ -2003,7 +2029,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk"
-version = "2.0.0-alpha.7"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0de1bd88d92fdc876fb2e84eef1410517bd9d7994343fce2ea2296e5255b0ae1"
 dependencies = [
  "async-compression",
  "async-recursion",
@@ -2043,7 +2071,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-arrow-object-store"
-version = "2.0.0-alpha.7"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49cd3fdbe764b4f5d3b6d332136799a79d09b247a6dbc6c5f5985db9cb7c7837"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2063,7 +2093,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-format"
-version = "2.0.0-alpha.7"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e173fb4a4044d78058efb6565574727ab7e2405510d80509aafbc7b5cfe8d418"
 dependencies = [
  "base32",
  "bytes",
@@ -2087,7 +2119,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-s3"
-version = "2.0.0-alpha.7"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eba0eddd4a27629ef55ec9006a09bd0a22851568634c0a845035277bf8aa86e8"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -2110,7 +2144,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-storage"
-version = "2.0.0-alpha.7"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02808d09853a901fcc354a2568d5868e98b21fb672578d91895c5a8aac9d4a73"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2129,7 +2165,9 @@ dependencies = [
 
 [[package]]
 name = "icechunk-types"
-version = "2.0.0-alpha.7"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d52ef17b6978895ec57412169c44b5503c1f26e74e8ac1a2d22edbe04f94023"
 dependencies = [
  "serde",
  "serde_with",
@@ -2651,6 +2689,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nucleo"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5262af4c94921c2646c5ac6ff7900c2af9cbb08dc26a797e18130a7019c039d4"
+dependencies = [
+ "nucleo-matcher",
+ "parking_lot",
+ "rayon",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -3307,6 +3366,26 @@ dependencies = [
  "time",
  "unicode-segmentation",
  "unicode-width 0.2.0",
+]
+
+[[package]]
+name = "rayon"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
+dependencies = [
+ "either",
+ "rayon-core",
+]
+
+[[package]]
+name = "rayon-core"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
+dependencies = [
+ "crossbeam-deque",
+ "crossbeam-utils",
 ]
 
 [[package]]

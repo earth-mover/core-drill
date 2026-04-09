@@ -39,17 +39,28 @@ impl<T> LoadState<T> {
 pub enum DataRequest {
     Branches,
     Tags,
-    Ancestry { branch: String },
+    Ancestry {
+        branch: String,
+    },
     /// Fetch ALL nodes in the tree for a branch (or specific snapshot) in a single request.
     /// Results are organized by parent path so every group's children are cached at once.
     /// If `snapshot_id` is Some, fetches the tree at that specific snapshot instead of the branch tip.
-    AllNodes { branch: String, snapshot_id: Option<String> },
+    AllNodes {
+        branch: String,
+        snapshot_id: Option<String>,
+    },
     /// Fetch diff between a snapshot and its parent.
     /// `parent_id` is provided by the caller from the cached ancestry data so the
     /// worker never needs to fetch the child snapshot — only the transaction log.
-    SnapshotDiff { snapshot_id: String, parent_id: Option<String> },
+    SnapshotDiff {
+        snapshot_id: String,
+        parent_id: Option<String>,
+    },
     /// Fetch chunk type statistics for an array node at a specific snapshot
-    ChunkStats { snapshot_id: String, path: String },
+    ChunkStats {
+        snapshot_id: String,
+        path: String,
+    },
     /// Fetch repository configuration, status, and feature flags.
     RepoConfig,
     #[allow(dead_code)]
@@ -136,13 +147,15 @@ impl DataStore {
             }
             DataRequest::AllNodes { .. } => {
                 // Mark the root as loading; the response will populate all paths.
-                self.node_children.insert("/".to_string(), LoadState::Loading);
+                self.node_children
+                    .insert("/".to_string(), LoadState::Loading);
             }
             DataRequest::SnapshotDiff { snapshot_id, .. } => {
                 self.diffs.insert(snapshot_id.clone(), LoadState::Loading);
             }
             DataRequest::ChunkStats { snapshot_id, path } => {
-                self.chunk_stats.insert((snapshot_id.clone(), path.clone()), LoadState::Loading);
+                self.chunk_stats
+                    .insert((snapshot_id.clone(), path.clone()), LoadState::Loading);
             }
             DataRequest::RepoConfig => self.repo_config = LoadState::Loading,
             DataRequest::OpsLog => self.ops_log = LoadState::Loading,
@@ -174,10 +187,10 @@ impl DataStore {
     /// node_children cache. Falls back to a `<node:ID>` placeholder if not found.
     fn node_id_to_path(&self, node_id: &str) -> String {
         for state in self.node_children.values() {
-            if let LoadState::Loaded(nodes) = state {
-                if let Some(node) = nodes.iter().find(|n| n.node_id == node_id) {
-                    return node.path.clone();
-                }
+            if let LoadState::Loaded(nodes) = state
+                && let Some(node) = nodes.iter().find(|n| n.node_id == node_id)
+            {
+                return node.path.clone();
             }
         }
         format!("<node:{}>", node_id)
@@ -205,19 +218,24 @@ impl DataStore {
                 self.ancestry.insert(branch, state);
             }
             DataResponse::AllNodes(result) => {
-                self.node_children.clear();  // Replace, don't merge
+                self.node_children.clear(); // Replace, don't merge
                 match result {
                     Ok(children_by_parent) => {
                         for (parent_path, nodes) in children_by_parent {
-                            self.node_children.insert(parent_path, LoadState::Loaded(nodes));
+                            self.node_children
+                                .insert(parent_path, LoadState::Loaded(nodes));
                         }
                     }
                     Err(e) => {
-                        self.node_children.insert("/".to_string(), LoadState::Error(e));
+                        self.node_children
+                            .insert("/".to_string(), LoadState::Error(e));
                     }
                 }
             }
-            DataResponse::SnapshotDiff { snapshot_id, result } => {
+            DataResponse::SnapshotDiff {
+                snapshot_id,
+                result,
+            } => {
                 let state = match result {
                     Ok(raw) => {
                         // Resolve NodeId strings to paths using the cached node_children.
@@ -225,13 +243,41 @@ impl DataStore {
                         let summary = DiffSummary {
                             snapshot_id: raw.snapshot_id,
                             parent_id: raw.parent_id,
-                            added_arrays: raw.added_array_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
-                            added_groups: raw.added_group_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
-                            deleted_arrays: raw.deleted_array_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
-                            deleted_groups: raw.deleted_group_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
-                            modified_arrays: raw.modified_array_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
-                            modified_groups: raw.modified_group_ids.iter().map(|id| self.node_id_to_path(id)).collect(),
-                            chunk_changes: raw.chunk_change_ids.iter().map(|(id, count)| (self.node_id_to_path(id), *count)).collect(),
+                            added_arrays: raw
+                                .added_array_ids
+                                .iter()
+                                .map(|id| self.node_id_to_path(id))
+                                .collect(),
+                            added_groups: raw
+                                .added_group_ids
+                                .iter()
+                                .map(|id| self.node_id_to_path(id))
+                                .collect(),
+                            deleted_arrays: raw
+                                .deleted_array_ids
+                                .iter()
+                                .map(|id| self.node_id_to_path(id))
+                                .collect(),
+                            deleted_groups: raw
+                                .deleted_group_ids
+                                .iter()
+                                .map(|id| self.node_id_to_path(id))
+                                .collect(),
+                            modified_arrays: raw
+                                .modified_array_ids
+                                .iter()
+                                .map(|id| self.node_id_to_path(id))
+                                .collect(),
+                            modified_groups: raw
+                                .modified_group_ids
+                                .iter()
+                                .map(|id| self.node_id_to_path(id))
+                                .collect(),
+                            chunk_changes: raw
+                                .chunk_change_ids
+                                .iter()
+                                .map(|(id, count)| (self.node_id_to_path(id), *count))
+                                .collect(),
                             is_initial_commit: raw.is_initial_commit,
                         };
                         LoadState::Loaded(summary)
@@ -240,7 +286,11 @@ impl DataStore {
                 };
                 self.diffs.insert(snapshot_id, state);
             }
-            DataResponse::ChunkStats { snapshot_id, path, result } => {
+            DataResponse::ChunkStats {
+                snapshot_id,
+                path,
+                result,
+            } => {
                 let state = match result {
                     Ok(stats) => LoadState::Loaded(stats),
                     Err(e) => LoadState::Error(e),
@@ -297,16 +347,19 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
         }
         DataRequest::Ancestry { branch } => {
             let result = fetch_ancestry(repo, &branch).await;
-            DataResponse::Ancestry {
-                branch,
-                result,
-            }
+            DataResponse::Ancestry { branch, result }
         }
-        DataRequest::AllNodes { branch, snapshot_id } => {
+        DataRequest::AllNodes {
+            branch,
+            snapshot_id,
+        } => {
             let result = fetch_all_nodes(repo, &branch, snapshot_id.as_deref()).await;
             DataResponse::AllNodes(result)
         }
-        DataRequest::SnapshotDiff { snapshot_id, parent_id } => {
+        DataRequest::SnapshotDiff {
+            snapshot_id,
+            parent_id,
+        } => {
             let result = fetch_diff(repo, &snapshot_id, parent_id.as_deref()).await;
             DataResponse::SnapshotDiff {
                 snapshot_id,
@@ -315,7 +368,11 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
         }
         DataRequest::ChunkStats { snapshot_id, path } => {
             let result = fetch_chunk_stats(repo, &snapshot_id, &path).await;
-            DataResponse::ChunkStats { snapshot_id, path, result }
+            DataResponse::ChunkStats {
+                snapshot_id,
+                path,
+                result,
+            }
         }
         DataRequest::RepoConfig => {
             let result = fetch_repo_config(repo).await;
@@ -415,7 +472,10 @@ async fn fetch_all_nodes(
     } else {
         VersionInfo::BranchTipRef(branch.to_string())
     };
-    let session = repo.readonly_session(&version).await.map_err(|e| e.to_string())?;
+    let session = repo
+        .readonly_session(&version)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Fetch the snapshot once so we can cross-reference manifest metadata for chunk counts.
     // This is the same snapshot already fetched internally by `readonly_session` — the asset
@@ -456,7 +516,11 @@ async fn fetch_all_nodes(
 
         let node_type = match &node.node_data {
             NodeData::Group => TreeNodeType::Group,
-            NodeData::Array { shape, dimension_names, manifests } => {
+            NodeData::Array {
+                shape,
+                dimension_names,
+                manifests,
+            } => {
                 let dims: Vec<u64> = shape.iter().map(|d| d.array_length()).collect();
                 let dim_names = dimension_names.as_ref().map(|names| {
                     names
@@ -509,15 +573,23 @@ async fn fetch_all_nodes(
 }
 
 /// Fetch chunk type statistics for an array node by iterating all its chunks.
-async fn fetch_chunk_stats(repo: &Repository, snapshot_id: &str, path: &str) -> Result<ChunkStats, String> {
+async fn fetch_chunk_stats(
+    repo: &Repository,
+    snapshot_id: &str,
+    path: &str,
+) -> Result<ChunkStats, String> {
     use futures::StreamExt;
     use icechunk::format::SnapshotId;
     use icechunk::repository::VersionInfo;
 
     let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
     let version = VersionInfo::SnapshotId(snap_id);
-    let session = repo.readonly_session(&version).await.map_err(|e| e.to_string())?;
-    let node_path = icechunk::format::Path::try_from(path).map_err(|e: icechunk::format::PathError| e.to_string())?;
+    let session = repo
+        .readonly_session(&version)
+        .await
+        .map_err(|e| e.to_string())?;
+    let node_path = icechunk::format::Path::try_from(path)
+        .map_err(|e: icechunk::format::PathError| e.to_string())?;
 
     let mut total = 0usize;
     let mut inline = 0usize;
@@ -548,7 +620,7 @@ async fn fetch_chunk_stats(repo: &Repository, snapshot_id: &str, path: &str) -> 
                 virtual_total_bytes += vref.length;
                 // Extract URL prefix (everything up to and including the last '/')
                 let url = vref.location.url();
-                let prefix = url.rsplitn(2, '/').nth(1).unwrap_or(url).to_string();
+                let prefix = url.rsplit_once('/').map(|x| x.0).unwrap_or(url).to_string();
                 *url_counts.entry(prefix).or_insert(0) += 1;
             }
             _ => {}
@@ -599,8 +671,7 @@ async fn fetch_diff(
         });
     }
 
-    let snap_id: SnapshotId =
-        snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
+    let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
 
     // The only S3 fetch: transaction log for this snapshot.
     let tx_log = repo
@@ -613,8 +684,10 @@ async fn fetch_diff(
     let added_group_ids: Vec<String> = tx_log.new_groups().map(|id| id.to_string()).collect();
     let deleted_array_ids: Vec<String> = tx_log.deleted_arrays().map(|id| id.to_string()).collect();
     let deleted_group_ids: Vec<String> = tx_log.deleted_groups().map(|id| id.to_string()).collect();
-    let modified_array_ids: Vec<String> = tx_log.updated_arrays().map(|id| id.to_string()).collect();
-    let modified_group_ids: Vec<String> = tx_log.updated_groups().map(|id| id.to_string()).collect();
+    let modified_array_ids: Vec<String> =
+        tx_log.updated_arrays().map(|id| id.to_string()).collect();
+    let modified_group_ids: Vec<String> =
+        tx_log.updated_groups().map(|id| id.to_string()).collect();
 
     // updated_chunks gives (NodeId, Iterator<ChunkIndices>); capture (id_string, count).
     let chunk_change_ids: Vec<(String, usize)> = tx_log

@@ -98,10 +98,7 @@ fn parse_v2_compressor(comp: &serde_json::Value) -> Option<CodecEntry> {
 /// Parse a v2 filter object into a display string
 fn parse_v2_filter(filter: &serde_json::Value) -> String {
     if let Some(obj) = filter.as_object() {
-        let id = obj
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+        let id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
         let params: Vec<String> = obj
             .iter()
             .filter(|(k, _)| k.as_str() != "id")
@@ -142,10 +139,7 @@ impl ZarrMetadata {
     pub fn parse(json_str: &str) -> Option<Self> {
         let v: serde_json::Value = serde_json::from_str(json_str).ok()?;
 
-        let zarr_format = v
-            .get("zarr_format")
-            .and_then(|z| z.as_u64())
-            .unwrap_or(3) as u32;
+        let zarr_format = v.get("zarr_format").and_then(|z| z.as_u64()).unwrap_or(3) as u32;
 
         // Data type: v3 uses "data_type", v2 uses "dtype"
         let data_type = v
@@ -196,13 +190,7 @@ impl ZarrMetadata {
 
         let filters: Vec<String> = v
             .get("filters")
-            .and_then(|f| {
-                if f.is_null() {
-                    None
-                } else {
-                    f.as_array()
-                }
-            })
+            .and_then(|f| if f.is_null() { None } else { f.as_array() })
             .map(|arr| arr.iter().map(parse_v2_filter).collect())
             .unwrap_or_default();
 

@@ -25,12 +25,8 @@ pub async fn run(
     let repo = Arc::new(repo);
 
     match format {
-        OutputFormat::Json => {
-            run_json(repo, command, repo_url).await
-        }
-        OutputFormat::Md => {
-            run_md(repo, command, repo_url).await
-        }
+        OutputFormat::Json => run_json(repo, command, repo_url).await,
+        OutputFormat::Md => run_md(repo, command, repo_url).await,
         OutputFormat::Table => {
             eprintln!("Table output not yet implemented, using markdown");
             run_md(repo, command, repo_url).await
@@ -109,7 +105,9 @@ fn parse_repl_command(line: &str) -> Result<Option<Command>, String> {
                 match parts[i] {
                     "-r" | "--ref" => {
                         i += 1;
-                        if i < parts.len() { r#ref = parts[i].to_string(); }
+                        if i < parts.len() {
+                            r#ref = parts[i].to_string();
+                        }
                     }
                     "-n" | "--limit" => {
                         i += 1;
@@ -131,11 +129,15 @@ fn parse_repl_command(line: &str) -> Result<Option<Command>, String> {
                 match parts[i] {
                     "-r" | "--ref" => {
                         i += 1;
-                        if i < parts.len() { r#ref = parts[i].to_string(); }
+                        if i < parts.len() {
+                            r#ref = parts[i].to_string();
+                        }
                     }
                     "-p" | "--path" => {
                         i += 1;
-                        if i < parts.len() { path = Some(parts[i].to_string()); }
+                        if i < parts.len() {
+                            path = Some(parts[i].to_string());
+                        }
                     }
                     _ => {}
                 }
@@ -143,7 +145,9 @@ fn parse_repl_command(line: &str) -> Result<Option<Command>, String> {
             }
             Ok(Some(Command::Tree { r#ref, path }))
         }
-        other => Err(format!("unknown command: '{other}'. Available: info, branches, tags, log, tree")),
+        other => Err(format!(
+            "unknown command: '{other}'. Available: info, branches, tags, log, tree"
+        )),
     }
 }
 
@@ -169,10 +173,17 @@ async fn run_json(
         }
         Some(Command::Log { ref r#ref, limit }) => {
             let entries = fetch_ancestry(&repo, r#ref).await?;
-            let entries = if let Some(n) = limit { entries.into_iter().take(n).collect() } else { entries };
+            let entries = if let Some(n) = limit {
+                entries.into_iter().take(n).collect()
+            } else {
+                entries
+            };
             println!("{}", serde_json::to_string_pretty(&entries)?);
         }
-        Some(Command::Tree { ref r#ref, ref path }) => {
+        Some(Command::Tree {
+            ref r#ref,
+            ref path,
+        }) => {
             let tree = fetch_tree_flat(&repo, r#ref, path.as_deref()).await?;
             println!("{}", serde_json::to_string_pretty(&tree)?);
         }
@@ -203,9 +214,18 @@ async fn run_md(
                 println!("| Branch | Snapshot | Time | Message |");
                 println!("|--------|----------|------|---------|");
                 for b in &branches {
-                    let ts = b.tip_timestamp.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+                    let ts = b
+                        .tip_timestamp
+                        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_default();
                     let msg = b.tip_message.as_deref().unwrap_or("");
-                    println!("| {} | `{}` | {} | {} |", b.name, truncate(&b.snapshot_id, 12), ts, msg);
+                    println!(
+                        "| {} | `{}` | {} | {} |",
+                        b.name,
+                        truncate(&b.snapshot_id, 12),
+                        ts,
+                        msg
+                    );
                 }
             }
         }
@@ -218,25 +238,47 @@ async fn run_md(
                 println!("| Tag | Snapshot | Time | Message |");
                 println!("|-----|----------|------|---------|");
                 for t in &tags {
-                    let ts = t.tip_timestamp.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+                    let ts = t
+                        .tip_timestamp
+                        .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_default();
                     let msg = t.tip_message.as_deref().unwrap_or("");
-                    println!("| {} | `{}` | {} | {} |", t.name, truncate(&t.snapshot_id, 12), ts, msg);
+                    println!(
+                        "| {} | `{}` | {} | {} |",
+                        t.name,
+                        truncate(&t.snapshot_id, 12),
+                        ts,
+                        msg
+                    );
                 }
             }
         }
         Some(Command::Log { ref r#ref, limit }) => {
             let entries = fetch_ancestry(&repo, r#ref).await?;
-            let entries: Vec<_> = if let Some(n) = limit { entries.into_iter().take(n).collect() } else { entries };
+            let entries: Vec<_> = if let Some(n) = limit {
+                entries.into_iter().take(n).collect()
+            } else {
+                entries
+            };
             println!("# Snapshot Log ({})\n", r#ref);
             println!("| # | Snapshot | Time | Message |");
             println!("|---|----------|------|---------|");
             for (i, e) in entries.iter().enumerate() {
                 let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
-                println!("| {} | `{}` | {} | {} |", i + 1, truncate(&e.id, 12), ts, e.message);
+                println!(
+                    "| {} | `{}` | {} | {} |",
+                    i + 1,
+                    truncate(&e.id, 12),
+                    ts,
+                    e.message
+                );
             }
             println!("\n{} snapshot(s) total", entries.len());
         }
-        Some(Command::Tree { ref r#ref, ref path }) => {
+        Some(Command::Tree {
+            ref r#ref,
+            ref path,
+        }) => {
             print_md_tree(&repo, r#ref, path.as_deref()).await?;
         }
         Some(Command::OpsLog { .. }) => {
@@ -248,10 +290,7 @@ async fn run_md(
 
 /// Overview: repo info + branches + tree summary.
 /// Designed to give an agent enough context to decide what to drill into.
-async fn print_md_overview(
-    repo: &Repository,
-    repo_url: &str,
-) -> color_eyre::Result<()> {
+async fn print_md_overview(repo: &Repository, repo_url: &str) -> color_eyre::Result<()> {
     let (branches, tags) = tokio::join!(fetch_branches(repo), fetch_tags(repo));
     let branches = branches?;
     let tags = tags?;
@@ -261,10 +300,23 @@ async fn print_md_overview(
     // Branches
     println!("## Branches ({})\n", branches.len());
     for b in &branches {
-        let ts = b.tip_timestamp.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+        let ts = b
+            .tip_timestamp
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default();
         let msg = b.tip_message.as_deref().unwrap_or("");
-        let msg_part = if msg.is_empty() { String::new() } else { format!(" — {msg}") };
-        println!("- **{}** → `{}`  {}{}", b.name, truncate(&b.snapshot_id, 12), ts, msg_part);
+        let msg_part = if msg.is_empty() {
+            String::new()
+        } else {
+            format!(" — {msg}")
+        };
+        println!(
+            "- **{}** → `{}`  {}{}",
+            b.name,
+            truncate(&b.snapshot_id, 12),
+            ts,
+            msg_part
+        );
     }
 
     // Tags
@@ -276,7 +328,10 @@ async fn print_md_overview(
     }
 
     // Snapshot count from main branch ancestry
-    let main_branch = branches.iter().find(|b| b.name == "main").or(branches.first());
+    let main_branch = branches
+        .iter()
+        .find(|b| b.name == "main")
+        .or(branches.first());
     if let Some(branch) = main_branch {
         let ancestry = fetch_ancestry(repo, &branch.name).await?;
         println!("\n## Snapshots ({})\n", ancestry.len());
@@ -286,10 +341,19 @@ async fn print_md_overview(
         println!("|---|----------|------|---------|");
         for (i, e) in recent.iter().enumerate() {
             let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
-            println!("| {} | `{}` | {} | {} |", i + 1, truncate(&e.id, 12), ts, e.message);
+            println!(
+                "| {} | `{}` | {} | {} |",
+                i + 1,
+                truncate(&e.id, 12),
+                ts,
+                e.message
+            );
         }
         if ancestry.len() > 5 {
-            println!("\n*({} more — use `log` subcommand to see all)*", ancestry.len() - 5);
+            println!(
+                "\n*({} more — use `log` subcommand to see all)*",
+                ancestry.len() - 5
+            );
         }
 
         // Tree summary at branch tip
@@ -300,7 +364,9 @@ async fn print_md_overview(
 
     // Hint for agents
     println!("\n---");
-    println!("*Subcommands: `info`, `branches`, `tags`, `log [-r REF] [-n LIMIT]`, `tree [-r REF] [-p PATH]`*");
+    println!(
+        "*Subcommands: `info`, `branches`, `tags`, `log [-r REF] [-n LIMIT]`, `tree [-r REF] [-p PATH]`*"
+    );
 
     Ok(())
 }
@@ -319,7 +385,8 @@ async fn print_md_tree(
             print_md_node_detail(node);
         } else {
             // Show nodes under this path prefix
-            let matching: Vec<_> = tree.iter()
+            let matching: Vec<_> = tree
+                .iter()
                 .filter(|n| n.path.starts_with(filter_path))
                 .collect();
             if matching.is_empty() {
@@ -341,7 +408,10 @@ async fn print_md_tree(
 }
 
 pub(crate) fn fmt_dims(dims: &[u64]) -> String {
-    dims.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(" × ")
+    dims.iter()
+        .map(|d| d.to_string())
+        .collect::<Vec<_>>()
+        .join(" × ")
 }
 
 fn print_md_tree_nodes(tree: &[FlatNode]) {
@@ -368,7 +438,10 @@ pub(crate) fn fmt_node_detail(node: &FlatNode) -> String {
         out.push_str(&format!("- **Data type:** `{dtype}`\n"));
     }
     if let Some(ref chunk_shape) = node.chunk_shape {
-        out.push_str(&format!("- **Chunk shape:** `[{}]`\n", fmt_dims(chunk_shape)));
+        out.push_str(&format!(
+            "- **Chunk shape:** `[{}]`\n",
+            fmt_dims(chunk_shape)
+        ));
     }
     if let Some(ref dims) = node.dimensions {
         out.push_str(&format!("- **Dimensions:** {}\n", dims.join(", ")));
@@ -376,7 +449,9 @@ pub(crate) fn fmt_node_detail(node: &FlatNode) -> String {
     if let (Some(written), Some(grid)) = (node.total_chunks, node.grid_chunks) {
         if grid > 0 {
             let pct = written * 100 / grid;
-            out.push_str(&format!("- **Initialized:** {written} of {grid} ({pct}%)\n"));
+            out.push_str(&format!(
+                "- **Initialized:** {written} of {grid} ({pct}%)\n"
+            ));
         }
     } else if let Some(written) = node.total_chunks {
         out.push_str(&format!("- **Total chunks:** {written}\n"));
@@ -396,31 +471,42 @@ pub(crate) fn fmt_tree_line(node: &FlatNode, tree: &[FlatNode]) -> String {
     let indent = "  ".repeat(depth);
     match node.node_type {
         FlatNodeType::Array => {
-            let shape = node.shape.as_ref().map(|s| fmt_dims(s)).unwrap_or_else(|| "?".to_string());
+            let shape = node
+                .shape
+                .as_ref()
+                .map(|s| fmt_dims(s))
+                .unwrap_or_else(|| "?".to_string());
             let dtype = node.dtype.as_deref().unwrap_or("?");
-            let chunks_info = if let (Some(written), Some(grid)) = (node.total_chunks, node.grid_chunks) {
-                if grid > 0 {
-                    let pct = written * 100 / grid;
-                    format!("  ({written}/{grid} chunks, {pct}% initialized)")
-                } else {
+            let chunks_info =
+                if let (Some(written), Some(grid)) = (node.total_chunks, node.grid_chunks) {
+                    if grid > 0 {
+                        let pct = written * 100 / grid;
+                        format!("  ({written}/{grid} chunks, {pct}% initialized)")
+                    } else {
+                        format!("  ({written} chunks)")
+                    }
+                } else if let Some(written) = node.total_chunks {
                     format!("  ({written} chunks)")
-                }
-            } else if let Some(written) = node.total_chunks {
-                format!("  ({written} chunks)")
-            } else {
-                String::new()
-            };
-            format!("{indent}- **{}** `{dtype}` `[{shape}]`{chunks_info}\n", node.name)
+                } else {
+                    String::new()
+                };
+            format!(
+                "{indent}- **{}** `{dtype}` `[{shape}]`{chunks_info}\n",
+                node.name
+            )
         }
         FlatNodeType::Group => {
-            let child_count = tree.iter().filter(|n| {
-                let parent = match n.path.rfind('/') {
-                    Some(0) => "/",
-                    Some(idx) => &n.path[..idx],
-                    None => "/",
-                };
-                parent == node.path
-            }).count();
+            let child_count = tree
+                .iter()
+                .filter(|n| {
+                    let parent = match n.path.rfind('/') {
+                        Some(0) => "/",
+                        Some(idx) => &n.path[..idx],
+                        None => "/",
+                    };
+                    parent == node.path
+                })
+                .count();
             format!("{indent}- **{}/** ({} children)\n", node.name, child_count)
         }
     }
@@ -462,14 +548,26 @@ impl FlatNode {
     /// Shorthand for constructing a group node (all array fields are None).
     pub fn group(path: String, name: String) -> Self {
         Self {
-            path, name, node_type: FlatNodeType::Group,
-            shape: None, dtype: None, chunk_shape: None, dimensions: None,
-            total_chunks: None, grid_chunks: None, codecs: None, fill_value: None,
+            path,
+            name,
+            node_type: FlatNodeType::Group,
+            shape: None,
+            dtype: None,
+            chunk_shape: None,
+            dimensions: None,
+            total_chunks: None,
+            grid_chunks: None,
+            codecs: None,
+            fill_value: None,
         }
     }
 
-    pub fn is_group(&self) -> bool { self.node_type == FlatNodeType::Group }
-    pub fn is_array(&self) -> bool { self.node_type == FlatNodeType::Array }
+    pub fn is_group(&self) -> bool {
+        self.node_type == FlatNodeType::Group
+    }
+    pub fn is_array(&self) -> bool {
+        self.node_type == FlatNodeType::Array
+    }
 }
 
 impl std::fmt::Display for FlatNodeType {
@@ -493,14 +591,23 @@ pub(crate) struct RepoInfo {
 
 // ─── Data fetching (direct icechunk API, no DataStore) ───────
 
-pub(crate) async fn fetch_repo_info(repo: &Repository, repo_url: &str) -> color_eyre::Result<RepoInfo> {
+pub(crate) async fn fetch_repo_info(
+    repo: &Repository,
+    repo_url: &str,
+) -> color_eyre::Result<RepoInfo> {
     let (branches, tags) = tokio::join!(fetch_branches(repo), fetch_tags(repo));
     let branches = branches?;
     let tags = tags?;
     // Get snapshot count from the main/first branch ancestry
-    let main = branches.iter().find(|b| b.name == "main").or(branches.first());
+    let main = branches
+        .iter()
+        .find(|b| b.name == "main")
+        .or(branches.first());
     let snapshot_count = if let Some(branch) = main {
-        fetch_ancestry(repo, &branch.name).await.map(|a| a.len()).unwrap_or(0)
+        fetch_ancestry(repo, &branch.name)
+            .await
+            .map(|a| a.len())
+            .unwrap_or(0)
     } else {
         0
     };
@@ -553,7 +660,10 @@ pub(crate) async fn fetch_tags(repo: &Repository) -> color_eyre::Result<Vec<TagI
 }
 
 /// Resolve a ref string to a VersionInfo. Tries: branch, tag, then snapshot ID.
-async fn resolve_ref(repo: &Repository, r: &str) -> color_eyre::Result<icechunk::repository::VersionInfo> {
+async fn resolve_ref(
+    repo: &Repository,
+    r: &str,
+) -> color_eyre::Result<icechunk::repository::VersionInfo> {
     use icechunk::repository::VersionInfo;
 
     // Try branch first
@@ -572,7 +682,10 @@ async fn resolve_ref(repo: &Repository, r: &str) -> color_eyre::Result<icechunk:
     color_eyre::eyre::bail!("ref not found: '{r}' (not a branch, tag, or snapshot ID)")
 }
 
-pub(crate) async fn fetch_ancestry(repo: &Repository, r: &str) -> color_eyre::Result<Vec<SnapshotEntry>> {
+pub(crate) async fn fetch_ancestry(
+    repo: &Repository,
+    r: &str,
+) -> color_eyre::Result<Vec<SnapshotEntry>> {
     use futures::StreamExt;
 
     let version = resolve_ref(repo, r).await?;
@@ -607,9 +720,7 @@ pub(crate) async fn fetch_tree_flat(
         .fetch_snapshot(session.snapshot_id())
         .await?;
 
-    let nodes_iter = session
-        .list_nodes(&icechunk::format::Path::root())
-        .await?;
+    let nodes_iter = session.list_nodes(&icechunk::format::Path::root()).await?;
 
     let mut flat_nodes = Vec::new();
 
@@ -626,7 +737,11 @@ pub(crate) async fn fetch_tree_flat(
             NodeData::Group => {
                 flat_nodes.push(FlatNode::group(sanitize(&path_str), sanitize(&name)));
             }
-            NodeData::Array { shape, dimension_names, manifests } => {
+            NodeData::Array {
+                shape,
+                dimension_names,
+                manifests,
+            } => {
                 let dims: Vec<u64> = shape.iter().map(|d| d.array_length()).collect();
                 let dim_names: Option<Vec<String>> = dimension_names.as_ref().map(|names| {
                     names
@@ -647,7 +762,10 @@ pub(crate) async fn fetch_tree_flat(
 
                 let chunk_shape_vec = meta.as_ref().map(|m| m.chunk_shape.clone());
                 let dtype = meta.as_ref().map(|m| m.data_type.clone());
-                let codecs = meta.as_ref().map(|m| m.codec_chain_display()).filter(|s| !s.is_empty());
+                let codecs = meta
+                    .as_ref()
+                    .map(|m| m.codec_chain_display())
+                    .filter(|s| !s.is_empty());
                 let fill_value = meta.as_ref().map(|m| m.fill_value.clone());
 
                 // Total chunks from snapshot manifest metadata
@@ -667,13 +785,20 @@ pub(crate) async fn fetch_tree_flat(
 
                 // Grid size: product of ceil(shape[i] / chunk_shape[i])
                 let grid_chunks = meta.as_ref().and_then(|m| {
-                    if dims.is_empty() || m.chunk_shape.is_empty() || dims.len() != m.chunk_shape.len() {
+                    if dims.is_empty()
+                        || m.chunk_shape.is_empty()
+                        || dims.len() != m.chunk_shape.len()
+                    {
                         return None;
                     }
-                    dims.iter().zip(m.chunk_shape.iter()).try_fold(1u64, |acc, (s, c)| {
-                        if *c == 0 { return None; }
-                        acc.checked_mul(s.div_ceil(*c))
-                    })
+                    dims.iter()
+                        .zip(m.chunk_shape.iter())
+                        .try_fold(1u64, |acc, (s, c)| {
+                            if *c == 0 {
+                                return None;
+                            }
+                            acc.checked_mul(s.div_ceil(*c))
+                        })
                 });
 
                 flat_nodes.push(FlatNode {
@@ -702,9 +827,5 @@ pub(crate) async fn fetch_tree_flat(
 }
 
 pub(crate) fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
-    }
+    if s.len() <= max { s } else { &s[..max] }
 }

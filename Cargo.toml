@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Icechunk — the library does all format parsing and storage I/O
-icechunk = { path = "../icechunk/icechunk" }
+icechunk = "2.0.0"
 
 # Arraylake — credential vending for cloud repos
 arraylake = { path = "../arraylake/arraylake-rs" }
@@ -42,13 +42,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rmcp = { version = "1", features = ["server", "transport-io"] }
 schemars = "0.8"
 
+# Fuzzy search
+nucleo = "0.5"
+
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 humansize = "2"
 strip-ansi-escapes = "0.2"
-
-[patch.crates-io]
-icechunk = { path = "../icechunk/icechunk" }
 
 [profile.release]
 lto = true

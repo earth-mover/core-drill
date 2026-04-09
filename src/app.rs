@@ -2,8 +2,40 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use ratatui::prelude::Rect;
 
 use crate::component::{Action, BottomTab, DetailMode, Pane};
+use crate::search::SearchState;
 use crate::store::{DataRequest, DataStore, LoadState, TreeNodeType};
 use crate::theme::Theme;
+
+/// Structured repo identity — replaces ad-hoc pipe-delimited strings.
+#[derive(Debug, Clone)]
+pub enum RepoIdentity {
+    Local {
+        path: String,
+    },
+    S3 {
+        url: String,
+    },
+    Arraylake {
+        org: String,
+        repo: String,
+        bucket: String,
+        platform: String,
+        region: String,
+    },
+}
+
+impl RepoIdentity {
+    /// Short display for status bar
+    pub fn display_short(&self) -> String {
+        match self {
+            Self::Local { path } => path.clone(),
+            Self::S3 { url } => url.clone(),
+            Self::Arraylake {
+                org, repo, bucket, ..
+            } => format!("{org}/{repo}  ({bucket})"),
+        }
+    }
+}
 
 /// Application coordinator.
 /// Owns the data store, theme, pane focus, and layout state.
@@ -18,7 +50,7 @@ pub struct App {
     /// The active snapshot ID. Derived from branch tip initially,
     /// updated when navigating snapshots/tags. Drives tree + diffs.
     pub current_snapshot: Option<String>,
-    pub repo_url: String,
+    pub repo_info: RepoIdentity,
 
     // ─── View state (UI only) ────────────────────────────────
     pub focused_pane: Pane,
@@ -35,6 +67,10 @@ pub struct App {
     /// Per-tab scroll offset
     pub tab_offset: [usize; 3],
 
+    // ─── Search ──────────────────────────────────────────────
+    /// Active fuzzy search. None = not searching.
+    pub search: Option<SearchState>,
+
     // ─── Internal bookkeeping ────────────────────────────────
     tree_auto_expanded: bool,
     /// Dedup guard: last snapshot we requested a diff for
@@ -49,7 +85,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(store: DataStore, repo_url: String) -> Self {
+    pub fn new(store: DataStore, repo_info: RepoIdentity) -> Self {
         Self {
             store,
             theme: Theme::default(),
@@ -60,12 +96,13 @@ impl App {
             detail_mode: DetailMode::Node,
             show_help: false,
             current_branch: "main".to_string(),
-            repo_url,
+            repo_info,
             tree_state: tui_tree_widget::TreeState::<String>::default(),
             current_snapshot: None,
             detail_scroll: 0,
             tab_selection: [0; 3],
             tab_offset: [0; 3],
+            search: None,
             tree_auto_expanded: false,
             last_diff_requested: None,
             last_tree_snapshot_requested: None,
@@ -77,18 +114,32 @@ impl App {
 
     // ─── Tab selection accessors ────────────────────────────
     fn tab_index(tab: BottomTab) -> usize {
-        match tab { BottomTab::Snapshots => 0, BottomTab::Branches => 1, BottomTab::Tags => 2 }
+        match tab {
+            BottomTab::Snapshots => 0,
+            BottomTab::Branches => 1,
+            BottomTab::Tags => 2,
+        }
     }
-    pub fn bottom_selected(&self) -> usize { self.tab_selection[Self::tab_index(self.bottom_tab)] }
-    pub fn bottom_offset(&self) -> usize { self.tab_offset[Self::tab_index(self.bottom_tab)] }
-    fn set_bottom_selected(&mut self, val: usize) { self.tab_selection[Self::tab_index(self.bottom_tab)] = val; }
-    fn set_bottom_offset(&mut self, val: usize) { self.tab_offset[Self::tab_index(self.bottom_tab)] = val; }
+    pub fn bottom_selected(&self) -> usize {
+        self.tab_selection[Self::tab_index(self.bottom_tab)]
+    }
+    pub fn bottom_offset(&self) -> usize {
+        self.tab_offset[Self::tab_index(self.bottom_tab)]
+    }
+    fn set_bottom_selected(&mut self, val: usize) {
+        self.tab_selection[Self::tab_index(self.bottom_tab)] = val;
+    }
+    fn set_bottom_offset(&mut self, val: usize) {
+        self.tab_offset[Self::tab_index(self.bottom_tab)] = val;
+    }
 
     // ─── State setters that propagate to dependents ──────────
 
     /// Change branch. Reloads ancestry + tree. Resets snapshot to branch tip.
     fn set_branch(&mut self, branch: String) {
-        if branch == self.current_branch { return; }
+        if branch == self.current_branch {
+            return;
+        }
         self.current_branch = branch;
         self.current_snapshot = None; // will resolve to tip once ancestry loads
         self.tree_state = tui_tree_widget::TreeState::default();
@@ -107,7 +158,9 @@ impl App {
 
     /// Change snapshot. Reloads tree at that snapshot and requests diff.
     fn set_snapshot(&mut self, snapshot_id: Option<String>) {
-        if self.current_snapshot == snapshot_id { return; }
+        if self.current_snapshot == snapshot_id {
+            return;
+        }
         self.current_snapshot = snapshot_id;
         self.tree_auto_expanded = false;
         // Fetch tree at this snapshot (or branch tip if None)
@@ -117,18 +170,63 @@ impl App {
             snapshot_id: snap.clone(),
         });
         // Request diff if we have a snapshot
-        if let Some(ref sid) = self.current_snapshot {
-            if self.last_diff_requested.as_ref() != Some(sid) {
-                let parent_id = self.store.ancestry
-                    .get(&self.current_branch)
-                    .and_then(|s| s.as_loaded())
-                    .and_then(|entries| entries.iter().find(|e| e.id == *sid))
-                    .and_then(|e| e.parent_id.clone());
-                self.last_diff_requested = Some(sid.clone());
-                self.store.submit(DataRequest::SnapshotDiff {
-                    snapshot_id: sid.clone(),
-                    parent_id,
-                });
+        if let Some(ref sid) = self.current_snapshot
+            && self.last_diff_requested.as_ref() != Some(sid)
+        {
+            let parent_id = self
+                .store
+                .ancestry
+                .get(&self.current_branch)
+                .and_then(|s| s.as_loaded())
+                .and_then(|entries| entries.iter().find(|e| e.id == *sid))
+                .and_then(|e| e.parent_id.clone());
+            self.last_diff_requested = Some(sid.clone());
+            self.store.submit(DataRequest::SnapshotDiff {
+                snapshot_id: sid.clone(),
+                parent_id,
+            });
+        }
+    }
+
+    /// Build the full identifier path for tui_tree_widget selection.
+    /// For "/stations/latitude" returns ["/stations", "/stations/latitude"].
+    fn tree_identifier_path(path: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let mut built = String::new();
+        for seg in segments {
+            built = format!("{}/{}", built, seg);
+            parts.push(built.clone());
+        }
+        parts
+    }
+
+    /// Select a tree node by path, opening all ancestor groups.
+    fn select_tree_node(&mut self, path: &str) {
+        let id_path = Self::tree_identifier_path(path);
+        // Open all ancestor groups so the node is visible
+        for i in 0..id_path.len().saturating_sub(1) {
+            self.tree_state.open(id_path[..=i].to_vec());
+        }
+        self.tree_state.select(id_path);
+    }
+
+    /// Sync the search cursor's selected item into the actual pane selection.
+    fn sync_search_selection(&mut self, candidates: &[String]) {
+        let Some(ref search) = self.search else {
+            return;
+        };
+        let Some(idx) = search.selected_index() else {
+            return;
+        };
+        match search.target {
+            crate::search::SearchTarget::Tree => {
+                if let Some(path) = candidates.get(idx) {
+                    self.select_tree_node(path);
+                }
+            }
+            _ => {
+                self.set_bottom_selected(idx);
             }
         }
     }
@@ -152,7 +250,9 @@ impl App {
         match self.bottom_tab {
             BottomTab::Snapshots => {
                 // Derive snapshot ID from selection index
-                let snap_id = self.store.ancestry
+                let snap_id = self
+                    .store
+                    .ancestry
                     .get(&self.current_branch)
                     .and_then(|s| s.as_loaded())
                     .and_then(|entries| entries.get(self.bottom_selected()))
@@ -160,17 +260,17 @@ impl App {
                 self.set_snapshot(snap_id);
             }
             BottomTab::Branches => {
-                if let Some(branches) = self.store.branches.as_loaded() {
-                    if let Some(branch) = branches.get(self.bottom_selected()) {
-                        self.set_branch(branch.name.clone());
-                    }
+                if let Some(branches) = self.store.branches.as_loaded()
+                    && let Some(branch) = branches.get(self.bottom_selected())
+                {
+                    self.set_branch(branch.name.clone());
                 }
             }
             BottomTab::Tags => {
-                if let Some(tags) = self.store.tags.as_loaded() {
-                    if let Some(tag) = tags.get(self.bottom_selected()) {
-                        self.set_snapshot(Some(tag.snapshot_id.clone()));
-                    }
+                if let Some(tags) = self.store.tags.as_loaded()
+                    && let Some(tag) = tags.get(self.bottom_selected())
+                {
+                    self.set_snapshot(Some(tag.snapshot_id.clone()));
                 }
             }
         }
@@ -199,36 +299,36 @@ impl App {
         // After AllNodes data arrives, auto-expand groups so the user sees
         // meaningful content immediately instead of a collapsed root.
         if !self.tree_auto_expanded
-            && let Some(LoadState::Loaded(_)) = self.store.node_children.get("/") {
-                self.auto_expand_tree();
-                self.tree_auto_expanded = true;
-                // Kick off chunk stats for whatever array got auto-selected
-                self.maybe_request_chunk_stats();
-            }
+            && let Some(LoadState::Loaded(_)) = self.store.node_children.get("/")
+        {
+            self.auto_expand_tree();
+            self.tree_auto_expanded = true;
+            // Kick off chunk stats for whatever array got auto-selected
+            self.maybe_request_chunk_stats();
+        }
 
         // Once branches load, sync the Branches tab selection to current_branch.
         // Also verify current_branch actually exists — fall back to first branch if not.
-        if let Some(LoadState::Loaded(branches)) = Some(&self.store.branches) {
-            if !branches.is_empty() {
-                let branch_exists = branches.iter().any(|b| b.name == self.current_branch);
-                if !branch_exists {
-                    // "main" doesn't exist — use the first branch
-                    self.current_branch = branches[0].name.clone();
-                }
-                // Sync Branches tab selection to current_branch
-                if let Some(idx) = branches.iter().position(|b| b.name == self.current_branch) {
-                    self.tab_selection[1] = idx; // 1 = Branches tab
-                }
+        if let Some(LoadState::Loaded(branches)) = Some(&self.store.branches)
+            && !branches.is_empty()
+        {
+            let branch_exists = branches.iter().any(|b| b.name == self.current_branch);
+            if !branch_exists {
+                // "main" doesn't exist — use the first branch
+                self.current_branch = branches[0].name.clone();
+            }
+            // Sync Branches tab selection to current_branch
+            if let Some(idx) = branches.iter().position(|b| b.name == self.current_branch) {
+                self.tab_selection[1] = idx; // 1 = Branches tab
             }
         }
 
         // Auto-set the active snapshot to tip when ancestry first loads
-        if self.current_snapshot.is_none() {
-            if let Some(LoadState::Loaded(entries)) = self.store.ancestry.get(&self.current_branch) {
-                if let Some(first) = entries.first() {
-                    self.current_snapshot = Some(first.id.clone());
-                }
-            }
+        if self.current_snapshot.is_none()
+            && let Some(LoadState::Loaded(entries)) = self.store.ancestry.get(&self.current_branch)
+            && let Some(first) = entries.first()
+        {
+            self.current_snapshot = Some(first.id.clone());
         }
 
         // Auto-request diff when bottom pane is focused on Snapshots tab
@@ -279,9 +379,12 @@ impl App {
         let Some(path) = selected.last() else { return };
 
         // Get the current snapshot context
-        let snapshot_id = self.selected_snapshot_id()
+        let snapshot_id = self
+            .selected_snapshot_id()
             .or_else(|| self.get_branch_tip_snapshot_id());
-        let Some(snapshot_id) = snapshot_id else { return };
+        let Some(snapshot_id) = snapshot_id else {
+            return;
+        };
 
         let key = (snapshot_id.clone(), path.clone());
 
@@ -327,16 +430,119 @@ impl App {
         self.current_snapshot.clone()
     }
 
+    /// Get the searchable strings for the current pane context.
+    fn search_candidates(&self) -> Vec<String> {
+        match self.focused_pane {
+            Pane::Sidebar => crate::search::tree_candidates(&self.store),
+            Pane::Bottom => match self.bottom_tab {
+                BottomTab::Snapshots => self
+                    .store
+                    .ancestry
+                    .get(&self.current_branch)
+                    .and_then(|s| s.as_loaded())
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .map(|e| format!("{} {}", e.id, e.message))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                BottomTab::Branches => self
+                    .store
+                    .branches
+                    .as_loaded()
+                    .map(|b| b.iter().map(|b| b.name.clone()).collect())
+                    .unwrap_or_default(),
+                BottomTab::Tags => self
+                    .store
+                    .tags
+                    .as_loaded()
+                    .map(|t| t.iter().map(|t| t.name.clone()).collect())
+                    .unwrap_or_default(),
+            },
+            Pane::Detail => Vec::new(), // No search in detail pane
+        }
+    }
+
     /// Handle a key event
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Search mode intercepts all keys
+        if self.search.is_some() {
+            self.handle_search_key(key);
+            return;
+        }
         let action = self.map_key(key);
         self.process_action(action);
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) {
+        let candidates = self.search_candidates();
+        let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
+
+        match key.code {
+            KeyCode::Esc => {
+                self.search = None;
+            }
+            KeyCode::Enter => {
+                if let Some(ref search) = self.search
+                    && let Some(idx) = search.selected_index()
+                {
+                    // Apply the selection through the normal state setters
+                    match self.focused_pane {
+                        Pane::Sidebar => {
+                            if idx < candidates.len() {
+                                self.select_tree_node(&candidates[idx].clone());
+                                self.on_tree_selection_changed();
+                            }
+                        }
+                        Pane::Bottom => {
+                            self.set_bottom_selected(idx);
+                            self.on_bottom_selection_changed();
+                        }
+                        Pane::Detail => {}
+                    }
+                }
+                self.search = None;
+            }
+            KeyCode::Backspace => {
+                if let Some(ref mut search) = self.search {
+                    if search.query.is_empty() {
+                        self.search = None;
+                    } else {
+                        search.pop_char(&candidate_refs);
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                if let Some(ref mut search) = self.search {
+                    search.next();
+                    self.sync_search_selection(&candidates);
+                }
+            }
+            KeyCode::Up | KeyCode::BackTab => {
+                if let Some(ref mut search) = self.search {
+                    search.prev();
+                    self.sync_search_selection(&candidates);
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(ref mut search) = self.search {
+                    search.push_char(c, &candidate_refs);
+                    self.sync_search_selection(&candidates);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn map_key(&mut self, key: KeyEvent) -> Action {
         // Global keys
         match key.code {
             KeyCode::Char('q') => return Action::Quit,
+            KeyCode::Char('/') if self.focused_pane != Pane::Detail => {
+                self.search = Some(SearchState::new(self.focused_pane, self.bottom_tab));
+                return Action::None;
+            }
             KeyCode::Char('?') => {
                 self.show_help = !self.show_help;
                 return Action::None;
@@ -362,7 +568,10 @@ impl App {
         }
 
         // Ctrl+hjkl: move between panes, or pass through to zellij at edges
-        if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) {
+        if key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+        {
             match key.code {
                 KeyCode::Char('h') | KeyCode::Left => {
                     if self.focused_pane != Pane::Sidebar {
@@ -413,7 +622,11 @@ impl App {
                     let next = match self.focused_pane {
                         Pane::Sidebar => Pane::Detail,
                         Pane::Detail => {
-                            if self.bottom_visible { Pane::Bottom } else { Pane::Sidebar }
+                            if self.bottom_visible {
+                                Pane::Bottom
+                            } else {
+                                Pane::Sidebar
+                            }
                         }
                         Pane::Bottom => Pane::Sidebar,
                     };
@@ -439,7 +652,11 @@ impl App {
                     // Cycle panes backward: Sidebar -> Bottom -> Detail -> Sidebar
                     let prev = match self.focused_pane {
                         Pane::Sidebar => {
-                            if self.bottom_visible { Pane::Bottom } else { Pane::Detail }
+                            if self.bottom_visible {
+                                Pane::Bottom
+                            } else {
+                                Pane::Detail
+                            }
                         }
                         Pane::Detail => Pane::Sidebar,
                         Pane::Bottom => Pane::Detail,
@@ -584,12 +801,19 @@ impl App {
 
     fn bottom_list_len(&self) -> usize {
         match self.bottom_tab {
-            BottomTab::Snapshots => self.store.ancestry
+            BottomTab::Snapshots => self
+                .store
+                .ancestry
                 .get(&self.current_branch)
                 .and_then(|s| s.as_loaded())
                 .map(|a| a.len())
                 .unwrap_or(0),
-            BottomTab::Branches => self.store.branches.as_loaded().map(|b| b.len()).unwrap_or(0),
+            BottomTab::Branches => self
+                .store
+                .branches
+                .as_loaded()
+                .map(|b| b.len())
+                .unwrap_or(0),
             BottomTab::Tags => self.store.tags.as_loaded().map(|t| t.len()).unwrap_or(0),
         }
     }
@@ -604,10 +828,11 @@ impl App {
     }
 
     fn clamp_bottom_table_offset(&mut self) {
-        let visible = self.bottom_area
+        let visible = self
+            .bottom_area
             .map(|a| a.height as usize)
             .unwrap_or(10)
-            .saturating_sub(4)  // borders + header + tab bar
+            .saturating_sub(4) // borders + header + tab bar
             .max(1);
 
         let sel = self.bottom_selected();
@@ -622,7 +847,10 @@ impl App {
     /// Handle a mouse event (click to focus pane, select item)
     pub fn handle_mouse(&mut self, mouse: MouseEvent) {
         // Handle scroll events on the detail area
-        let mouse_pos = ratatui::prelude::Position { x: mouse.column, y: mouse.row };
+        let mouse_pos = ratatui::prelude::Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
         match mouse.kind {
             MouseEventKind::ScrollDown => {
                 if self.detail_area.contains(mouse_pos) {
@@ -693,12 +921,7 @@ impl App {
         let mut current_path = "/".to_string();
         let mut identifier_path: Vec<String> = Vec::new();
 
-        loop {
-            let children = match self.store.node_children.get(&current_path) {
-                Some(LoadState::Loaded(nodes)) => nodes,
-                _ => break,
-            };
-
+        while let Some(LoadState::Loaded(children)) = self.store.node_children.get(&current_path) {
             if children.is_empty() {
                 break;
             }
@@ -784,5 +1007,4 @@ impl App {
             }
         }
     }
-
 }

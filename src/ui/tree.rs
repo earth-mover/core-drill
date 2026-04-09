@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
-use crate::store::{DataStore, LoadState, TreeNode};
 use crate::store::types::TreeNodeType;
+use crate::store::{DataStore, LoadState, TreeNode};
 use crate::theme::Theme;
 
 /// A flattened tree entry ready for rendering
@@ -120,7 +120,13 @@ impl TreeViewState {
 
             let count = children.len();
             for (i, child) in children.iter().enumerate() {
-                self.flatten_node(child, store, depth + 1, i == count - 1, child_prefix.clone());
+                self.flatten_node(
+                    child,
+                    store,
+                    depth + 1,
+                    i == count - 1,
+                    child_prefix.clone(),
+                );
             }
         }
     }
@@ -136,10 +142,7 @@ pub fn render_tree(
     area: Rect,
 ) {
     if state.flat_entries.is_empty() {
-        frame.render_widget(
-            Paragraph::new("  (empty)").style(theme.text_dim),
-            area,
-        );
+        frame.render_widget(Paragraph::new("  (empty)").style(theme.text_dim), area);
         return;
     }
 

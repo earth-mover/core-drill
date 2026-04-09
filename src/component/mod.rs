@@ -57,7 +57,14 @@ pub trait Component {
     fn handle_key(&mut self, key: KeyEvent) -> Action;
 
     /// Render into the given area using data from the store.
-    fn render(&self, store: &DataStore, theme: &Theme, focused: bool, frame: &mut Frame, area: Rect);
+    fn render(
+        &self,
+        store: &DataStore,
+        theme: &Theme,
+        focused: bool,
+        frame: &mut Frame,
+        area: Rect,
+    );
 
     /// Return data requests needed to populate this component.
     fn on_enter(&mut self, store: &DataStore) -> Vec<DataRequest>;

@@ -54,7 +54,10 @@ fn render_value(
 
     match value {
         serde_json::Value::Null => {
-            lines.push(Line::from(Span::styled(format!("{pad}null"), theme.text_dim)));
+            lines.push(Line::from(Span::styled(
+                format!("{pad}null"),
+                theme.text_dim,
+            )));
         }
         serde_json::Value::Bool(b) => {
             lines.push(Line::from(Span::styled(
@@ -63,10 +66,7 @@ fn render_value(
             )));
         }
         serde_json::Value::Number(n) => {
-            lines.push(Line::from(Span::styled(
-                format!("{pad}{n}"),
-                theme.text,
-            )));
+            lines.push(Line::from(Span::styled(format!("{pad}{n}"), theme.text)));
         }
         serde_json::Value::String(s) => {
             let clean = sanitize(s);
@@ -189,7 +189,11 @@ mod tests {
         let json = r#"{"evil": "\u001b[31mred\u001b[0m"}"#;
         let lines = render_json(json, &test_theme(), 10, 50);
         // The rendered output should not contain ESC
-        let text: String = lines.iter().flat_map(|l| l.spans.iter()).map(|s| s.content.as_ref()).collect();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
         assert!(!text.contains('\x1b'));
     }
 
@@ -209,7 +213,11 @@ mod tests {
         }
         let json = serde_json::to_string(&serde_json::Value::Object(obj)).unwrap();
         let lines = render_json(&json, &test_theme(), 10, 5);
-        let text: String = lines.iter().flat_map(|l| l.spans.iter()).map(|s| s.content.as_ref()).collect();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
         assert!(text.contains("... and 95 more"));
     }
 
@@ -217,7 +225,11 @@ mod tests {
     fn respects_max_depth() {
         let json = r#"{"a": {"b": {"c": {"d": "deep"}}}}"#;
         let lines = render_json(json, &test_theme(), 2, 50);
-        let text: String = lines.iter().flat_map(|l| l.spans.iter()).map(|s| s.content.as_ref()).collect();
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect();
         assert!(text.contains("{..."));
     }
 }

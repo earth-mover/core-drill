@@ -76,7 +76,9 @@ impl Default for Theme {
 
             selected: Style::default().fg(LIME).add_modifier(Modifier::BOLD),
             selected_inactive: Style::default().fg(LIGHT_GRAY),
-            active: Style::default().fg(ICECHUNK_BLUE).add_modifier(Modifier::UNDERLINED),
+            active: Style::default()
+                .fg(ICECHUNK_BLUE)
+                .add_modifier(Modifier::UNDERLINED),
 
             added: Style::default().fg(GREEN),
             removed: Style::default().fg(RED),
@@ -103,7 +105,11 @@ pub fn panel<'a>(title: &'a str, focused: bool, theme: &Theme) -> Block<'a> {
         .title(format!(" {} ", title))
         .borders(Borders::ALL)
         .border_type(theme.border_type)
-        .border_style(if focused { theme.border_focused } else { theme.border })
+        .border_style(if focused {
+            theme.border_focused
+        } else {
+            theme.border
+        })
 }
 
 /// Render a loading placeholder

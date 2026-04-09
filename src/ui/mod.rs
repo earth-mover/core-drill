@@ -28,7 +28,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     if app.bottom_visible {
         constraints.push(Constraint::Min(10)); // main area (sidebar + detail)
-        constraints.push(Constraint::Length(1));  // spacer before bottom panel
+        constraints.push(Constraint::Length(1)); // spacer before bottom panel
         constraints.push(Constraint::Length(10)); // bottom panel
     } else {
         constraints.push(Constraint::Min(10)); // main area takes all space
@@ -87,24 +87,20 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
         _ => "",
     };
 
-    // Format a clean display name for the status bar
-    let display_url = if let Some(al_parts) = app.repo_url.strip_prefix("al:") {
-        let parts: Vec<&str> = al_parts.splitn(4, '|').collect();
-        let org_repo = parts.first().unwrap_or(&"?");
-        if let Some(bucket) = parts.get(1) {
-            format!("{org_repo}  ({bucket})")
-        } else {
-            org_repo.to_string()
-        }
-    } else {
-        app.repo_url.clone()
-    };
+    let display_url = app.repo_info.display_short();
 
     let line = Line::from(vec![
         Span::styled(" ", app.theme.text),
         Span::styled(display_url, app.theme.branch),
         Span::styled("  ", app.theme.text_dim),
-        Span::styled(status, if status == "ready" { app.theme.status_ok } else { app.theme.loading }),
+        Span::styled(
+            status,
+            if status == "ready" {
+                app.theme.status_ok
+            } else {
+                app.theme.loading
+            },
+        ),
     ]);
     frame.render_widget(Paragraph::new(line), area);
 }
@@ -127,7 +123,7 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // branch selector
-            Constraint::Min(1),   // tree
+            Constraint::Min(1),    // tree
         ])
         .split(inner);
 
@@ -155,9 +151,39 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
             frame.render_widget(theme::error_widget(msg, &app.theme), chunks[1]);
         }
         LoadState::Loaded(nodes) => {
+            // When searching the tree, compute visible paths (matches + ancestors)
+            let visible_paths: Option<std::collections::HashSet<String>> = app
+                .search
+                .as_ref()
+                .filter(|s| s.target == crate::search::SearchTarget::Tree && !s.query.is_empty())
+                .map(|search| {
+                    let candidates = crate::search::tree_candidates(&app.store);
+                    let mut visible = std::collections::HashSet::new();
+                    for &idx in &search.matches {
+                        if let Some(path) = candidates.get(idx) {
+                            // Add this path and all ancestor paths
+                            let mut p = path.as_str();
+                            visible.insert(p.to_string());
+                            while let Some(slash) = p.rfind('/') {
+                                if slash == 0 {
+                                    break;
+                                }
+                                p = &p[..slash];
+                                visible.insert(p.to_string());
+                            }
+                        }
+                    }
+                    visible
+                });
+
             let tree_items: Vec<tui_tree_widget::TreeItem<String>> = nodes
                 .iter()
-                .map(|node| build_tree_item(node, &app.store, 0))
+                .filter(|node| {
+                    visible_paths
+                        .as_ref()
+                        .is_none_or(|vp| vp.contains(&node.path))
+                })
+                .map(|node| build_tree_item(node, &app.store, 0, visible_paths.as_ref()))
                 .collect();
 
             let tree = tui_tree_widget::Tree::new(&tree_items)
@@ -185,10 +211,12 @@ const MAX_TREE_DEPTH: usize = 64;
 
 /// Build a TreeItem from a store TreeNode, recursively including cached children.
 /// `depth` tracks recursion depth to prevent stack overflow from circular references.
+/// `visible` optionally filters which nodes to include (for search).
 fn build_tree_item<'a>(
     node: &crate::store::TreeNode,
     store: &crate::store::DataStore,
     depth: usize,
+    visible: Option<&std::collections::HashSet<String>>,
 ) -> tui_tree_widget::TreeItem<'a, String> {
     let label = match &node.node_type {
         TreeNodeType::Group => node.name.clone(),
@@ -206,28 +234,24 @@ fn build_tree_item<'a>(
     match &node.node_type {
         TreeNodeType::Group => {
             // Safety: stop recursing if we've gone too deep
-            let children: Vec<tui_tree_widget::TreeItem<String>> =
-                if depth >= MAX_TREE_DEPTH {
-                    vec![]
-                } else if let Some(LoadState::Loaded(child_nodes)) =
-                    store.node_children.get(&node.path)
-                {
-                    child_nodes
-                        .iter()
-                        // Skip any child whose path matches this node (circular ref guard)
-                        .filter(|child| child.path != node.path)
-                        .map(|child| build_tree_item(child, store, depth + 1))
-                        .collect()
-                } else {
-                    // No children loaded yet — show as expandable but empty
-                    vec![]
-                };
+            let children: Vec<tui_tree_widget::TreeItem<String>> = if depth >= MAX_TREE_DEPTH {
+                vec![]
+            } else if let Some(LoadState::Loaded(child_nodes)) = store.node_children.get(&node.path)
+            {
+                child_nodes
+                    .iter()
+                    .filter(|child| child.path != node.path)
+                    .filter(|child| visible.is_none_or(|vp| vp.contains(&child.path)))
+                    .map(|child| build_tree_item(child, store, depth + 1, visible))
+                    .collect()
+            } else {
+                // No children loaded yet — show as expandable but empty
+                vec![]
+            };
             tui_tree_widget::TreeItem::new(node.path.clone(), label, children)
                 .expect("unique child identifiers")
         }
-        TreeNodeType::Array(_) => {
-            tui_tree_widget::TreeItem::new_leaf(node.path.clone(), label)
-        }
+        TreeNodeType::Array(_) => tui_tree_widget::TreeItem::new_leaf(node.path.clone(), label),
     }
 }
 
@@ -267,7 +291,13 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         DetailMode::Repo => 1,
     };
     let content_area = match render_tabbed_panel(
-        "[2] Detail", &["Node", "Repo"], active_tab, focused, &app.theme, frame, area,
+        "[2] Detail",
+        &["Node", "Repo"],
+        active_tab,
+        focused,
+        &app.theme,
+        frame,
+        area,
     ) {
         Some(area) => area,
         None => return,
@@ -288,23 +318,25 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
 
     // Node mode below — show snapshot detail when VC panel is on Snapshots tab,
     // UNLESS a tree node is actively being inspected (sidebar focused AND something selected)
-    let tree_node_selected = app.focused_pane == Pane::Sidebar
-        && !app.tree_state.selected().is_empty();
+    let tree_node_selected =
+        app.focused_pane == Pane::Sidebar && !app.tree_state.selected().is_empty();
 
-    if !tree_node_selected && app.bottom_tab == BottomTab::Snapshots
+    if !tree_node_selected
+        && app.bottom_tab == BottomTab::Snapshots
         && let Some(sid) = app.selected_snapshot_id()
-            && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid)) {
-                let inner_width = content_area.width;
-                let text = render_snapshot_diff_detail(app, &sid, inner_width);
-                let scroll = clamped_scroll(app.detail_scroll, text.len(), content_area);
-                frame.render_widget(
-                    Paragraph::new(text)
-                        .wrap(Wrap { trim: false })
-                        .scroll((scroll, 0)),
-                    content_area,
-                );
-                return;
-            }
+        && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid))
+    {
+        let inner_width = content_area.width;
+        let text = render_snapshot_diff_detail(app, &sid, inner_width);
+        let scroll = clamped_scroll(app.detail_scroll, text.len(), content_area);
+        frame.render_widget(
+            Paragraph::new(text)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll, 0)),
+            content_area,
+        );
+        return;
+    }
 
     // Check what's selected in the tree
     let selected = app.tree_state.selected();
@@ -313,30 +345,36 @@ fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     // For array nodes: split into header + shape (top), canvas viz (middle), storage + rest (bottom)
     if let Some(path) = selected_path
         && let Some(node) = find_node_by_path(&app.store, path)
-            && let TreeNodeType::Array(summary) = &node.node_type {
-                let inner_width = content_area.width;
-                let snapshot_id = app.selected_snapshot_id()
-                    .or_else(|| app.get_branch_tip_snapshot_id());
-                let mut text = render_array_detail_header(app, node, summary, inner_width);
-                text.extend(render_array_detail_storage(app, node.path.as_str(), snapshot_id.as_deref(), summary, inner_width));
-                let scroll = clamped_scroll(app.detail_scroll, text.len(), content_area);
-                frame.render_widget(
-                    Paragraph::new(text)
-                        .wrap(Wrap { trim: false })
-                        .scroll((scroll, 0)),
-                    content_area,
-                );
-                return;
-            }
+        && let TreeNodeType::Array(summary) = &node.node_type
+    {
+        let inner_width = content_area.width;
+        let snapshot_id = app
+            .selected_snapshot_id()
+            .or_else(|| app.get_branch_tip_snapshot_id());
+        let mut text = render_array_detail_header(app, node, summary, inner_width);
+        text.extend(render_array_detail_storage(
+            app,
+            node.path.as_str(),
+            snapshot_id.as_deref(),
+            summary,
+            inner_width,
+        ));
+        let scroll = clamped_scroll(app.detail_scroll, text.len(), content_area);
+        frame.render_widget(
+            Paragraph::new(text)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll, 0)),
+            content_area,
+        );
+        return;
+    }
 
     // Non-array nodes: groups, repo overview
     let text = if let Some(path) = selected_path {
         if let Some(node) = find_node_by_path(&app.store, path) {
             match &node.node_type {
                 TreeNodeType::Array(_) => unreachable!(),
-                TreeNodeType::Group => {
-                    render_group_detail(app, node)
-                }
+                TreeNodeType::Group => render_group_detail(app, node),
             }
         } else {
             render_repo_overview(app)
@@ -441,7 +479,11 @@ fn render_tabbed_panel(
         .title(format!(" {title} "))
         .borders(Borders::ALL)
         .border_type(theme.border_type)
-        .border_style(if focused { theme.border_focused } else { theme.border });
+        .border_style(if focused {
+            theme.border_focused
+        } else {
+            theme.border
+        });
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -454,7 +496,7 @@ fn render_tabbed_panel(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // tab bar
-            Constraint::Min(1),   // content
+            Constraint::Min(1),    // content
         ])
         .split(inner);
 
@@ -482,11 +524,19 @@ fn section_header(label: &str) -> Line<'static> {
     let prefix = format!("  ─── {label} ");
     let remaining = 36usize.saturating_sub(prefix.chars().count());
     let line = format!("{prefix}{}", "─".repeat(remaining));
-    Line::from(Span::styled(line, Style::default().fg(Color::Rgb(120, 120, 120))))
+    Line::from(Span::styled(
+        line,
+        Style::default().fg(Color::Rgb(120, 120, 120)),
+    ))
 }
 
 /// Render the header + Shape & Layout section for an array node (shown above the canvas viz).
-fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
+fn render_array_detail_header<'a>(
+    app: &'a App,
+    node: &crate::store::TreeNode,
+    summary: &crate::store::types::ArraySummary,
+    max_width: u16,
+) -> Vec<Line<'a>> {
     let shape_str = summary
         .shape
         .iter()
@@ -501,14 +551,32 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
         .unwrap_or_else(|| "\u{2014}".to_string());
 
     let mut lines = vec![Line::from("")];
-    lines.extend(labeled_lines("  Array: ", node.name.clone(), app.theme.text_dim, app.theme.text_bold, max_width));
-    lines.extend(labeled_lines("  Path:  ", node.path.clone(), app.theme.text_dim, app.theme.text, max_width));
+    lines.extend(labeled_lines(
+        "  Array: ",
+        node.name.clone(),
+        app.theme.text_dim,
+        app.theme.text_bold,
+        max_width,
+    ));
+    lines.extend(labeled_lines(
+        "  Path:  ",
+        node.path.clone(),
+        app.theme.text_dim,
+        app.theme.text,
+        max_width,
+    ));
 
     // ─── Shape & Layout ──────────────────
     lines.push(Line::from(""));
     lines.push(section_header("Shape & Layout"));
 
-    lines.extend(labeled_lines("  Shape:         ", shape_str.clone(), app.theme.text_dim, app.theme.text, max_width));
+    lines.extend(labeled_lines(
+        "  Shape:         ",
+        shape_str.clone(),
+        app.theme.text_dim,
+        app.theme.text,
+        max_width,
+    ));
 
     // Parse metadata early so we can use chunk_shape for the layout section
     let meta = if !summary.zarr_metadata.is_empty() {
@@ -524,17 +592,42 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
             .map(|d| d.to_string())
             .collect::<Vec<_>>()
             .join(" \u{00d7} ");
-        lines.extend(labeled_lines("  Chunk shape:   ", chunk_str, app.theme.text_dim, app.theme.text, max_width));
-        lines.extend(labeled_lines("  Data type:     ", meta.data_type.clone(), app.theme.text_dim, app.theme.text, max_width));
+        lines.extend(labeled_lines(
+            "  Chunk shape:   ",
+            chunk_str,
+            app.theme.text_dim,
+            app.theme.text,
+            max_width,
+        ));
+        lines.extend(labeled_lines(
+            "  Data type:     ",
+            meta.data_type.clone(),
+            app.theme.text_dim,
+            app.theme.text,
+            max_width,
+        ));
 
         // Show v2 dtype if different from data_type
         if let Some(ref v2dt) = meta.v2_dtype
-            && v2dt != &meta.data_type {
-                lines.extend(labeled_lines("  Dtype (v2):    ", v2dt.clone(), app.theme.text_dim, app.theme.text, max_width));
-            }
+            && v2dt != &meta.data_type
+        {
+            lines.extend(labeled_lines(
+                "  Dtype (v2):    ",
+                v2dt.clone(),
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
+        }
     }
 
-    lines.extend(labeled_lines("  Dimensions:    ", dim_names, app.theme.text_dim, app.theme.text, max_width));
+    lines.extend(labeled_lines(
+        "  Dimensions:    ",
+        dim_names,
+        app.theme.text_dim,
+        app.theme.text,
+        max_width,
+    ));
 
     // Chunks per dimension: shape[i] / chunk_shape[i]
     if let Some(ref meta) = meta {
@@ -554,12 +647,24 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
                     }
                 })
                 .collect();
-            lines.extend(labeled_lines("  Chunks/dim:    ", chunks_per_dim.join(" \u{00d7} "), app.theme.text_dim, app.theme.text, max_width));
+            lines.extend(labeled_lines(
+                "  Chunks/dim:    ",
+                chunks_per_dim.join(" \u{00d7} "),
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
         }
 
         // Memory layout order (v2)
         if let Some(ref order) = meta.order {
-            lines.extend(labeled_lines("  Order:         ", order.clone(), app.theme.text_dim, app.theme.text, max_width));
+            lines.extend(labeled_lines(
+                "  Order:         ",
+                order.clone(),
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
         }
     }
 
@@ -573,7 +678,10 @@ fn render_array_detail_header<'a>(app: &'a App, node: &crate::store::TreeNode, s
 
 /// Compute total grid positions = ∏ ceil(shape[i] / chunk_shape[i]).
 /// Returns None if shapes are mismatched, empty, or any chunk dimension is zero.
-fn compute_grid_chunks(summary: &crate::store::types::ArraySummary, meta: &format::ZarrMetadata) -> Option<u64> {
+fn compute_grid_chunks(
+    summary: &crate::store::types::ArraySummary,
+    meta: &format::ZarrMetadata,
+) -> Option<u64> {
     if summary.shape.is_empty() || meta.chunk_shape.is_empty() {
         return None;
     }
@@ -585,7 +693,9 @@ fn compute_grid_chunks(summary: &crate::store::types::ArraySummary, meta: &forma
         .iter()
         .zip(meta.chunk_shape.iter())
         .try_fold(1u64, |acc, (&s, &c)| {
-            if c == 0 { return None; }
+            if c == 0 {
+                return None;
+            }
             acc.checked_mul(s.div_ceil(c))
         })
 }
@@ -597,7 +707,13 @@ fn fmt_initialized(written: u64, grid: u64) -> String {
 }
 
 /// Render the Storage + Attributes + Raw Metadata sections for an array node (shown after the canvas viz).
-fn render_array_detail_storage<'a>(app: &'a App, path: &str, snapshot_id: Option<&str>, summary: &crate::store::types::ArraySummary, max_width: u16) -> Vec<Line<'a>> {
+fn render_array_detail_storage<'a>(
+    app: &'a App,
+    path: &str,
+    snapshot_id: Option<&str>,
+    summary: &crate::store::types::ArraySummary,
+    max_width: u16,
+) -> Vec<Line<'a>> {
     let meta = if !summary.zarr_metadata.is_empty() {
         format::ZarrMetadata::parse(&summary.zarr_metadata)
     } else {
@@ -616,47 +732,102 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, snapshot_id: Option
     if let Some(ref meta) = meta {
         let codec_display = meta.codec_chain_display();
         if !codec_display.is_empty() {
-            lines.extend(labeled_lines("  Codecs:        ", codec_display, app.theme.text_dim, app.theme.text, max_width));
+            lines.extend(labeled_lines(
+                "  Codecs:        ",
+                codec_display,
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
         }
 
         // v2 compressor (shown separately if codecs were also present)
         if let Some(ref comp) = meta.compressor
-            && !meta.codecs.is_empty() {
-                // Already shown via codec_chain_display, but if both exist show compressor
-                // separately for clarity
-                lines.extend(labeled_lines("  Compressor:    ", comp.clone(), app.theme.text_dim, app.theme.text, max_width));
-            }
+            && !meta.codecs.is_empty()
+        {
+            // Already shown via codec_chain_display, but if both exist show compressor
+            // separately for clarity
+            lines.extend(labeled_lines(
+                "  Compressor:    ",
+                comp.clone(),
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
+        }
 
         // v2 filters
         if !meta.filters.is_empty() {
-            lines.extend(labeled_lines("  Filters:       ", meta.filters.join(", "), app.theme.text_dim, app.theme.text, max_width));
+            lines.extend(labeled_lines(
+                "  Filters:       ",
+                meta.filters.join(", "),
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
         }
 
-        lines.extend(labeled_lines("  Fill value:    ", meta.fill_value.clone(), app.theme.text_dim, app.theme.text, max_width));
-        lines.extend(labeled_lines("  Zarr format:   ", meta.zarr_format.to_string(), app.theme.text_dim, app.theme.text, max_width));
+        lines.extend(labeled_lines(
+            "  Fill value:    ",
+            meta.fill_value.clone(),
+            app.theme.text_dim,
+            app.theme.text,
+            max_width,
+        ));
+        lines.extend(labeled_lines(
+            "  Zarr format:   ",
+            meta.zarr_format.to_string(),
+            app.theme.text_dim,
+            app.theme.text,
+            max_width,
+        ));
 
         if meta.dimension_separator != "/" {
-            lines.extend(labeled_lines("  Dim separator: ", meta.dimension_separator.clone(), app.theme.text_dim, app.theme.text, max_width));
+            lines.extend(labeled_lines(
+                "  Dim separator: ",
+                meta.dimension_separator.clone(),
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
         }
 
         // Storage transformers
         if !meta.storage_transformers.is_empty() {
-            lines.extend(labeled_lines("  Transformers:  ", meta.storage_transformers.join(", "), app.theme.text_dim, app.theme.text, max_width));
+            lines.extend(labeled_lines(
+                "  Transformers:  ",
+                meta.storage_transformers.join(", "),
+                app.theme.text_dim,
+                app.theme.text,
+                max_width,
+            ));
         }
     }
 
-    lines.extend(labeled_lines("  Manifests:     ", summary.manifest_count.to_string(), app.theme.text_dim, app.theme.text, max_width));
+    lines.extend(labeled_lines(
+        "  Manifests:     ",
+        summary.manifest_count.to_string(),
+        app.theme.text_dim,
+        app.theme.text,
+        max_width,
+    ));
 
     // ─── Chunk Types ─────────────────────
     let chunk_stats_key = snapshot_id.map(|sid| (sid.to_string(), path.to_string()));
-    match chunk_stats_key.as_ref().and_then(|k| app.store.chunk_stats.get(k)) {
+    match chunk_stats_key
+        .as_ref()
+        .and_then(|k| app.store.chunk_stats.get(k))
+    {
         None | Some(LoadState::NotRequested) => {
             // No full stats yet — show snapshot-derived total if available
             if let Some(total) = summary.total_chunks {
                 lines.push(Line::from(""));
                 lines.push(section_header("Chunk Types"));
                 if total == 0 {
-                    lines.push(Line::from(Span::styled("  (no chunks written)", app.theme.text_dim)));
+                    lines.push(Line::from(Span::styled(
+                        "  (no chunks written)",
+                        app.theme.text_dim,
+                    )));
                 } else {
                     lines.extend(labeled_lines(
                         "  Total:         ",
@@ -705,7 +876,10 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, snapshot_id: Option
         Some(LoadState::Error(e)) => {
             lines.push(Line::from(""));
             lines.push(section_header("Chunk Types"));
-            lines.push(Line::from(Span::styled(format!("  Error: {e}"), app.theme.error)));
+            lines.push(Line::from(Span::styled(
+                format!("  Error: {e}"),
+                app.theme.error,
+            )));
         }
         Some(LoadState::Loaded(stats)) => {
             lines.push(Line::from(""));
@@ -714,7 +888,8 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, snapshot_id: Option
             let total = stats.total_chunks.max(1);
 
             // Build the total line — include breakdown summary if all types present
-            let has_breakdown = stats.native_count > 0 || stats.inline_count > 0 || stats.virtual_count > 0;
+            let has_breakdown =
+                stats.native_count > 0 || stats.inline_count > 0 || stats.virtual_count > 0;
             if has_breakdown {
                 let mut parts = Vec::new();
                 if stats.native_count > 0 {
@@ -734,23 +909,47 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, snapshot_id: Option
                     max_width,
                 ));
             } else {
-                lines.extend(labeled_lines("  Total:         ", stats.total_chunks.to_string(), app.theme.text_dim, app.theme.text, max_width));
+                lines.extend(labeled_lines(
+                    "  Total:         ",
+                    stats.total_chunks.to_string(),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
             }
 
             if stats.native_count > 0 {
                 let pct = stats.native_count * 100 / total;
                 let size_str = humansize::format_size(stats.native_total_bytes, humansize::BINARY);
-                lines.extend(labeled_lines("  Native:        ", format!("{} ({pct}%)   {size_str}", stats.native_count), app.theme.text_dim, app.theme.text, max_width));
+                lines.extend(labeled_lines(
+                    "  Native:        ",
+                    format!("{} ({pct}%)   {size_str}", stats.native_count),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
             }
             if stats.inline_count > 0 {
                 let pct = stats.inline_count * 100 / total;
                 let size_str = humansize::format_size(stats.inline_total_bytes, humansize::BINARY);
-                lines.extend(labeled_lines("  Inline:        ", format!("{} ({pct}%)   {size_str}", stats.inline_count), app.theme.text_dim, app.theme.text, max_width));
+                lines.extend(labeled_lines(
+                    "  Inline:        ",
+                    format!("{} ({pct}%)   {size_str}", stats.inline_count),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
             }
             if stats.virtual_count > 0 {
                 let pct = stats.virtual_count * 100 / total;
                 let size_str = humansize::format_size(stats.virtual_total_bytes, humansize::BINARY);
-                lines.extend(labeled_lines("  Virtual:       ", format!("{} ({pct}%)   {size_str}", stats.virtual_count), app.theme.text_dim, app.theme.text, max_width));
+                lines.extend(labeled_lines(
+                    "  Virtual:       ",
+                    format!("{} ({pct}%)   {size_str}", stats.virtual_count),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
                 if !stats.virtual_prefixes.is_empty() {
                     lines.push(Line::from(Span::styled("    Sources:", app.theme.text_dim)));
                     for (prefix, count) in &stats.virtual_prefixes {
@@ -762,69 +961,74 @@ fn render_array_detail_storage<'a>(app: &'a App, path: &str, snapshot_id: Option
                 }
             }
             // Initialized fraction (written / total grid positions)
-            if stats.total_chunks > 0 {
-                if let Some(grid) = grid_chunks {
-                    lines.extend(labeled_lines(
-                        "  Initialized:   ",
-                        fmt_initialized(stats.total_chunks as u64, grid),
-                        app.theme.text_dim,
-                        app.theme.text,
-                        max_width,
-                    ));
-                }
+            if stats.total_chunks > 0
+                && let Some(grid) = grid_chunks
+            {
+                lines.extend(labeled_lines(
+                    "  Initialized:   ",
+                    fmt_initialized(stats.total_chunks as u64, grid),
+                    app.theme.text_dim,
+                    app.theme.text,
+                    max_width,
+                ));
             }
 
             // If all zeros (empty array), show explicit zero
             if stats.total_chunks == 0 {
-                lines.push(Line::from(Span::styled("  (no chunks written)", app.theme.text_dim)));
+                lines.push(Line::from(Span::styled(
+                    "  (no chunks written)",
+                    app.theme.text_dim,
+                )));
             }
         }
     }
 
     // ─── Attributes ──────────────────────
     if let Some(ref meta) = meta
-        && !meta.attributes.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(section_header("Attributes"));
-            // Build a JSON object from the attributes and render with json_view
-            let attr_obj: serde_json::Value = serde_json::Value::Object(
-                meta.attributes
-                    .iter()
-                    .map(|(k, v)| {
-                        // Try to parse the value back to JSON; if it fails, keep as string
-                        let json_val = serde_json::from_str(v)
-                            .unwrap_or_else(|_| serde_json::Value::String(v.clone()));
-                        (k.clone(), json_val)
-                    })
-                    .collect(),
-            );
-            if let Ok(attr_json) = serde_json::to_string(&attr_obj) {
-                let json_lines = json_view::render_json(&attr_json, &app.theme, 10, 50);
-                lines.extend(json_lines);
-            }
+        && !meta.attributes.is_empty()
+    {
+        lines.push(Line::from(""));
+        lines.push(section_header("Attributes"));
+        // Build a JSON object from the attributes and render with json_view
+        let attr_obj: serde_json::Value = serde_json::Value::Object(
+            meta.attributes
+                .iter()
+                .map(|(k, v)| {
+                    // Try to parse the value back to JSON; if it fails, keep as string
+                    let json_val = serde_json::from_str(v)
+                        .unwrap_or_else(|_| serde_json::Value::String(v.clone()));
+                    (k.clone(), json_val)
+                })
+                .collect(),
+        );
+        if let Ok(attr_json) = serde_json::to_string(&attr_obj) {
+            let json_lines = json_view::render_json(&attr_json, &app.theme, 10, 50);
+            lines.extend(json_lines);
         }
+    }
 
     // ─── Raw Metadata ────────────────────
     if let Some(ref meta) = meta
-        && !meta.extra_fields.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(section_header("Raw Metadata"));
-            // Build a JSON object from extra fields and render with json_view
-            let extra_obj: serde_json::Value = serde_json::Value::Object(
-                meta.extra_fields
-                    .iter()
-                    .map(|(k, v)| {
-                        let json_val = serde_json::from_str(v)
-                            .unwrap_or_else(|_| serde_json::Value::String(v.clone()));
-                        (k.clone(), json_val)
-                    })
-                    .collect(),
-            );
-            if let Ok(extra_json) = serde_json::to_string(&extra_obj) {
-                let json_lines = json_view::render_json(&extra_json, &app.theme, 10, 50);
-                lines.extend(json_lines);
-            }
+        && !meta.extra_fields.is_empty()
+    {
+        lines.push(Line::from(""));
+        lines.push(section_header("Raw Metadata"));
+        // Build a JSON object from extra fields and render with json_view
+        let extra_obj: serde_json::Value = serde_json::Value::Object(
+            meta.extra_fields
+                .iter()
+                .map(|(k, v)| {
+                    let json_val = serde_json::from_str(v)
+                        .unwrap_or_else(|_| serde_json::Value::String(v.clone()));
+                    (k.clone(), json_val)
+                })
+                .collect(),
+        );
+        if let Ok(extra_json) = serde_json::to_string(&extra_obj) {
+            let json_lines = json_view::render_json(&extra_json, &app.theme, 10, 50);
+            lines.extend(json_lines);
         }
+    }
 
     // Fallback: if metadata was present but couldn't be parsed, show with json_view
     if !summary.zarr_metadata.is_empty() && meta.is_none() {
@@ -848,8 +1052,7 @@ fn render_group_detail<'a>(app: &'a App, node: &crate::store::TreeNode) -> Vec<L
         ]),
     ];
 
-    if let Some(crate::store::LoadState::Loaded(children)) =
-        app.store.node_children.get(&node.path)
+    if let Some(crate::store::LoadState::Loaded(children)) = app.store.node_children.get(&node.path)
     {
         lines.push(Line::from(vec![
             Span::styled("  Children:  ", app.theme.text_dim),
@@ -894,44 +1097,49 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
     lines.push(Line::from(""));
     lines.push(section_header("Repository"));
 
-    // Parse Arraylake metadata from label: "al:org/repo|bucket|platform|region"
-    if let Some(al_parts) = app.repo_url.strip_prefix("al:") {
-        let parts: Vec<&str> = al_parts.splitn(4, '|').collect();
-        if let Some(org_repo) = parts.first() {
-            if let Some((org, repo_name)) = org_repo.split_once('/') {
+    match &app.repo_info {
+        crate::app::RepoIdentity::Arraylake {
+            org,
+            repo,
+            bucket,
+            platform,
+            region,
+        } => {
+            lines.push(Line::from(vec![
+                Span::styled("  Organization:  ", app.theme.text_dim),
+                Span::styled(org.clone(), app.theme.branch),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Repo name:     ", app.theme.text_dim),
+                Span::styled(repo.clone(), app.theme.branch),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Bucket:        ", app.theme.text_dim),
+                Span::styled(bucket.clone(), app.theme.text),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Platform:      ", app.theme.text_dim),
+                Span::styled(platform.clone(), app.theme.text),
+            ]));
+            if region != "?" {
                 lines.push(Line::from(vec![
-                    Span::styled("  Organization:  ", app.theme.text_dim),
-                    Span::styled(org.to_string(), app.theme.branch),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::styled("  Repo name:     ", app.theme.text_dim),
-                    Span::styled(repo_name.to_string(), app.theme.branch),
+                    Span::styled("  Region:        ", app.theme.text_dim),
+                    Span::styled(region.clone(), app.theme.text),
                 ]));
             }
         }
-        if let Some(bucket) = parts.get(1) {
+        crate::app::RepoIdentity::Local { path } => {
             lines.push(Line::from(vec![
-                Span::styled("  Bucket:        ", app.theme.text_dim),
-                Span::styled(bucket.to_string(), app.theme.text),
+                Span::styled("  Location:      ", app.theme.text_dim),
+                Span::styled(path.clone(), app.theme.branch),
             ]));
         }
-        if let Some(platform) = parts.get(2) {
+        crate::app::RepoIdentity::S3 { url } => {
             lines.push(Line::from(vec![
-                Span::styled("  Platform:      ", app.theme.text_dim),
-                Span::styled(platform.to_string(), app.theme.text),
+                Span::styled("  Location:      ", app.theme.text_dim),
+                Span::styled(url.clone(), app.theme.branch),
             ]));
         }
-        if let Some(region) = parts.get(3).filter(|r| *r != &"?") {
-            lines.push(Line::from(vec![
-                Span::styled("  Region:        ", app.theme.text_dim),
-                Span::styled(region.to_string(), app.theme.text),
-            ]));
-        }
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled("  Location:      ", app.theme.text_dim),
-            Span::styled(app.repo_url.clone(), app.theme.branch),
-        ]));
     }
 
     lines.push(Line::from(vec![
@@ -1023,14 +1231,19 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
             }
 
             if stats_loaded > 0 {
-                let total_known = known_native + known_inline + known_virtual;
                 let total_bytes = native_bytes + inline_bytes + virtual_bytes;
                 let size_str = humansize::format_size(total_bytes, humansize::BINARY);
 
                 let mut parts = Vec::new();
-                if known_native > 0 { parts.push(format!("{known_native} native")); }
-                if known_inline > 0 { parts.push(format!("{known_inline} inline")); }
-                if known_virtual > 0 { parts.push(format!("{known_virtual} virtual")); }
+                if known_native > 0 {
+                    parts.push(format!("{known_native} native"));
+                }
+                if known_inline > 0 {
+                    parts.push(format!("{known_inline} inline"));
+                }
+                if known_virtual > 0 {
+                    parts.push(format!("{known_virtual} virtual"));
+                }
 
                 let suffix = if stats_loaded < total_arrays {
                     format!("  ({stats_loaded}/{total_arrays} arrays scanned)")
@@ -1076,7 +1289,11 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
             for flag in &config.feature_flags {
                 let status = if flag.enabled { "on" } else { "off" };
                 let explicit = if flag.explicit { "" } else { " (default)" };
-                let style = if flag.enabled { app.theme.status_ok } else { app.theme.text_dim };
+                let style = if flag.enabled {
+                    app.theme.status_ok
+                } else {
+                    app.theme.text_dim
+                };
                 lines.push(Line::from(vec![
                     Span::styled(format!("  {}: ", flag.name), app.theme.text_dim),
                     Span::styled(format!("{status}{explicit}"), style),
@@ -1094,7 +1311,11 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
     lines
 }
 
-fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str, max_width: u16) -> Vec<Line<'a>> {
+fn render_snapshot_diff_detail<'a>(
+    app: &'a App,
+    snapshot_id: &str,
+    max_width: u16,
+) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
     // --- Snapshot header (from ancestry, always available instantly) ---
@@ -1125,10 +1346,16 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str, max_width: u
             .and_then(|s| s.as_loaded())
             .map(|entries| entries.len())
             .unwrap_or(0);
-        let position_n = app.store.ancestry
+        let position_n = app
+            .store
+            .ancestry
             .get(&app.current_branch)
             .and_then(|s| s.as_loaded())
-            .and_then(|entries| entries.iter().position(|e| Some(&e.id) == app.current_snapshot.as_ref()))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .position(|e| Some(&e.id) == app.current_snapshot.as_ref())
+            })
             .map(|i| i + 1)
             .unwrap_or(1);
         let position_str = format!("    ({position_n} of {ancestry_len})");
@@ -1206,8 +1433,7 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str, max_width: u
                 let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();
                 let modified_count = diff.modified_arrays.len() + diff.modified_groups.len();
 
-                let total_chunks_changed: usize =
-                    diff.chunk_changes.iter().map(|(_, n)| n).sum();
+                let total_chunks_changed: usize = diff.chunk_changes.iter().map(|(_, n)| n).sum();
                 let mut summary_spans = vec![
                     Span::styled("  ", app.theme.text_dim),
                     Span::styled(format!("{added_count} added"), app.theme.added),
@@ -1326,7 +1552,10 @@ fn render_snapshot_diff_detail<'a>(app: &'a App, snapshot_id: &str, max_width: u
                                     } else if i > 0 && v == 0 && s == 0 {
                                         ("  (all inline)".to_string(), vec![])
                                     } else {
-                                        (format!("  (virtual: {v}, stored: {s}, inline: {i})"), vec![])
+                                        (
+                                            format!("  (virtual: {v}, stored: {s}, inline: {i})"),
+                                            vec![],
+                                        )
                                     }
                                 }
                                 _ => (String::new(), vec![]),
@@ -1422,10 +1651,7 @@ fn render_grouped_paths<'a>(
             continue;
         }
 
-        lines.push(Line::from(Span::styled(
-            format!("    {parent}"),
-            style,
-        )));
+        lines.push(Line::from(Span::styled(format!("    {parent}"), style)));
 
         for leaf in leaves {
             if shown >= SHOW_ITEMS && total_items > MAX_ITEMS {
@@ -1458,7 +1684,13 @@ fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
         BottomTab::Tags => 2,
     };
     let content_area = match render_tabbed_panel(
-        "[3] Version Control", &["Snapshots", "Branches", "Tags"], active_tab, focused, &app.theme, frame, area,
+        "[3] Version Control",
+        &["Snapshots", "Branches", "Tags"],
+        active_tab,
+        focused,
+        &app.theme,
+        frame,
+        area,
     ) {
         Some(area) => area,
         None => return,
@@ -1471,7 +1703,7 @@ fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
     }
 }
 
-fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
+fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, _focused: bool) {
     let state = app
         .store
         .ancestry
@@ -1486,13 +1718,18 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
             frame.render_widget(theme::error_widget(msg, &app.theme), area);
         }
         LoadState::Loaded(entries) => {
-            let visible_start = app.bottom_offset();
-            let rows: Vec<Row> = entries
+            let (indices, search_cursor_idx) =
+                resolve_search_indices(app, entries.len(), crate::search::SearchTarget::Snapshots);
+
+            let rows: Vec<Row> = indices
                 .iter()
-                .enumerate()
-                .skip(visible_start)
+                .filter_map(|&i| entries.get(i).map(|e| (i, e)))
                 .map(|(i, entry)| {
-                    let is_selected = i == app.bottom_selected();
+                    let is_selected = if app.search.is_some() {
+                        search_cursor_idx == Some(i)
+                    } else {
+                        i == app.bottom_selected()
+                    };
                     let short_id = if entry.id.len() > 12 {
                         &entry.id[..12]
                     } else {
@@ -1519,17 +1756,17 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, focused: bool)
                 Constraint::Length(18),
                 Constraint::Min(20),
             ];
-            let table = Table::new(rows, widths)
-                .header(
-                    Row::new(vec!["Snapshot", "Time", "Message (Enter=diff)"])
-                        .style(app.theme.text_bold),
-                );
+            let table = Table::new(rows, widths).header(
+                Row::new(vec!["Snapshot", "Time", "Message (Enter=diff)"])
+                    .style(app.theme.text_bold),
+            );
             frame.render_widget(table, area);
         }
     }
 }
 
-/// Render a scrollable list with selection highlight. Shared by Branches and Tags tabs.
+/// Render a scrollable list with selection highlight and optional search filtering.
+/// Shared by Branches, Tags, and potentially Snapshots.
 fn render_scrollable_list<T, F>(
     items: &[T],
     label_fn: F,
@@ -1538,14 +1775,25 @@ fn render_scrollable_list<T, F>(
     focused: bool,
     frame: &mut Frame,
     area: Rect,
-) where F: Fn(&T) -> &str {
-    let visible_start = app.bottom_offset();
-    let list_items: Vec<ListItem> = items
+) where
+    F: Fn(&T) -> &str,
+{
+    let target = match app.bottom_tab {
+        BottomTab::Branches => crate::search::SearchTarget::Branches,
+        BottomTab::Tags => crate::search::SearchTarget::Tags,
+        BottomTab::Snapshots => crate::search::SearchTarget::Snapshots,
+    };
+    let (indices, search_cursor_idx) = resolve_search_indices(app, items.len(), target);
+
+    let list_items: Vec<ListItem> = indices
         .iter()
-        .enumerate()
-        .skip(visible_start)
+        .filter_map(|&i| items.get(i).map(|item| (i, item)))
         .map(|(i, item)| {
-            let is_selected = i == app.bottom_selected();
+            let is_selected = if app.search.is_some() {
+                search_cursor_idx == Some(i)
+            } else {
+                i == app.bottom_selected()
+            };
             let style = if is_selected && focused {
                 app.theme.selected
             } else if is_selected {
@@ -1568,7 +1816,15 @@ fn render_branch_list(app: &App, frame: &mut Frame, area: Rect, focused: bool) {
             frame.render_widget(theme::error_widget(msg, &app.theme), area);
         }
         LoadState::Loaded(branches) => {
-            render_scrollable_list(branches, |b| &b.name, app.theme.branch, app, focused, frame, area);
+            render_scrollable_list(
+                branches,
+                |b| &b.name,
+                app.theme.branch,
+                app,
+                focused,
+                frame,
+                area,
+            );
         }
     }
 }
@@ -1596,11 +1852,62 @@ fn render_tag_list(app: &App, frame: &mut Frame, area: Rect, _focused: bool) {
 
 // ─── Hint bar ────────────────────────────────────────────────
 
+/// Resolve search-filtered indices and cursor for a bottom-panel list.
+/// Returns (visible_indices, search_cursor_source_index).
+fn resolve_search_indices(
+    app: &App,
+    list_len: usize,
+    target: crate::search::SearchTarget,
+) -> (Vec<usize>, Option<usize>) {
+    let search_active = app
+        .search
+        .as_ref()
+        .is_some_and(|s| s.target == target && !s.query.is_empty());
+
+    let indices = if search_active {
+        app.search.as_ref().unwrap().matches.clone()
+    } else {
+        let start = app.bottom_offset();
+        (start..list_len).collect()
+    };
+
+    let cursor = if search_active {
+        app.search.as_ref().and_then(|s| s.selected_index())
+    } else {
+        None
+    };
+
+    (indices, cursor)
+}
+
 fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
+    // Search mode: show search bar instead of hints
+    if let Some(ref search) = app.search {
+        let match_info = if search.query.is_empty() {
+            String::new()
+        } else {
+            format!("  ({}/{})", search.cursor + 1, search.matches.len())
+        };
+        let line = Line::from(vec![
+            Span::styled(" /", app.theme.text_bold),
+            Span::styled(&search.query, app.theme.text),
+            Span::styled("▏", app.theme.text), // cursor
+            Span::styled(match_info, app.theme.text_dim),
+            Span::styled(
+                "  Enter:select  Esc:cancel  ↑↓:navigate",
+                app.theme.text_dim,
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+        return;
+    }
+
     let hints = match app.focused_pane {
-        Pane::Sidebar => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  d/u:detail-scroll  Enter:expand ",
-        Pane::Detail => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:scroll ",
-        Pane::Bottom => " q:quit  ?:help  t:toggle log  Ctrl+h/l:panes  j/k:navigate  d/u:detail-scroll  Tab:next tab  Shift+Tab:prev tab  Enter:select ",
+        Pane::Sidebar => " q:quit  ?:help  t:toggle log  /:search  j/k:navigate  Enter:expand ",
+        Pane::Detail => " q:quit  ?:help  t:toggle log  j/k:scroll  h/l:Node/Repo ",
+        Pane::Bottom => {
+            " q:quit  ?:help  t:toggle log  /:search  j/k:navigate  Tab:next tab  Enter:select "
+        }
     };
     frame.render_widget(
         Paragraph::new(Span::styled(hints, app.theme.text_dim)),

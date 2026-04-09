@@ -41,9 +41,13 @@ async fn create_storage(
 
         // CLI overrides > URL query params > icechunk defaults
         let config = S3Options {
-            region: overrides.region.clone()
+            region: overrides
+                .region
+                .clone()
                 .or_else(|| query_params.get("region").cloned()),
-            endpoint_url: overrides.endpoint_url.clone()
+            endpoint_url: overrides
+                .endpoint_url
+                .clone()
                 .or_else(|| query_params.get("endpoint_url").cloned()),
             anonymous: query_params
                 .get("anonymous")
@@ -70,11 +74,20 @@ async fn create_storage(
         let storage = new_s3_storage(config, bucket, prefix, credentials)?;
         Ok(storage)
     } else if path_or_url.starts_with("gs://") {
-        bail!("GCS storage support coming in Phase 2. Path: {}", path_or_url);
+        bail!(
+            "GCS storage support coming in Phase 2. Path: {}",
+            path_or_url
+        );
     } else if path_or_url.starts_with("az://") || path_or_url.starts_with("azure://") {
-        bail!("Azure storage support coming in Phase 2. Path: {}", path_or_url);
+        bail!(
+            "Azure storage support coming in Phase 2. Path: {}",
+            path_or_url
+        );
     } else if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
-        bail!("HTTP storage support coming in Phase 2. URL: {}", path_or_url);
+        bail!(
+            "HTTP storage support coming in Phase 2. URL: {}",
+            path_or_url
+        );
     } else {
         // Local filesystem
         let path = PathBuf::from(path_or_url)

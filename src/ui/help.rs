@@ -73,8 +73,6 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     ];
 
     let block = theme::panel("Help", true, &app.theme);
-    let help = Paragraph::new(help_text)
-        .block(block)
-        .style(t.text);
+    let help = Paragraph::new(help_text).block(block).style(t.text);
     frame.render_widget(help, area);
 }

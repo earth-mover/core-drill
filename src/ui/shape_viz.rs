@@ -9,8 +9,8 @@
 
 use ratatui::prelude::*;
 use ratatui::symbols::Marker;
-use ratatui::widgets::canvas::{Canvas, Context, Line as CanvasLine};
 use ratatui::widgets::Block;
+use ratatui::widgets::canvas::{Canvas, Context, Line as CanvasLine};
 
 // Brand palette colors — hardcoded for reliable canvas rendering.
 // Theme color extraction via .fg returns Option<Color> and palette variants
@@ -119,7 +119,10 @@ fn paint_1d(
     dim_names: &[String],
 ) {
     let nx = chunks_per_dim.first().copied().unwrap_or(1).min(20) as usize;
-    let cs = chunk_shape.first().copied().unwrap_or(shape.first().copied().unwrap_or(1));
+    let cs = chunk_shape
+        .first()
+        .copied()
+        .unwrap_or(shape.first().copied().unwrap_or(1));
     let total = shape.first().copied().unwrap_or(1);
 
     // Grid area: x in [10, 110], y centred around 30
@@ -152,7 +155,14 @@ fn paint_1d(
     }
 
     // Outer border — solid icechunk blue
-    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, OUTER_COLOR);
+    draw_rect_border(
+        ctx,
+        grid_left,
+        grid_bottom,
+        grid_right,
+        grid_top,
+        OUTER_COLOR,
+    );
 
     // Dimension name and size below
     let dim_label = dim_names.first().map(|s| s.as_str()).unwrap_or("dim0");
@@ -235,7 +245,14 @@ fn paint_2d(
     }
 
     // Outer border — solid icechunk blue
-    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, OUTER_COLOR);
+    draw_rect_border(
+        ctx,
+        grid_left,
+        grid_bottom,
+        grid_right,
+        grid_top,
+        OUTER_COLOR,
+    );
 
     // Bottom axis: dimension name + total size, and per-chunk sizes
     let dim_x_name = dim_names.get(1).map(|s| s.as_str()).unwrap_or("dim1");
@@ -264,7 +281,11 @@ fn paint_2d(
     // Right axis: dimension name + per-row sizes
     let dim_y_name = dim_names.first().map(|s| s.as_str()).unwrap_or("dim0");
     let right_label = format!("\u{2191} {dim_y_name}: {total_y}");
-    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(LABEL_COLOR));
+    ctx.print(
+        grid_right + 2.0,
+        grid_top - grid_h / 2.0,
+        right_label.fg(LABEL_COLOR),
+    );
 
     // Per-row chunk sizes on the right
     if ny <= 8 {
@@ -403,7 +424,14 @@ fn paint_3d_plus(
     }
 
     // Front face border — solid icechunk blue
-    draw_rect_border(ctx, grid_left, grid_bottom, grid_right, grid_top, OUTER_COLOR);
+    draw_rect_border(
+        ctx,
+        grid_left,
+        grid_bottom,
+        grid_right,
+        grid_top,
+        OUTER_COLOR,
+    );
 
     // Labels
     let dim_x = dim_names.get(2).map(|s| s.as_str()).unwrap_or("dim2");
@@ -418,7 +446,11 @@ fn paint_3d_plus(
     );
 
     let right_label = format!("\u{2191} {dim_y}: {total_y}");
-    ctx.print(grid_right + 2.0, grid_top - grid_h / 2.0, right_label.fg(LABEL_COLOR));
+    ctx.print(
+        grid_right + 2.0,
+        grid_top - grid_h / 2.0,
+        right_label.fg(LABEL_COLOR),
+    );
 
     // Depth label along the diagonal
     let depth_label = format!("{dim_z}: {total_depth} ({n_depth} chunks)");
@@ -453,7 +485,14 @@ fn paint_3d_plus(
 }
 
 /// Draw four lines forming the border of a rectangle.
-fn draw_rect_border(ctx: &mut Context<'_>, left: f64, bottom: f64, right: f64, top: f64, color: Color) {
+fn draw_rect_border(
+    ctx: &mut Context<'_>,
+    left: f64,
+    bottom: f64,
+    right: f64,
+    top: f64,
+    color: Color,
+) {
     // Bottom
     ctx.draw(&CanvasLine {
         x1: left,

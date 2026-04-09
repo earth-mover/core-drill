@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use icechunk::Repository;
 use rmcp::{
-    ServerHandler, tool, tool_handler, tool_router,
+    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    schemars,
+    schemars, tool, tool_handler, tool_router,
 };
 
 use crate::output;
@@ -68,7 +68,9 @@ fn default_ref() -> String {
 
 #[tool_router]
 impl CoreDrillServer {
-    #[tool(description = "Get repository overview: branches, tags, recent snapshots, and full node tree. Call this first to understand what's in the repo.")]
+    #[tool(
+        description = "Get repository overview: branches, tags, recent snapshots, and full node tree. Call this first to understand what's in the repo."
+    )]
     async fn info(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let repo = &self.repo;
         let branches = match output::fetch_branches(repo).await {
@@ -84,37 +86,71 @@ impl CoreDrillServer {
 
         out.push_str(&format!("## Branches ({})\n\n", branches.len()));
         for b in &branches {
-            let ts = b.tip_timestamp.map(|t| t.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+            let ts = b
+                .tip_timestamp
+                .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_default();
             let msg = b.tip_message.as_deref().unwrap_or("");
-            let msg_part = if msg.is_empty() { String::new() } else { format!(" — {msg}") };
-            out.push_str(&format!("- **{}** → `{}`  {}{}\n", b.name, output::truncate(&b.snapshot_id, 12), ts, msg_part));
+            let msg_part = if msg.is_empty() {
+                String::new()
+            } else {
+                format!(" — {msg}")
+            };
+            out.push_str(&format!(
+                "- **{}** → `{}`  {}{}\n",
+                b.name,
+                output::truncate(&b.snapshot_id, 12),
+                ts,
+                msg_part
+            ));
         }
 
         if !tags.is_empty() {
             out.push_str(&format!("\n## Tags ({})\n\n", tags.len()));
             for t in &tags {
-                out.push_str(&format!("- **{}** → `{}`\n", t.name, output::truncate(&t.snapshot_id, 12)));
+                out.push_str(&format!(
+                    "- **{}** → `{}`\n",
+                    t.name,
+                    output::truncate(&t.snapshot_id, 12)
+                ));
             }
         }
 
-        let main_branch = branches.iter().find(|b| b.name == "main").or(branches.first());
+        let main_branch = branches
+            .iter()
+            .find(|b| b.name == "main")
+            .or(branches.first());
         if let Some(branch) = main_branch {
             if let Ok(ancestry) = output::fetch_ancestry(repo, &branch.name).await {
                 out.push_str(&format!("\n## Snapshots ({})\n\n", ancestry.len()));
-                out.push_str("| # | Snapshot | Time | Message |\n|---|----------|------|---------|");
+                out.push_str(
+                    "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
+                );
                 for (i, e) in ancestry.iter().take(5).enumerate() {
                     let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
-                    out.push_str(&format!("\n| {} | `{}` | {} | {} |", i + 1, output::truncate(&e.id, 12), ts, e.message));
+                    out.push_str(&format!(
+                        "\n| {} | `{}` | {} | {} |",
+                        i + 1,
+                        output::truncate(&e.id, 12),
+                        ts,
+                        e.message
+                    ));
                 }
                 if ancestry.len() > 5 {
-                    out.push_str(&format!("\n\n*({} more — use `log` tool)*", ancestry.len() - 5));
+                    out.push_str(&format!(
+                        "\n\n*({} more — use `log` tool)*",
+                        ancestry.len() - 5
+                    ));
                 }
             }
 
             if let Ok(tree) = output::fetch_tree_flat(repo, &branch.name, None).await {
                 let groups = tree.iter().filter(|n| n.is_group()).count();
                 let arrays = tree.iter().filter(|n| n.is_array()).count();
-                out.push_str(&format!("\n\n## Tree (at {})\n\n{} groups, {} arrays\n\n", branch.name, groups, arrays));
+                out.push_str(&format!(
+                    "\n\n## Tree (at {})\n\n{} groups, {} arrays\n\n",
+                    branch.name, groups, arrays
+                ));
                 for node in &tree {
                     out.push_str(&output::fmt_tree_line(node, &tree));
                 }
@@ -132,7 +168,11 @@ impl CoreDrillServer {
                 let mut out = format!("# Branches ({})\n\n", branches.len());
                 out.push_str("| Branch | Snapshot |\n|--------|----------|\n");
                 for b in &branches {
-                    out.push_str(&format!("| {} | `{}` |\n", b.name, output::truncate(&b.snapshot_id, 12)));
+                    out.push_str(&format!(
+                        "| {} | `{}` |\n",
+                        b.name,
+                        output::truncate(&b.snapshot_id, 12)
+                    ));
                 }
                 out
             }
@@ -147,7 +187,11 @@ impl CoreDrillServer {
             Ok(tags) => {
                 let mut out = format!("# Tags ({})\n\n", tags.len());
                 for t in &tags {
-                    out.push_str(&format!("- **{}** → `{}`\n", t.name, output::truncate(&t.snapshot_id, 12)));
+                    out.push_str(&format!(
+                        "- **{}** → `{}`\n",
+                        t.name,
+                        output::truncate(&t.snapshot_id, 12)
+                    ));
                 }
                 out
             }
@@ -155,7 +199,9 @@ impl CoreDrillServer {
         }
     }
 
-    #[tool(description = "Show snapshot history (commit log). Use ref to specify a branch, tag, or snapshot ID.")]
+    #[tool(
+        description = "Show snapshot history (commit log). Use ref to specify a branch, tag, or snapshot ID."
+    )]
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
         match output::fetch_ancestry(&self.repo, &params.r#ref).await {
             Ok(entries) => {
@@ -165,10 +211,18 @@ impl CoreDrillServer {
                     entries
                 };
                 let mut out = format!("# Snapshot Log ({})\n\n", params.r#ref);
-                out.push_str("| # | Snapshot | Time | Message |\n|---|----------|------|---------|");
+                out.push_str(
+                    "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
+                );
                 for (i, e) in entries.iter().enumerate() {
                     let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
-                    out.push_str(&format!("\n| {} | `{}` | {} | {} |", i + 1, output::truncate(&e.id, 12), ts, e.message));
+                    out.push_str(&format!(
+                        "\n| {} | `{}` | {} | {} |",
+                        i + 1,
+                        output::truncate(&e.id, 12),
+                        ts,
+                        e.message
+                    ));
                 }
                 out.push_str(&format!("\n\n{} snapshot(s)", entries.len()));
                 out
@@ -177,7 +231,9 @@ impl CoreDrillServer {
         }
     }
 
-    #[tool(description = "Browse the node tree. Use path to inspect a specific array's detailed metadata (shape, dtype, chunks, codecs, fill value, initialization %).")]
+    #[tool(
+        description = "Browse the node tree. Use path to inspect a specific array's detailed metadata (shape, dtype, chunks, codecs, fill value, initialization %)."
+    )]
     async fn tree(&self, Parameters(params): Parameters<TreeParams>) -> String {
         match output::fetch_tree_flat(&self.repo, &params.r#ref, params.path.as_deref()).await {
             Ok(tree) => {
@@ -197,7 +253,10 @@ impl CoreDrillServer {
                 } else {
                     let groups = tree.iter().filter(|n| n.is_group()).count();
                     let arrays = tree.iter().filter(|n| n.is_array()).count();
-                    let mut out = format!("# Tree (at {})\n\n{} groups, {} arrays\n\n", params.r#ref, groups, arrays);
+                    let mut out = format!(
+                        "# Tree (at {})\n\n{} groups, {} arrays\n\n",
+                        params.r#ref, groups, arrays
+                    );
                     for node in &tree {
                         out.push_str(&output::fmt_tree_line(node, &tree));
                     }
