@@ -1269,6 +1269,9 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
         let mut inline_bytes: u64 = 0;
         let mut virtual_bytes: u64 = 0;
         let mut stats_loaded: usize = 0;
+        // Aggregated virtual sources across all arrays
+        let mut all_virtual_prefixes: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
 
         for state in app.store.node_children.values() {
             if let crate::store::LoadState::Loaded(nodes) = state {
@@ -1300,6 +1303,9 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                 native_bytes += stats.native_total_bytes;
                 inline_bytes += stats.inline_total_bytes;
                 virtual_bytes += stats.virtual_total_bytes;
+                for (prefix, count) in &stats.virtual_prefixes {
+                    *all_virtual_prefixes.entry(prefix.clone()).or_insert(0) += count;
+                }
             }
         }
 
@@ -1350,6 +1356,42 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                     Span::styled("  Total size:  ", app.theme.text_dim),
                     Span::styled(size_str, app.theme.text),
                 ]));
+            }
+
+            // ─── Virtual Sources ─────────────
+            if !all_virtual_prefixes.is_empty() {
+                let mut sorted_prefixes: Vec<(String, usize)> =
+                    all_virtual_prefixes.into_iter().collect();
+                sorted_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
+
+                let total_vchunks: usize = sorted_prefixes.iter().map(|(_, c)| c).sum();
+
+                lines.push(Line::from(""));
+                lines.push(section_header("Virtual Sources"));
+                lines.push(Line::from(vec![
+                    Span::styled("  Total:       ", app.theme.text_dim),
+                    Span::styled(
+                        format!(
+                            "{total_vchunks} chunks, {}",
+                            humansize::format_size(virtual_bytes, humansize::BINARY)
+                        ),
+                        app.theme.text,
+                    ),
+                ]));
+                for (prefix, count) in &sorted_prefixes {
+                    let display = format_vcc_prefix(prefix, &app.repo_info);
+                    let display = display.trim_start();
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("  {display}"), app.theme.text),
+                        Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
+                    ]));
+                }
+                if stats_loaded < total_arrays {
+                    lines.push(Line::from(Span::styled(
+                        format!("  ({stats_loaded}/{total_arrays} arrays scanned)"),
+                        app.theme.text_dim,
+                    )));
+                }
             }
         }
     }
