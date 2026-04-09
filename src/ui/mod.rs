@@ -1210,11 +1210,11 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
         } => {
             lines.push(Line::from(vec![
                 Span::styled("  Organization:  ", app.theme.text_dim),
-                Span::styled(org.clone(), app.theme.branch),
+                Span::styled(org.clone(), app.theme.text),
             ]));
             lines.push(Line::from(vec![
                 Span::styled("  Repo name:     ", app.theme.text_dim),
-                Span::styled(repo.clone(), app.theme.branch),
+                Span::styled(repo.clone(), app.theme.text),
             ]));
             lines.push(Line::from(vec![
                 Span::styled("  Bucket:        ", app.theme.text_dim),
@@ -1234,13 +1234,13 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
         crate::app::RepoIdentity::Local { path } => {
             lines.push(Line::from(vec![
                 Span::styled("  Location:      ", app.theme.text_dim),
-                Span::styled(path.clone(), app.theme.branch),
+                Span::styled(path.clone(), app.theme.text),
             ]));
         }
         crate::app::RepoIdentity::S3 { url } => {
             lines.push(Line::from(vec![
                 Span::styled("  Location:      ", app.theme.text_dim),
-                Span::styled(url.clone(), app.theme.branch),
+                Span::styled(url.clone(), app.theme.text),
             ]));
         }
     }
