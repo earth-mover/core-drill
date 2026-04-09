@@ -216,6 +216,9 @@ where
         }
     };
 
+    // Clear the loading screen before starting the main TUI
+    terminal.clear()?;
+
     // Build the app and start the main TUI
     let mut app = build_app(result);
     app.load_initial_data();
