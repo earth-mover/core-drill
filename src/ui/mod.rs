@@ -300,8 +300,19 @@ fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
+    // Show pending z-command indicator
+    if app.pending_z {
+        let line = Line::from(vec![
+            Span::styled(" z", app.theme.text_bold),
+            Span::styled("▏", app.theme.text),
+            Span::styled("  o:open  c:close  O:open recursive  C:close recursive  R:open all  M:close all", app.theme.text_dim),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+        return;
+    }
+
     let hints = match app.focused_pane {
-        Pane::Sidebar => " q:quit  ?:help  R:retry  t:toggle log  /:search  j/k:navigate  Enter:expand ",
+        Pane::Sidebar => " q:quit  ?:help  /:search  j/k:navigate  Enter:expand  zo/zc:open/close  zR/zM:all ",
         Pane::Detail => " q:quit  ?:help  R:retry  t:toggle log  j/k:scroll  h/l:Node/Repo ",
         Pane::Bottom => {
             " q:quit  ?:help  R:retry  t:toggle log  /:search  j/k:navigate  Tab:next tab  Enter:select "

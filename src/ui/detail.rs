@@ -3,11 +3,99 @@ use ratatui::prelude::*;
 use ratatui::widgets::*;
 
 use crate::app::App;
-use crate::component::{BottomTab, Pane};
+use crate::component::Pane;
 use crate::store::LoadState;
 use crate::store::types::TreeNodeType;
 use super::widgets::{clamped_scroll, labeled_lines, section_header, format_vcc_prefix, compute_grid_chunks, fmt_initialized, render_tabbed_panel};
 use super::diff::render_snapshot_diff_detail;
+
+/// Aggregated storage stats computed from the current tree + chunk stats cache.
+struct StorageStats {
+    total_arrays: usize,
+    total_groups: usize,
+    total_written: u64,
+    known_native: usize,
+    known_inline: usize,
+    known_virtual: usize,
+    native_bytes: u64,
+    inline_bytes: u64,
+    virtual_bytes: u64,
+    stats_loaded: usize,
+    virtual_prefixes: std::collections::HashMap<String, usize>,
+}
+
+impl StorageStats {
+    fn from_store(store: &crate::store::DataStore) -> Self {
+        let mut s = Self {
+            total_arrays: 0,
+            total_groups: 0,
+            total_written: 0,
+            known_native: 0,
+            known_inline: 0,
+            known_virtual: 0,
+            native_bytes: 0,
+            inline_bytes: 0,
+            virtual_bytes: 0,
+            stats_loaded: 0,
+            virtual_prefixes: std::collections::HashMap::new(),
+        };
+
+        for state in store.node_children.values() {
+            if let crate::store::LoadState::Loaded(nodes) = state {
+                for node in nodes {
+                    match &node.node_type {
+                        TreeNodeType::Group => s.total_groups += 1,
+                        TreeNodeType::Array(summary) => {
+                            s.total_arrays += 1;
+                            if let Some(tc) = summary.total_chunks {
+                                s.total_written += tc;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for ((_, _), state) in &store.chunk_stats {
+            if let crate::store::LoadState::Loaded(stats) = state {
+                s.stats_loaded += 1;
+                s.known_native += stats.native_count;
+                s.known_inline += stats.inline_count;
+                s.known_virtual += stats.virtual_count;
+                s.native_bytes += stats.native_total_bytes;
+                s.inline_bytes += stats.inline_total_bytes;
+                s.virtual_bytes += stats.virtual_total_bytes;
+                for (prefix, count) in &stats.virtual_prefixes {
+                    *s.virtual_prefixes.entry(prefix.clone()).or_insert(0) += count;
+                }
+            }
+        }
+
+        s
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.native_bytes + self.inline_bytes + self.virtual_bytes
+    }
+
+    fn stored_bytes(&self) -> u64 {
+        self.native_bytes + self.inline_bytes
+    }
+
+    fn breakdown_parts(&self) -> Vec<String> {
+        let mut parts = Vec::new();
+        if self.known_native > 0 {
+            parts.push(format!("{} native", self.known_native));
+        }
+        if self.known_inline > 0 {
+            parts.push(format!("{} inline", self.known_inline));
+        }
+        if self.known_virtual > 0 {
+            parts.push(format!("{} virtual", self.known_virtual));
+        }
+        parts
+    }
+}
 
 /// Find a TreeNode by its path, searching all cached children in the store.
 pub(super) fn find_node_by_path<'a>(
@@ -32,58 +120,24 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         DetailMode::Node => 0,
         DetailMode::Repo => 1,
         DetailMode::OpsLog => 2,
+        DetailMode::Branch => 3,
+        DetailMode::Snapshot => 4,
     };
-    let content_area = match render_tabbed_panel(
+    let (content_area, _tab_bar) = match render_tabbed_panel(
         "[2] Detail",
-        &["Node", "Repo", "Ops Log"],
+        &["Node", "Repo", "Ops Log", "Branch", "Snap"],
         active_tab,
         focused,
         &app.theme,
         frame,
         area,
     ) {
-        Some(area) => area,
+        Some(areas) => areas,
         None => return,
     };
 
-    // Repo mode: show repo overview
-    if app.detail_mode == DetailMode::Repo {
-        let text = render_repo_overview(app);
-        let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
-        frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .scroll((scroll, 0)),
-            content_area,
-        );
-        return;
-    }
-
-    // Ops Log mode: show mutation history
-    if app.detail_mode == DetailMode::OpsLog {
-        let text = render_ops_log(app);
-        let scroll = clamped_scroll(app.detail_scroll, text.len(), area);
-        frame.render_widget(
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .scroll((scroll, 0)),
-            content_area,
-        );
-        return;
-    }
-
-    // Node mode below — show snapshot detail when VC panel is on Snapshots tab,
-    // UNLESS a tree node is actively being inspected (sidebar focused AND something selected)
-    let tree_node_selected =
-        app.focused_pane == Pane::Sidebar && !app.tree_state.selected().is_empty();
-
-    if !tree_node_selected
-        && app.bottom_tab == BottomTab::Snapshots
-        && let Some(sid) = app.selected_snapshot_id()
-        && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid))
-    {
-        let inner_width = content_area.width;
-        let text = render_snapshot_diff_detail(app, &sid, inner_width);
+    // Helper: render text into the content area with scrolling
+    let render_text = |text: Vec<Line>, frame: &mut Frame| {
         let scroll = clamped_scroll(app.detail_scroll, text.len(), content_area);
         frame.render_widget(
             Paragraph::new(text)
@@ -91,8 +145,54 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
                 .scroll((scroll, 0)),
             content_area,
         );
+    };
+
+    // Repo mode
+    if app.detail_mode == DetailMode::Repo {
+        render_text(render_repo_overview(app), frame);
         return;
     }
+
+    // Ops Log mode
+    if app.detail_mode == DetailMode::OpsLog {
+        render_text(render_ops_log(app), frame);
+        return;
+    }
+
+    // Branch mode
+    if app.detail_mode == DetailMode::Branch {
+        if let Some(branches) = app.store.branches.as_loaded()
+            && let Some(branch) = branches.get(app.bottom_selected())
+        {
+            let branch_name = branch.name.clone();
+            let is_current = branch_name == app.current_branch;
+            render_text(render_branch_detail(app, &branch_name, is_current), frame);
+        } else {
+            render_text(vec![
+                Line::from(""),
+                Line::from(Span::styled("  Select a branch in the bottom panel.", app.theme.text_dim)),
+            ], frame);
+        }
+        return;
+    }
+
+    // Snapshot mode
+    if app.detail_mode == DetailMode::Snapshot {
+        if let Some(sid) = app.selected_snapshot_id()
+            && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid))
+        {
+            let inner_width = content_area.width;
+            render_text(render_snapshot_diff_detail(app, &sid, inner_width), frame);
+        } else {
+            render_text(vec![
+                Line::from(""),
+                Line::from(Span::styled("  Select a snapshot in the bottom panel.", app.theme.text_dim)),
+            ], frame);
+        }
+        return;
+    }
+
+    // Node mode below — the remaining default
 
     // Check what's selected in the tree
     let selected = app.tree_state.selected();
@@ -788,95 +888,34 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
     ]));
 
     // ─── Storage Summary ─────────────────
-    // Aggregate chunk stats from cached tree nodes + any loaded ChunkStats
     {
-        let mut total_arrays: usize = 0;
-        let mut total_groups: usize = 0;
-        let mut total_written: u64 = 0;
-        let _total_grid: u64 = 0;
-        // Detailed breakdown from loaded ChunkStats
-        let mut known_native: usize = 0;
-        let mut known_inline: usize = 0;
-        let mut known_virtual: usize = 0;
-        let mut native_bytes: u64 = 0;
-        let mut inline_bytes: u64 = 0;
-        let mut virtual_bytes: u64 = 0;
-        let mut stats_loaded: usize = 0;
-        // Aggregated virtual sources across all arrays
-        let mut all_virtual_prefixes: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let ss = StorageStats::from_store(&app.store);
 
-        for state in app.store.node_children.values() {
-            if let crate::store::LoadState::Loaded(nodes) = state {
-                for node in nodes {
-                    match &node.node_type {
-                        TreeNodeType::Group => total_groups += 1,
-                        TreeNodeType::Array(summary) => {
-                            total_arrays += 1;
-                            if let Some(tc) = summary.total_chunks {
-                                total_written += tc;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Compute grid size from metadata (requires parsing, but it's cached in the tree label)
-        // We can approximate from the tree: scan all arrays for grid_chunks
-        // Actually, we need to parse ZarrMetadata for each — too expensive per frame.
-        // Instead, just use total_chunks from all arrays. Grid requires chunk_shape.
-        // Let's sum from ChunkStats which have the detailed breakdown:
-        for ((_, _), state) in &app.store.chunk_stats {
-            if let crate::store::LoadState::Loaded(stats) = state {
-                stats_loaded += 1;
-                known_native += stats.native_count;
-                known_inline += stats.inline_count;
-                known_virtual += stats.virtual_count;
-                native_bytes += stats.native_total_bytes;
-                inline_bytes += stats.inline_total_bytes;
-                virtual_bytes += stats.virtual_total_bytes;
-                for (prefix, count) in &stats.virtual_prefixes {
-                    *all_virtual_prefixes.entry(prefix.clone()).or_insert(0) += count;
-                }
-            }
-        }
-
-        if total_arrays > 0 || total_groups > 0 {
+        if ss.total_arrays > 0 || ss.total_groups > 0 {
             lines.push(Line::from(""));
             lines.push(section_header("Storage Summary"));
             lines.push(Line::from(vec![
                 Span::styled("  Arrays:      ", app.theme.text_dim),
-                Span::styled(total_arrays.to_string(), app.theme.text),
+                Span::styled(ss.total_arrays.to_string(), app.theme.text),
             ]));
             lines.push(Line::from(vec![
                 Span::styled("  Groups:      ", app.theme.text_dim),
-                Span::styled(total_groups.to_string(), app.theme.text),
+                Span::styled(ss.total_groups.to_string(), app.theme.text),
             ]));
-            if total_written > 0 {
+            if ss.total_written > 0 {
                 lines.push(Line::from(vec![
                     Span::styled("  Chunks:      ", app.theme.text_dim),
-                    Span::styled(total_written.to_string(), app.theme.text),
+                    Span::styled(ss.total_written.to_string(), app.theme.text),
                 ]));
             }
 
-            if stats_loaded > 0 {
-                let total_bytes = native_bytes + inline_bytes + virtual_bytes;
-                let stored_bytes = native_bytes + inline_bytes;
+            if ss.stats_loaded > 0 {
+                let total_bytes = ss.total_bytes();
+                let stored_bytes = ss.stored_bytes();
+                let parts = ss.breakdown_parts();
 
-                let mut parts = Vec::new();
-                if known_native > 0 {
-                    parts.push(format!("{known_native} native"));
-                }
-                if known_inline > 0 {
-                    parts.push(format!("{known_inline} inline"));
-                }
-                if known_virtual > 0 {
-                    parts.push(format!("{known_virtual} virtual"));
-                }
-
-                let suffix = if stats_loaded < total_arrays {
-                    format!("  ({stats_loaded}/{total_arrays} arrays scanned)")
+                let suffix = if ss.stats_loaded < ss.total_arrays {
+                    format!("  ({}/{} arrays scanned)", ss.stats_loaded, ss.total_arrays)
                 } else {
                     String::new()
                 };
@@ -885,7 +924,7 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                     Span::styled("  Breakdown:   ", app.theme.text_dim),
                     Span::styled(format!("{}{}", parts.join(", "), suffix), app.theme.text),
                 ]));
-                let size_label = if stats_loaded < total_arrays {
+                let size_label = if ss.stats_loaded < ss.total_arrays {
                     format!(
                         "{}+  (scanning…)",
                         humansize::format_size(total_bytes, humansize::BINARY)
@@ -897,7 +936,7 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                     Span::styled("  Data size:   ", app.theme.text_dim),
                     Span::styled(size_label, app.theme.text),
                 ]));
-                if virtual_bytes > 0 && stored_bytes > 0 {
+                if ss.virtual_bytes > 0 && stored_bytes > 0 {
                     lines.push(Line::from(vec![
                         Span::styled("    Stored:    ", app.theme.text_dim),
                         Span::styled(
@@ -909,7 +948,7 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                     lines.push(Line::from(vec![
                         Span::styled("    Virtual:   ", app.theme.text_dim),
                         Span::styled(
-                            humansize::format_size(virtual_bytes, humansize::BINARY),
+                            humansize::format_size(ss.virtual_bytes, humansize::BINARY),
                             app.theme.text,
                         ),
                         Span::styled("  (external sources)", app.theme.text_dim),
@@ -918,9 +957,9 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
             }
 
             // ─── Virtual Sources ─────────────
-            if !all_virtual_prefixes.is_empty() {
+            if !ss.virtual_prefixes.is_empty() {
                 let mut sorted_prefixes: Vec<(String, usize)> =
-                    all_virtual_prefixes.into_iter().collect();
+                    ss.virtual_prefixes.into_iter().collect();
                 sorted_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
 
                 let total_vchunks: usize = sorted_prefixes.iter().map(|(_, c)| c).sum();
@@ -932,7 +971,7 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                     Span::styled(
                         format!(
                             "{total_vchunks} chunks, {}",
-                            humansize::format_size(virtual_bytes, humansize::BINARY)
+                            humansize::format_size(ss.virtual_bytes, humansize::BINARY)
                         ),
                         app.theme.text,
                     ),
@@ -945,9 +984,9 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                         Span::styled(format!("  ({count} chunks)"), app.theme.text_dim),
                     ]));
                 }
-                if stats_loaded < total_arrays {
+                if ss.stats_loaded < ss.total_arrays {
                     lines.push(Line::from(Span::styled(
-                        format!("  ({stats_loaded}/{total_arrays} arrays scanned)"),
+                        format!("  ({}/{} arrays scanned)", ss.stats_loaded, ss.total_arrays),
                         app.theme.text_dim,
                     )));
                 }
@@ -1065,6 +1104,120 @@ fn render_ops_log<'a>(app: &'a App) -> Vec<Line<'a>> {
                 "  Not loaded yet.",
                 app.theme.text_dim,
             )));
+        }
+    }
+
+    lines
+}
+
+fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_current: bool) -> Vec<Line<'a>> {
+    let mut lines = Vec::new();
+
+    // ─── Branch Header ─────────────────
+    lines.push(Line::from(""));
+    lines.push(section_header("Branch"));
+
+    lines.push(Line::from(vec![
+        Span::styled("  Name:        ", app.theme.text_dim),
+        Span::styled(branch_name.to_string(), app.theme.branch),
+        if is_current {
+            Span::styled("  (active)", app.theme.status_ok)
+        } else {
+            Span::styled("  (press Enter to switch)", app.theme.text_dim)
+        },
+    ]));
+
+    // Find the BranchInfo for snapshot ID
+    if let Some(branch) = app.store.branches.as_loaded()
+        .and_then(|bs| bs.iter().find(|b| b.name == branch_name))
+    {
+        lines.push(Line::from(vec![
+            Span::styled("  Tip:         ", app.theme.text_dim),
+            Span::styled(
+                crate::output::truncate(&branch.snapshot_id, 12).to_string(),
+                app.theme.text,
+            ),
+        ]));
+    }
+
+    // ─── Recent Commits ────────────────
+    if let Some(crate::store::LoadState::Loaded(ancestry)) = app.store.ancestry.get(branch_name) {
+        lines.push(Line::from(""));
+        lines.push(section_header(&format!("Recent Commits ({})", ancestry.len())));
+
+        for entry in ancestry.iter().take(10) {
+            let ts = entry.timestamp.format("%Y-%m-%d %H:%M");
+            let msg = if entry.message.is_empty() {
+                "(no message)".to_string()
+            } else {
+                entry.message.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {ts}  "), app.theme.text_dim),
+                Span::styled(
+                    crate::output::truncate(&entry.id, 8).to_string(),
+                    app.theme.text_dim,
+                ),
+                Span::styled(format!("  {msg}"), app.theme.text),
+            ]));
+        }
+        if ancestry.len() > 10 {
+            lines.push(Line::from(Span::styled(
+                format!("  … {} more", ancestry.len() - 10),
+                app.theme.text_dim,
+            )));
+        }
+    } else if is_current {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Loading commit history…",
+            app.theme.loading,
+        )));
+    }
+
+    // ─── Storage Stats (only for active branch — data already loaded) ───
+    if is_current {
+        let ss = StorageStats::from_store(&app.store);
+
+        if ss.total_arrays > 0 || ss.total_groups > 0 {
+            lines.push(Line::from(""));
+            lines.push(section_header("Storage"));
+            lines.push(Line::from(vec![
+                Span::styled("  Arrays:      ", app.theme.text_dim),
+                Span::styled(ss.total_arrays.to_string(), app.theme.text),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  Groups:      ", app.theme.text_dim),
+                Span::styled(ss.total_groups.to_string(), app.theme.text),
+            ]));
+            if ss.total_written > 0 {
+                lines.push(Line::from(vec![
+                    Span::styled("  Chunks:      ", app.theme.text_dim),
+                    Span::styled(ss.total_written.to_string(), app.theme.text),
+                ]));
+            }
+
+            if ss.stats_loaded > 0 {
+                let parts = ss.breakdown_parts();
+
+                let suffix = if ss.stats_loaded < ss.total_arrays {
+                    format!("  ({}/{} arrays scanned)", ss.stats_loaded, ss.total_arrays)
+                } else {
+                    String::new()
+                };
+
+                lines.push(Line::from(vec![
+                    Span::styled("  Breakdown:   ", app.theme.text_dim),
+                    Span::styled(format!("{}{}", parts.join(", "), suffix), app.theme.text),
+                ]));
+                lines.push(Line::from(vec![
+                    Span::styled("  Data size:   ", app.theme.text_dim),
+                    Span::styled(
+                        humansize::format_size(ss.total_bytes(), humansize::BINARY),
+                        app.theme.text,
+                    ),
+                ]));
+            }
         }
     }
 

@@ -193,29 +193,42 @@ impl DataStore {
     }
 
     /// Submit a data request to the background worker.
-    /// Marks the corresponding cache entry as Loading.
+    /// Marks the corresponding cache entry as Loading only if no data is already
+    /// loaded — this avoids flash-to-loading when refreshing existing data.
     pub fn submit(&mut self, request: DataRequest) {
-        // Mark as loading
+        // Only transition to Loading if not already Loaded (avoids UI flash)
+        macro_rules! set_loading {
+            ($field:expr) => {
+                if !$field.is_loaded() {
+                    $field = LoadState::Loading;
+                }
+            };
+        }
+        macro_rules! set_loading_map {
+            ($map:expr, $key:expr) => {
+                if !$map.get(&$key).is_some_and(|s| s.is_loaded()) {
+                    $map.insert($key, LoadState::Loading);
+                }
+            };
+        }
         match &request {
-            DataRequest::Branches => self.branches = LoadState::Loading,
-            DataRequest::Tags => self.tags = LoadState::Loading,
+            DataRequest::Branches => set_loading!(self.branches),
+            DataRequest::Tags => set_loading!(self.tags),
             DataRequest::Ancestry { branch } => {
-                self.ancestry.insert(branch.clone(), LoadState::Loading);
+                set_loading_map!(self.ancestry, branch.clone());
             }
             DataRequest::AllNodes { .. } => {
-                // Mark the root as loading; the response will populate all paths.
-                self.node_children
-                    .insert("/".to_string(), LoadState::Loading);
+                set_loading_map!(self.node_children, "/".to_string());
             }
             DataRequest::SnapshotDiff { snapshot_id, .. } => {
-                self.diffs.insert(snapshot_id.clone(), LoadState::Loading);
+                set_loading_map!(self.diffs, snapshot_id.clone());
             }
             DataRequest::ChunkStats { snapshot_id, path } => {
-                self.chunk_stats
-                    .insert((snapshot_id.clone(), path.clone()), LoadState::Loading);
+                let key = (snapshot_id.clone(), path.clone());
+                set_loading_map!(self.chunk_stats, key);
             }
-            DataRequest::RepoConfig => self.repo_config = LoadState::Loading,
-            DataRequest::OpsLog => self.ops_log = LoadState::Loading,
+            DataRequest::RepoConfig => set_loading!(self.repo_config),
+            DataRequest::OpsLog => set_loading!(self.ops_log),
         }
 
         if let Err(e) = self.request_tx.send(request) {
@@ -458,63 +471,66 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
 }
 
 async fn fetch_branches(repo: &Repository) -> Result<Vec<BranchInfo>, String> {
-    let branches = repo.list_branches().await.map_err(|e| e.to_string())?;
-
-    let mut result = Vec::with_capacity(branches.len());
-    for name in branches {
-        let snapshot_id = repo
-            .lookup_branch(&name)
-            .await
-            .map(|id| id.to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
-
-        result.push(BranchInfo {
-            name: sanitize(&name),
-            snapshot_id,
-            tip_timestamp: None,
-            tip_message: None,
-        });
-    }
-    // Put "main" first so it's always visible at the top
+    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await.map_err(|e| e.to_string())?;
+    let mut result: Vec<BranchInfo> = repo_info
+        .branches()
+        .map_err(|e| e.to_string())?
+        .map(|(name, snap_id)| {
+            let (tip_timestamp, tip_message) = repo_info
+                .find_snapshot(&snap_id)
+                .map(|info| (Some(info.flushed_at), Some(sanitize(&info.message))))
+                .unwrap_or((None, None));
+            BranchInfo {
+                name: sanitize(name),
+                snapshot_id: snap_id.to_string(),
+                tip_timestamp,
+                tip_message,
+            }
+        })
+        .collect();
+    // Put "main" first, then alphabetical
     result.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
         ("main", _) => std::cmp::Ordering::Less,
         (_, "main") => std::cmp::Ordering::Greater,
-        (a, b) => a.cmp(b),
+        _ => a.name.cmp(&b.name),
     });
     Ok(result)
 }
 
 async fn fetch_tags(repo: &Repository) -> Result<Vec<TagInfo>, String> {
-    let tags = repo.list_tags().await.map_err(|e| e.to_string())?;
-
-    let mut result = Vec::with_capacity(tags.len());
-    for name in tags {
-        let snapshot_id = repo
-            .lookup_tag(&name)
-            .await
-            .map(|id| id.to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
-
-        result.push(TagInfo {
-            name: sanitize(&name),
-            snapshot_id,
-            tip_timestamp: None,
-            tip_message: None,
-        });
-    }
+    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await.map_err(|e| e.to_string())?;
+    let result: Vec<TagInfo> = repo_info
+        .tags()
+        .map_err(|e| e.to_string())?
+        .map(|(name, snap_id)| {
+            let (tip_timestamp, tip_message) = repo_info
+                .find_snapshot(&snap_id)
+                .map(|info| (Some(info.flushed_at), Some(sanitize(&info.message))))
+                .unwrap_or((None, None));
+            TagInfo {
+                name: sanitize(name),
+                snapshot_id: snap_id.to_string(),
+                tip_timestamp,
+                tip_message,
+            }
+        })
+        .collect();
     Ok(result)
 }
 
 async fn fetch_ancestry(repo: &Repository, branch: &str) -> Result<Vec<SnapshotEntry>, String> {
-    use futures::StreamExt;
-    use icechunk::repository::VersionInfo;
+    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await.map_err(|e| e.to_string())?;
 
-    let version = VersionInfo::BranchTipRef(branch.to_string());
-    let stream = repo.ancestry(&version).await.map_err(|e| e.to_string())?;
+    // Resolve branch to snapshot ID from repo info (in-memory, no network)
+    let snapshot_id = repo_info.resolve_branch(branch).map_err(|e| e.to_string())?;
 
-    futures::pin_mut!(stream);
+    // Walk ancestry in-memory. The current repo info file contains ALL snapshots
+    // (each new file copies the full snapshot array + inserts the new one), so
+    // ancestry() gives complete history with no chain-following needed.
+    // The repo_before_updates linked list is for the ops log, not snapshots.
+    let ancestry = repo_info.ancestry(&snapshot_id).map_err(|e| e.to_string())?;
     let mut entries = Vec::new();
-    while let Some(result) = stream.next().await {
+    for result in ancestry {
         let info = result.map_err(|e| e.to_string())?;
         entries.push(SnapshotEntry {
             id: info.id.to_string(),

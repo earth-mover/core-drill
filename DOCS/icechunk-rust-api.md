@@ -124,6 +124,24 @@ These would make diff even cheaper — worth contributing upstream:
    in the icechunk-format crate. A stable, non-deprecated accessor would avoid the `#[expect(deprecated)]`
    suppression workaround needed today.
 
+4. **Expose `get_repo_info()` publicly (or add `all_ancestries()`)** — `Repository::ancestry(version)`
+   calls the private `get_repo_info()` internally on each invocation. For V2 repos the entire snapshot
+   DAG lives in the repo info file, so ancestry for *any* branch is a cheap in-memory walk once repo
+   info is loaded. But callers who need ancestry for N branches must call `ancestry()` N times, each
+   going through the async machinery. Two options:
+   - Make `get_repo_info()` (or `RepoInfo`) public so consumers can call `repo_info.ancestry(snap_id)`
+     directly in a synchronous loop.
+   - Add `Repository::all_ancestries() -> HashMap<String, Vec<SnapshotInfo>>` that fetches repo info
+     once and returns ancestry for every branch.
+   Currently core-drill works around this by pre-fetching ancestry for all branches in parallel at
+   startup, relying on the asset manager's internal caching of repo info.
+
+5. **Populate `BranchInfo` timestamps from repo info** — `Repository::list_branches()` returns only
+   branch names. Getting the tip timestamp/message requires resolving the branch to a snapshot ID, then
+   walking ancestry. Since the repo info file already has this data (snapshot metadata indexed by offset),
+   a richer `list_branches_with_info()` API would let UIs show "most recently updated" branches without
+   N extra ancestry walks.
+
 ### Gotcha: ancestry requirement
 
 `Repository::diff(from, to)` requires `from` to be an **ancestor** of `to`.
@@ -150,3 +168,24 @@ resolve to the current tip, not a historical snapshot.
 
 ### Repository is Clone (Arc internally)
 Safe to clone and move into spawned tasks.
+
+## TODO: Upstream Improvements Wishlist
+
+Summary of icechunk API changes that would benefit core-drill (and other consumers):
+
+| # | Improvement | Impact | Section |
+|---|-------------|--------|---------|
+| 1 | Store paths in TransactionLog | 1-fetch diff, no snapshot needed | Diff |
+| 2 | `ancestry_info(snap_id)` from cached RepoInfo | 0-fetch parent_id lookup | Diff |
+| 3 | Stable `Snapshot::parent_id()` accessor | No deprecation workaround | Diff |
+| 4 | Public `get_repo_info()` or `all_ancestries()` | 1-fetch ancestry for all branches | Ancestry |
+| 5 | `list_branches_with_info()` with timestamps | "Most recent" branch sort without N ancestry walks | Branches |
+### RepoInfo snapshot storage
+
+The current repo info file contains **all** snapshots — `add_snapshot()` copies the full
+snapshot array and inserts the new one. So `repo_info.ancestry(snap_id)` gives complete
+history in a single in-memory walk, no chain-following needed.
+
+The `repo_before_updates()` linked list is for the **ops log** only (mutation history),
+not for snapshots. The ops log does require chain-following for deep history (each file
+holds `num_updates_per_file` entries, default ~1000).

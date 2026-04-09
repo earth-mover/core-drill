@@ -70,6 +70,8 @@ pub struct App {
     // ─── Search ──────────────────────────────────────────────
     /// Active fuzzy search. None = not searching.
     pub search: Option<SearchState>,
+    /// Vim-style pending `z` prefix for fold commands (zo, zc, zO, zC, zR, zM)
+    pub pending_z: bool,
 
     // ─── Internal bookkeeping ────────────────────────────────
     tree_auto_expanded: bool,
@@ -110,6 +112,7 @@ impl App {
             tab_selection: [0; 3],
             tab_offset: [0; 3],
             search: None,
+            pending_z: false,
             tree_auto_expanded: false,
             last_diff_requested: None,
             last_tree_snapshot_requested: None,
@@ -221,8 +224,9 @@ impl App {
         self.tree_state.select(id_path);
     }
 
-    /// Sync the search cursor's selected item into the actual pane selection.
-    fn sync_search_selection(&mut self, candidates: &[String]) {
+    /// Sync the search cursor's selected item into the actual pane selection
+    /// and trigger reactive updates (branch switch, diff load, chunk stats, etc.).
+    fn sync_search_selection_reactive(&mut self, candidates: &[String]) {
         let Some(ref search) = self.search else {
             return;
         };
@@ -233,10 +237,12 @@ impl App {
             crate::search::SearchTarget::Tree => {
                 if let Some(path) = candidates.get(idx) {
                     self.select_tree_node(path);
+                    self.on_tree_selection_changed();
                 }
             }
             _ => {
                 self.set_bottom_selected(idx);
+                self.on_bottom_selection_changed();
             }
         }
     }
@@ -251,10 +257,11 @@ impl App {
     /// Called when any bottom-panel selection changes.
     fn on_bottom_selection_changed(&mut self) {
         self.detail_scroll = 0;
-        // Only switch to Node mode for Snapshots (where detail shows diffs).
-        // Branches/Tags may be browsed while viewing the Repo tab.
-        if self.bottom_tab == BottomTab::Snapshots {
-            self.detail_mode = DetailMode::Node;
+        // Auto-switch detail tab to match the bottom panel context
+        match self.bottom_tab {
+            BottomTab::Snapshots => self.detail_mode = DetailMode::Snapshot,
+            BottomTab::Branches => self.detail_mode = DetailMode::Branch,
+            BottomTab::Tags => {} // Tags don't have a dedicated detail view
         }
         self.clamp_bottom_table_offset();
         match self.bottom_tab {
@@ -361,6 +368,7 @@ impl App {
 
         // Once branches load, sync the Branches tab selection to current_branch.
         // Also verify current_branch actually exists — fall back to first branch if not.
+        // Pre-fetch ancestry for all branches (cheap — reads from repo info file).
         if let Some(LoadState::Loaded(branches)) = Some(&self.store.branches)
             && !branches.is_empty()
         {
@@ -372,6 +380,19 @@ impl App {
             // Sync Branches tab selection to current_branch
             if let Some(idx) = branches.iter().position(|b| b.name == self.current_branch) {
                 self.tab_selection[1] = idx; // 1 = Branches tab
+            }
+            // Collect branch names that need ancestry pre-fetching
+            let branches_needing_ancestry: Vec<String> = branches
+                .iter()
+                .filter(|b| !self.store.ancestry.contains_key(&b.name))
+                .map(|b| b.name.clone())
+                .collect();
+            // Pre-fetch ancestry for all branches so switching is instant.
+            // The repo info file is fetched once; subsequent ancestry calls reuse it.
+            for branch_name in branches_needing_ancestry {
+                self.store.submit(DataRequest::Ancestry {
+                    branch: branch_name,
+                });
             }
         }
 
@@ -607,6 +628,14 @@ impl App {
 
     /// Handle a key event
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Help overlay: ? or Esc closes it, all other keys ignored
+        if self.show_help {
+            if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc) {
+                self.show_help = false;
+            }
+            return;
+        }
+
         // Search mode intercepts all keys
         if self.search.is_some() {
             self.handle_search_key(key);
@@ -651,25 +680,26 @@ impl App {
                         self.search = None;
                     } else {
                         search.pop_char(&candidate_refs);
+                        self.sync_search_selection_reactive(&candidates);
                     }
                 }
             }
             KeyCode::Down | KeyCode::Tab => {
                 if let Some(ref mut search) = self.search {
                     search.next();
-                    self.sync_search_selection(&candidates);
+                    self.sync_search_selection_reactive(&candidates);
                 }
             }
             KeyCode::Up | KeyCode::BackTab => {
                 if let Some(ref mut search) = self.search {
                     search.prev();
-                    self.sync_search_selection(&candidates);
+                    self.sync_search_selection_reactive(&candidates);
                 }
             }
             KeyCode::Char(c) => {
                 if let Some(ref mut search) = self.search {
                     search.push_char(c, &candidate_refs);
-                    self.sync_search_selection(&candidates);
+                    self.sync_search_selection_reactive(&candidates);
                 }
             }
             _ => {}
@@ -677,6 +707,55 @@ impl App {
     }
 
     fn map_key(&mut self, key: KeyEvent) -> Action {
+        // Handle pending `z` prefix for vim fold commands
+        if self.pending_z {
+            self.pending_z = false;
+            if self.focused_pane == Pane::Sidebar {
+                match key.code {
+                    KeyCode::Char('o') => {
+                        // zo — open selected node
+                        let selected = self.tree_state.selected().to_vec();
+                        if !selected.is_empty() {
+                            self.tree_state.open(selected);
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        // zc — close selected node, or if it's a leaf / already closed,
+                        // close and focus the parent group (vim fold behavior)
+                        let selected = self.tree_state.selected().to_vec();
+                        if !selected.is_empty() {
+                            let closed = self.tree_state.close(&selected);
+                            if !closed && selected.len() > 1 {
+                                // Node was already closed or is a leaf — go to parent
+                                let parent = selected[..selected.len() - 1].to_vec();
+                                self.tree_state.close(&parent);
+                                self.tree_state.select(parent);
+                                self.on_tree_selection_changed();
+                            }
+                        }
+                    }
+                    KeyCode::Char('O') => {
+                        // zO — open selected node and all descendants recursively
+                        self.open_tree_deep();
+                    }
+                    KeyCode::Char('C') => {
+                        // zC — close selected node and all descendants
+                        self.close_tree_deep();
+                    }
+                    KeyCode::Char('R') => {
+                        // zR — open entire tree
+                        self.open_all_tree_nodes();
+                    }
+                    KeyCode::Char('M') => {
+                        // zM — close entire tree
+                        self.tree_state.close_all();
+                    }
+                    _ => {} // Unknown z-command, ignore
+                }
+            }
+            return Action::None;
+        }
+
         // Global keys
         match key.code {
             KeyCode::Char('q') => return Action::Quit,
@@ -761,7 +840,9 @@ impl App {
                     self.detail_mode = match self.detail_mode {
                         DetailMode::Node => DetailMode::Repo,
                         DetailMode::Repo => DetailMode::OpsLog,
-                        DetailMode::OpsLog => DetailMode::Node,
+                        DetailMode::OpsLog => DetailMode::Branch,
+                        DetailMode::Branch => DetailMode::Snapshot,
+                        DetailMode::Snapshot => DetailMode::Node,
                     };
                     self.detail_scroll = 0;
                 } else {
@@ -790,9 +871,11 @@ impl App {
                     self.switch_bottom_tab(prev);
                 } else if self.focused_pane == Pane::Detail {
                     self.detail_mode = match self.detail_mode {
-                        DetailMode::Node => DetailMode::OpsLog,
+                        DetailMode::Node => DetailMode::Snapshot,
                         DetailMode::Repo => DetailMode::Node,
                         DetailMode::OpsLog => DetailMode::Repo,
+                        DetailMode::Branch => DetailMode::OpsLog,
+                        DetailMode::Snapshot => DetailMode::Branch,
                     };
                     self.detail_scroll = 0;
                 } else {
@@ -840,18 +923,28 @@ impl App {
             }
             KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Detail => {
                 match self.detail_mode {
-                    DetailMode::OpsLog => {
-                        self.detail_mode = DetailMode::Repo;
-                        self.detail_scroll = 0;
-                        return Action::None;
+                    DetailMode::Node => {
+                        return Action::FocusPane(Pane::Sidebar);
                     }
                     DetailMode::Repo => {
                         self.detail_mode = DetailMode::Node;
                         self.detail_scroll = 0;
                         return Action::None;
                     }
-                    DetailMode::Node => {
-                        return Action::FocusPane(Pane::Sidebar);
+                    DetailMode::OpsLog => {
+                        self.detail_mode = DetailMode::Repo;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
+                    DetailMode::Branch => {
+                        self.detail_mode = DetailMode::OpsLog;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
+                    DetailMode::Snapshot => {
+                        self.detail_mode = DetailMode::Branch;
+                        self.detail_scroll = 0;
+                        return Action::None;
                     }
                 }
             }
@@ -868,6 +961,16 @@ impl App {
                         return Action::None;
                     }
                     DetailMode::OpsLog => {
+                        self.detail_mode = DetailMode::Branch;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
+                    DetailMode::Branch => {
+                        self.detail_mode = DetailMode::Snapshot;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
+                    DetailMode::Snapshot => {
                         return Action::None;
                     }
                 }
@@ -883,6 +986,10 @@ impl App {
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.select_prev();
+                Action::None
+            }
+            KeyCode::Char('z') if self.focused_pane == Pane::Sidebar => {
+                self.pending_z = true;
                 Action::None
             }
             KeyCode::Enter => {
@@ -1027,8 +1134,56 @@ impl App {
             return;
         }
 
+        // Clear search when clicking — the click changes focus which breaks the search context
+        if self.search.is_some() {
+            self.search = None;
+        }
+
         let col = mouse.column;
         let row = mouse.row;
+
+        // Check for tab bar clicks first (row just inside the border)
+        // Detail pane tabs: Node, Repo, Ops Log, Branch, Snap
+        let detail_tab_row = self.detail_area.y + 1; // border + tab bar
+        if row == detail_tab_row && self.detail_area.contains((col, row).into()) {
+            self.focused_pane = Pane::Detail;
+            let inner_x = (col - self.detail_area.x).saturating_sub(1) as usize;
+            let inner_w = self.detail_area.width.saturating_sub(2) as usize;
+            const DETAIL_TABS: usize = 5;
+            if inner_w > 0 {
+                let tab = (inner_x * DETAIL_TABS / inner_w).min(DETAIL_TABS - 1);
+                self.detail_mode = match tab {
+                    0 => DetailMode::Node,
+                    1 => DetailMode::Repo,
+                    2 => DetailMode::OpsLog,
+                    3 => DetailMode::Branch,
+                    _ => DetailMode::Snapshot,
+                };
+                self.detail_scroll = 0;
+            }
+            return;
+        }
+
+        // Bottom panel tabs: Snapshots, Branches, Tags
+        if let Some(bottom) = self.bottom_area {
+            let bottom_tab_row = bottom.y + 1;
+            if row == bottom_tab_row && bottom.contains((col, row).into()) {
+                self.focused_pane = Pane::Bottom;
+                let inner_x = (col - bottom.x).saturating_sub(1) as usize;
+                let inner_w = bottom.width.saturating_sub(2) as usize;
+                const BOTTOM_TABS: usize = 3;
+                if inner_w > 0 {
+                    let tab = (inner_x * BOTTOM_TABS / inner_w).min(BOTTOM_TABS - 1);
+                    let new_tab = match tab {
+                        0 => BottomTab::Snapshots,
+                        1 => BottomTab::Branches,
+                        _ => BottomTab::Tags,
+                    };
+                    self.switch_bottom_tab(new_tab);
+                }
+                return;
+            }
+        }
 
         // Determine which pane was clicked and focus it
         if self.sidebar_area.contains((col, row).into()) {
@@ -1067,6 +1222,80 @@ impl App {
                 self.set_bottom_selected(new_sel.min(max));
                 self.on_bottom_selection_changed();
             }
+        }
+    }
+
+    /// Open the selected node and all its descendants (zO).
+    fn open_tree_deep(&mut self) {
+        let selected = self.tree_state.selected().to_vec();
+        if selected.is_empty() {
+            return;
+        }
+        // Open the selected node itself
+        self.tree_state.open(selected.clone());
+        // Open all descendants by finding paths that start with the selected path
+        let selected_path = selected.last().cloned().unwrap_or_default();
+        let prefix = format!("{selected_path}/");
+        let group_paths: Vec<String> = self.store.node_children.keys()
+            .filter(|p| p.starts_with(&prefix) || **p == selected_path)
+            .cloned()
+            .collect();
+        for path in group_paths {
+            let id_path = Self::tree_identifier_path(&path);
+            self.tree_state.open(id_path);
+        }
+    }
+
+    /// Close the selected node and all its descendants (zC).
+    /// If the selected node is a leaf or already closed, bubbles up to parent (like zc).
+    fn close_tree_deep(&mut self) {
+        let selected = self.tree_state.selected().to_vec();
+        if selected.is_empty() {
+            return;
+        }
+        let selected_path = selected.last().cloned().unwrap_or_default();
+        let prefix = format!("{selected_path}/");
+
+        // Check if this node has any descendants to close
+        let has_descendants = self.store.node_children.keys()
+            .any(|p| p.starts_with(&prefix));
+
+        if has_descendants {
+            // Close all descendants
+            let group_paths: Vec<Vec<String>> = self.store.node_children.keys()
+                .filter(|p| p.starts_with(&prefix))
+                .map(|p| Self::tree_identifier_path(p))
+                .collect();
+            for id_path in &group_paths {
+                self.tree_state.close(id_path);
+            }
+            self.tree_state.close(&selected);
+        } else if selected.len() > 1 {
+            // Leaf or already closed — bubble up to parent (like zc)
+            let parent = selected[..selected.len() - 1].to_vec();
+            // Close parent and all its descendants
+            let parent_path = parent.last().cloned().unwrap_or_default();
+            let parent_prefix = format!("{parent_path}/");
+            let group_paths: Vec<Vec<String>> = self.store.node_children.keys()
+                .filter(|p| p.starts_with(&parent_prefix))
+                .map(|p| Self::tree_identifier_path(p))
+                .collect();
+            for id_path in &group_paths {
+                self.tree_state.close(id_path);
+            }
+            self.tree_state.close(&parent);
+            self.tree_state.select(parent);
+            self.on_tree_selection_changed();
+        }
+    }
+
+    /// Open all nodes in the entire tree (zR).
+    fn open_all_tree_nodes(&mut self) {
+        let group_paths: Vec<Vec<String>> = self.store.node_children.keys()
+            .map(|p| Self::tree_identifier_path(p))
+            .collect();
+        for id_path in group_paths {
+            self.tree_state.open(id_path);
         }
     }
 
@@ -1128,7 +1357,15 @@ impl App {
     }
 
     fn handle_enter(&mut self) {
-        self.detail_mode = DetailMode::Node;
+        // Set detail mode based on context
+        match self.focused_pane {
+            Pane::Sidebar | Pane::Detail => self.detail_mode = DetailMode::Node,
+            Pane::Bottom => match self.bottom_tab {
+                BottomTab::Snapshots => self.detail_mode = DetailMode::Snapshot,
+                BottomTab::Branches => self.detail_mode = DetailMode::Branch,
+                BottomTab::Tags => {}
+            },
+        }
         match self.focused_pane {
             Pane::Sidebar => {
                 // Toggle open/close on the selected tree node

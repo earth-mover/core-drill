@@ -6,6 +6,7 @@ use crate::component::BottomTab;
 
 /// Render a tabbed panel: outer border with title, a tab bar, and return the content area.
 /// Used by both the Detail pane and the Bottom (Version Control) pane.
+/// Render a tabbed panel. Returns `(content_area, tab_bar_area)` if there's enough space.
 pub(super) fn render_tabbed_panel(
     title: &str,
     tab_names: &[&str],
@@ -14,7 +15,7 @@ pub(super) fn render_tabbed_panel(
     theme: &crate::theme::Theme,
     frame: &mut Frame,
     area: Rect,
-) -> Option<Rect> {
+) -> Option<(Rect, Rect)> {
     let block = Block::default()
         .title(format!(" {title} "))
         .borders(Borders::ALL)
@@ -55,7 +56,7 @@ pub(super) fn render_tabbed_panel(
         .highlight_style(if focused { theme.selected } else { theme.text });
     frame.render_widget(tabs, chunks[0]);
 
-    Some(chunks[1])
+    Some((chunks[1], chunks[0]))
 }
 
 /// Compute a clamped scroll offset: cap detail_scroll so the last content line

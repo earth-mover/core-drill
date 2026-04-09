@@ -30,6 +30,10 @@ pub enum DetailMode {
     Repo,
     /// Show repository operations log (mutation history)
     OpsLog,
+    /// Show branch detail (commits, storage stats) for selected branch
+    Branch,
+    /// Show snapshot detail (diff) for selected snapshot
+    Snapshot,
 }
 
 /// Actions that components can return from key handling

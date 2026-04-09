@@ -16,7 +16,7 @@ pub(super) fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
         BottomTab::Branches => 1,
         BottomTab::Tags => 2,
     };
-    let content_area = match render_tabbed_panel(
+    let (content_area, _tab_bar) = match render_tabbed_panel(
         "[3] Version Control",
         &["Snapshots", "Branches", "Tags"],
         active_tab,
@@ -25,7 +25,7 @@ pub(super) fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
         frame,
         area,
     ) {
-        Some(area) => area,
+        Some(areas) => areas,
         None => return,
     };
 

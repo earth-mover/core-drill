@@ -634,40 +634,49 @@ pub(crate) async fn fetch_repo_info(
 }
 
 pub(crate) async fn fetch_branches(repo: &Repository) -> color_eyre::Result<Vec<BranchInfo>> {
-    let branch_names = repo.list_branches().await?;
-    let mut result = Vec::with_capacity(branch_names.len());
-    for name in branch_names {
-        let snapshot_id = repo
-            .lookup_branch(&name)
-            .await
-            .map(|id| id.to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
-        result.push(BranchInfo {
-            name: sanitize(&name),
-            snapshot_id,
-            tip_timestamp: None,
-            tip_message: None,
-        });
-    }
+    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await?;
+    let mut result: Vec<BranchInfo> = repo_info
+        .branches()?
+        .map(|(name, snap_id)| {
+            let (tip_timestamp, tip_message) = repo_info
+                .find_snapshot(&snap_id)
+                .map(|info| (Some(info.flushed_at), Some(sanitize(&info.message))))
+                .unwrap_or((None, None));
+            BranchInfo {
+                name: sanitize(name),
+                snapshot_id: snap_id.to_string(),
+                tip_timestamp,
+                tip_message,
+            }
+        })
+        .collect();
+    // Sort: "main" first, then alphabetical
+    result.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
+        ("main", _) => std::cmp::Ordering::Less,
+        (_, "main") => std::cmp::Ordering::Greater,
+        _ => a.name.cmp(&b.name),
+    });
     Ok(result)
 }
 
 pub(crate) async fn fetch_tags(repo: &Repository) -> color_eyre::Result<Vec<TagInfo>> {
-    let tag_names = repo.list_tags().await?;
-    let mut result = Vec::with_capacity(tag_names.len());
-    for name in tag_names {
-        let snapshot_id = repo
-            .lookup_tag(&name)
-            .await
-            .map(|id| id.to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
-        result.push(TagInfo {
-            name: sanitize(&name),
-            snapshot_id,
-            tip_timestamp: None,
-            tip_message: None,
-        });
-    }
+    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await?;
+    let mut result: Vec<TagInfo> = repo_info
+        .tags()?
+        .map(|(name, snap_id)| {
+            let (tip_timestamp, tip_message) = repo_info
+                .find_snapshot(&snap_id)
+                .map(|info| (Some(info.flushed_at), Some(sanitize(&info.message))))
+                .unwrap_or((None, None));
+            TagInfo {
+                name: sanitize(name),
+                snapshot_id: snap_id.to_string(),
+                tip_timestamp,
+                tip_message,
+            }
+        })
+        .collect();
+    result.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(result)
 }
 
@@ -742,14 +751,26 @@ pub(crate) async fn fetch_ancestry(
     repo: &Repository,
     r: &str,
 ) -> color_eyre::Result<Vec<SnapshotEntry>> {
-    use futures::StreamExt;
+    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await?;
 
-    let version = resolve_ref(repo, r).await?;
-    let stream = repo.ancestry(&version).await?;
-    futures::pin_mut!(stream);
+    // Resolve ref to snapshot ID using repo_info (no extra network calls)
+    let snapshot_id = if let Ok(id) = repo_info.resolve_branch(r) {
+        id
+    } else if let Ok(id) = repo_info.resolve_tag(r) {
+        id
+    } else if let Ok(id) = r.try_into() {
+        id
+    } else {
+        color_eyre::eyre::bail!("ref not found: '{r}' (not a branch, tag, or snapshot ID)");
+    };
 
+    // Walk ancestry in-memory. The current repo info file contains ALL snapshots
+    // (each new file copies the full snapshot array + inserts the new one), so
+    // ancestry() gives complete history with no chain-following needed.
+    // The repo_before_updates linked list is for the ops log, not snapshots.
+    let ancestry = repo_info.ancestry(&snapshot_id)?;
     let mut entries = Vec::new();
-    while let Some(result) = stream.next().await {
+    for result in ancestry {
         let info = result?;
         entries.push(SnapshotEntry {
             id: info.id.to_string(),
@@ -874,9 +895,9 @@ pub(crate) async fn fetch_tree_flat(
         }
     }
 
-    // Apply path filter if specified
+    // Apply path filter if specified: exact match, children (/path/...), or prefix (/path*)
     if let Some(filter) = path_filter {
-        flat_nodes.retain(|n| n.path == filter || n.path.starts_with(&format!("{filter}/")));
+        flat_nodes.retain(|n| n.path == filter || n.path.starts_with(filter));
     }
 
     Ok(flat_nodes)
