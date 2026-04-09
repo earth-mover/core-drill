@@ -1,6 +1,23 @@
 # 🔩 core-drill
 
-Terminal UI for inspecting [Icechunk](https://icechunk.io) V2 repositories.
+```
+    ╔════════════╗
+    ║  ┌──────┐  ║
+    ║  │ CORE │  ║
+    ║  │ DRILL│  ║
+    ║  └──┬┬──┘  ║
+    ╚═════╪╪═════╝
+    ──────╫╫──────
+    ░░░░░░╫╫░░░░░░  ◄ snow
+    ▒▒▒▒▒▒╫╫▒▒▒▒▒▒  ◄ firn
+    ▓▓▓▓▓▓╫╫▓▓▓▓▓▓  ◄ ice  (snapshots)
+    ██████╫╫██████  ◄ deep ice  (history)
+    ██████╨╨██████
+```
+
+Terminal UI + MCP for inspecting [Icechunk](https://icechunk.io) V2 repositories.
+
+Drill deep into your Icechunk repos to discover their past.
 
 ## Install
 
@@ -42,7 +59,7 @@ Add core-drill as an MCP server so Claude Code (or any MCP client) can inspect I
 claude mcp add --transport stdio core-drill -- core-drill --serve
 ```
 
-Then from Claude Code, call `open` with any repo path/URL to start exploring.
+Then from Claude Code, ask the agent to investigate repo path/URL to start exploring.
 
 ## Design
 
