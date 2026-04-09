@@ -348,6 +348,8 @@ impl App {
             self.tree_auto_expanded = true;
             // Kick off chunk stats for whatever array got auto-selected
             self.maybe_request_chunk_stats();
+            // Start scanning all arrays in the background
+            self.scan_all_chunk_stats();
         }
 
         // Once branches load, sync the Branches tab selection to current_branch.
@@ -372,6 +374,10 @@ impl App {
             && let Some(first) = entries.first()
         {
             self.current_snapshot = Some(first.id.clone());
+            // Now that we have a snapshot ID, scan any arrays that were waiting
+            if self.tree_auto_expanded {
+                self.scan_all_chunk_stats();
+            }
         }
 
         // Auto-request diff when bottom pane is focused on Snapshots tab
@@ -455,6 +461,43 @@ impl App {
             self.store.submit(DataRequest::ChunkStats {
                 snapshot_id,
                 path: path.clone(),
+            });
+        }
+    }
+
+    /// Submit chunk stats requests for all arrays in the tree.
+    /// Each request is a separate background task, so they run concurrently.
+    fn scan_all_chunk_stats(&mut self) {
+        let snapshot_id = self
+            .selected_snapshot_id()
+            .or_else(|| self.get_branch_tip_snapshot_id());
+        let Some(snapshot_id) = snapshot_id else {
+            return;
+        };
+
+        // Collect all array paths first to avoid borrow conflict with submit()
+        let array_paths: Vec<String> = self
+            .store
+            .node_children
+            .values()
+            .flat_map(|state| match state {
+                LoadState::Loaded(nodes) => nodes
+                    .iter()
+                    .filter(|n| matches!(n.node_type, crate::store::TreeNodeType::Array(_)))
+                    .map(|n| n.path.clone())
+                    .collect::<Vec<_>>(),
+                _ => vec![],
+            })
+            .collect();
+
+        for path in array_paths {
+            let key = (snapshot_id.clone(), path.clone());
+            if self.store.chunk_stats.contains_key(&key) {
+                continue;
+            }
+            self.store.submit(DataRequest::ChunkStats {
+                snapshot_id: snapshot_id.clone(),
+                path,
             });
         }
     }
