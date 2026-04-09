@@ -124,12 +124,13 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         let snapshot_id = app
             .selected_snapshot_id()
             .or_else(|| app.get_branch_tip_snapshot_id());
-        let mut text = array::render_array_detail_header(app, node, summary, inner_width);
+        let (mut text, zarr_meta) = array::render_array_detail_header(app, node, summary, inner_width);
         text.extend(array::render_array_detail_storage(
             app,
             node.path.as_str(),
             snapshot_id.as_deref(),
             summary,
+            zarr_meta.as_ref(),
             inner_width,
         ));
         let scroll = clamped_scroll(app.detail_scroll, text.len(), content_area);

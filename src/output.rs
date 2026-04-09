@@ -525,6 +525,15 @@ pub(crate) fn fmt_tree_line(node: &FlatNode, tree: &[FlatNode]) -> String {
 
 
 pub(crate) fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max { s } else { &s[..max] }
+    if s.len() <= max {
+        s
+    } else {
+        // Find a valid UTF-8 boundary at or before `max`
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        &s[..end]
+    }
 }
 

@@ -4,6 +4,7 @@ use super::{DataStore, LoadState};
 use super::types::TreeNodeType;
 
 /// Aggregated storage stats computed from the current tree + chunk stats cache.
+#[derive(Default)]
 pub(crate) struct StorageStats {
     pub total_arrays: usize,
     pub total_groups: usize,

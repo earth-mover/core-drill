@@ -1,7 +1,6 @@
 use ratatui::prelude::*;
 
 use crate::app::App;
-use crate::store::stats::StorageStats;
 use crate::ui::widgets::{section_header, split_wrap_tokens};
 
 pub(super) fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_current: bool) -> Vec<Line<'a>> {
@@ -112,7 +111,7 @@ pub(super) fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_curre
 
     // ─── Storage Stats (only for active branch — data already loaded) ───
     if is_current {
-        let ss = StorageStats::from_store(&app.store);
+        let ss = app.store.storage_stats();
 
         if ss.total_arrays > 0 || ss.total_groups > 0 {
             lines.push(Line::from(""));

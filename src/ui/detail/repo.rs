@@ -1,7 +1,6 @@
 use ratatui::prelude::*;
 
 use crate::app::App;
-use crate::store::stats::StorageStats;
 use crate::ui::widgets::{format_vcc_prefix, section_header};
 
 pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
@@ -89,7 +88,7 @@ pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
 
     // ─── Storage Summary ─────────────────
     {
-        let ss = StorageStats::from_store(&app.store);
+        let ss = app.store.storage_stats();
 
         if ss.total_arrays > 0 || ss.total_groups > 0 {
             lines.push(Line::from(""));
@@ -168,11 +167,11 @@ pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
 
             // ─── Virtual Sources ─────────────
             if !ss.virtual_prefixes.is_empty() {
-                let mut sorted_prefixes: Vec<(String, usize)> =
-                    ss.virtual_prefixes.into_iter().collect();
+                let mut sorted_prefixes: Vec<(&String, &usize)> =
+                    ss.virtual_prefixes.iter().collect();
                 sorted_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
 
-                let total_vchunks: usize = sorted_prefixes.iter().map(|(_, c)| c).sum();
+                let total_vchunks: usize = sorted_prefixes.iter().map(|(_, c)| **c).sum();
 
                 lines.push(Line::from(""));
                 lines.push(section_header("Virtual Sources"));

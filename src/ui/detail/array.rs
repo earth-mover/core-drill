@@ -3,6 +3,7 @@ use ratatui::prelude::*;
 use crate::app::App;
 use crate::store::LoadState;
 use crate::store::types::ArraySummary;
+use crate::ui::format::ZarrMetadata;
 use crate::ui::widgets::{compute_grid_chunks, fmt_initialized, format_vcc_prefix, labeled_lines, section_header};
 
 /// Render the header + Shape & Layout section for an array node (shown above the canvas viz).
@@ -11,7 +12,7 @@ pub(super) fn render_array_detail_header<'a>(
     node: &crate::store::TreeNode,
     summary: &ArraySummary,
     max_width: u16,
-) -> Vec<Line<'a>> {
+) -> (Vec<Line<'a>>, Option<ZarrMetadata>) {
     let shape_str = summary
         .shape
         .iter()
@@ -148,7 +149,7 @@ pub(super) fn render_array_detail_header<'a>(
         lines.push(summary_line);
     }
 
-    lines
+    (lines, meta)
 }
 
 /// Render the Storage + Attributes + Raw Metadata sections for an array node (shown after the canvas viz).
@@ -157,16 +158,12 @@ pub(super) fn render_array_detail_storage<'a>(
     path: &str,
     snapshot_id: Option<&str>,
     summary: &ArraySummary,
+    meta: Option<&ZarrMetadata>,
     max_width: u16,
 ) -> Vec<Line<'a>> {
-    let meta = if !summary.zarr_metadata.is_empty() {
-        crate::ui::format::ZarrMetadata::parse(&summary.zarr_metadata)
-    } else {
-        None
-    };
 
     // Pre-compute grid size (requires both shape and chunk_shape from metadata)
-    let grid_chunks: Option<u64> = meta.as_ref().and_then(|m| compute_grid_chunks(summary, m));
+    let grid_chunks: Option<u64> = meta.and_then(|m| compute_grid_chunks(summary, m));
 
     let mut lines = Vec::new();
 
@@ -174,7 +171,7 @@ pub(super) fn render_array_detail_storage<'a>(
     lines.push(Line::from(""));
     lines.push(section_header("Storage"));
 
-    if let Some(ref meta) = meta {
+    if let Some(meta) = meta {
         let codec_display = meta.codec_chain_display();
         if !codec_display.is_empty() {
             lines.extend(labeled_lines(
@@ -465,7 +462,7 @@ pub(super) fn render_array_detail_storage<'a>(
     }
 
     // ─── Attributes ──────────────────────
-    if let Some(ref meta) = meta
+    if let Some(meta) = meta
         && !meta.attributes.is_empty()
     {
         lines.push(Line::from(""));
@@ -489,7 +486,7 @@ pub(super) fn render_array_detail_storage<'a>(
     }
 
     // ─── Raw Metadata ────────────────────
-    if let Some(ref meta) = meta
+    if let Some(meta) = meta
         && !meta.extra_fields.is_empty()
     {
         lines.push(Line::from(""));

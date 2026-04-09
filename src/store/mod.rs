@@ -14,7 +14,6 @@ pub use types::*;
 
 /// Broad error categories for user-friendly display
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum ErrorKind {
     /// 401/403, expired tokens, access denied
     Auth,
@@ -28,7 +27,6 @@ pub enum ErrorKind {
 
 /// Classify an error string into a user-facing category.
 /// Pattern-matches common substrings from icechunk/object_store/reqwest errors.
-#[allow(dead_code)]
 pub fn classify_error(msg: &str) -> ErrorKind {
     let lower = msg.to_lowercase();
     if lower.contains("403")
@@ -72,7 +70,6 @@ pub enum LoadState<T> {
 }
 
 impl<T> LoadState<T> {
-    #[allow(dead_code)]
     pub fn is_loaded(&self) -> bool {
         matches!(self, LoadState::Loaded(_))
     }
@@ -121,7 +118,6 @@ pub enum DataRequest {
     },
     /// Fetch repository configuration, status, and feature flags.
     RepoConfig,
-    #[allow(dead_code)]
     OpsLog,
 }
 
@@ -164,6 +160,9 @@ pub struct DataStore {
     pub repo_config: LoadState<RepoConfig>,
     pub ops_log: LoadState<Vec<OpsLogEntry>>,
 
+    // Cached aggregation — invalidated when node_children or chunk_stats change
+    cached_storage_stats: Option<stats::StorageStats>,
+
     // Channel for sending requests to background worker
     request_tx: mpsc::UnboundedSender<DataRequest>,
     // Channel for receiving responses from background worker
@@ -188,9 +187,21 @@ impl DataStore {
             chunk_stats: HashMap::new(),
             repo_config: LoadState::NotRequested,
             ops_log: LoadState::NotRequested,
+            cached_storage_stats: None,
             request_tx,
             response_rx,
         }
+    }
+
+    /// Get cached storage stats. Recomputed automatically when nodes or chunk stats change.
+    pub(crate) fn storage_stats(&self) -> &stats::StorageStats {
+        static DEFAULT: std::sync::LazyLock<stats::StorageStats> =
+            std::sync::LazyLock::new(stats::StorageStats::default);
+        self.cached_storage_stats.as_ref().unwrap_or(&DEFAULT)
+    }
+
+    fn recompute_storage_stats(&mut self) {
+        self.cached_storage_stats = Some(stats::StorageStats::from_store(self));
     }
 
     /// Submit a data request to the background worker.
@@ -258,19 +269,6 @@ impl DataStore {
         had_responses
     }
 
-    /// Resolve a NodeId string (Crockford Base32) to a path string using the
-    /// node_children cache. Falls back to a `<node:ID>` placeholder if not found.
-    fn node_id_to_path(&self, node_id: &str) -> String {
-        for state in self.node_children.values() {
-            if let LoadState::Loaded(nodes) = state
-                && let Some(node) = nodes.iter().find(|n| n.node_id == node_id)
-            {
-                return node.path.clone();
-            }
-        }
-        format!("<node:{}>", node_id)
-    }
-
     fn apply_response(&mut self, response: DataResponse) {
         match response {
             DataResponse::Branches(result) => {
@@ -293,7 +291,8 @@ impl DataStore {
                 self.ancestry.insert(branch, state);
             }
             DataResponse::AllNodes(result) => {
-                self.node_children.clear(); // Replace, don't merge
+                self.node_children.clear();
+                self.recompute_storage_stats();
                 match result {
                     Ok(children_by_parent) => {
                         for (parent_path, nodes) in children_by_parent {
@@ -315,43 +314,58 @@ impl DataStore {
                     Ok(raw) => {
                         // Resolve NodeId strings to paths using the cached node_children.
                         // This is pure in-memory work — zero network calls.
+                        // Build a temporary lookup table O(N) once instead of
+                        // scanning all nodes O(N) per ID lookup (was O(N*M)).
+                        let id_to_path: HashMap<&str, &str> = self
+                            .node_children
+                            .values()
+                            .filter_map(|s| s.as_loaded())
+                            .flat_map(|nodes| nodes.iter())
+                            .map(|n| (n.node_id.as_str(), n.path.as_str()))
+                            .collect();
+                        let resolve = |id: &str| -> String {
+                            id_to_path
+                                .get(id)
+                                .map(|p| (*p).to_string())
+                                .unwrap_or_else(|| format!("<node:{}>", id))
+                        };
                         let summary = DiffSummary {
                             snapshot_id: raw.snapshot_id,
                             parent_id: raw.parent_id,
                             added_arrays: raw
                                 .added_array_ids
                                 .iter()
-                                .map(|id| self.node_id_to_path(id))
+                                .map(|id| resolve(id))
                                 .collect(),
                             added_groups: raw
                                 .added_group_ids
                                 .iter()
-                                .map(|id| self.node_id_to_path(id))
+                                .map(|id| resolve(id))
                                 .collect(),
                             deleted_arrays: raw
                                 .deleted_array_ids
                                 .iter()
-                                .map(|id| self.node_id_to_path(id))
+                                .map(|id| resolve(id))
                                 .collect(),
                             deleted_groups: raw
                                 .deleted_group_ids
                                 .iter()
-                                .map(|id| self.node_id_to_path(id))
+                                .map(|id| resolve(id))
                                 .collect(),
                             modified_arrays: raw
                                 .modified_array_ids
                                 .iter()
-                                .map(|id| self.node_id_to_path(id))
+                                .map(|id| resolve(id))
                                 .collect(),
                             modified_groups: raw
                                 .modified_group_ids
                                 .iter()
-                                .map(|id| self.node_id_to_path(id))
+                                .map(|id| resolve(id))
                                 .collect(),
                             chunk_changes: raw
                                 .chunk_change_ids
                                 .iter()
-                                .map(|(id, count)| (self.node_id_to_path(id), *count))
+                                .map(|(id, count)| (resolve(id), *count))
                                 .collect(),
                             moved_nodes: raw
                                 .moved_node_ids
@@ -376,6 +390,7 @@ impl DataStore {
                     Err(e) => LoadState::Error(e),
                 };
                 self.chunk_stats.insert((snapshot_id, path), state);
+                self.recompute_storage_stats();
             }
             DataResponse::RepoConfig(result) => {
                 self.repo_config = match result {
