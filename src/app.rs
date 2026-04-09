@@ -668,7 +668,8 @@ impl App {
                 } else if self.focused_pane == Pane::Detail {
                     self.detail_mode = match self.detail_mode {
                         DetailMode::Node => DetailMode::Repo,
-                        DetailMode::Repo => DetailMode::Node,
+                        DetailMode::Repo => DetailMode::OpsLog,
+                        DetailMode::OpsLog => DetailMode::Node,
                     };
                     self.detail_scroll = 0;
                 } else {
@@ -697,8 +698,9 @@ impl App {
                     self.switch_bottom_tab(prev);
                 } else if self.focused_pane == Pane::Detail {
                     self.detail_mode = match self.detail_mode {
-                        DetailMode::Node => DetailMode::Repo,
+                        DetailMode::Node => DetailMode::OpsLog,
                         DetailMode::Repo => DetailMode::Node,
+                        DetailMode::OpsLog => DetailMode::Repo,
                     };
                     self.detail_scroll = 0;
                 } else {
@@ -746,6 +748,11 @@ impl App {
             }
             KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Detail => {
                 match self.detail_mode {
+                    DetailMode::OpsLog => {
+                        self.detail_mode = DetailMode::Repo;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
                     DetailMode::Repo => {
                         self.detail_mode = DetailMode::Node;
                         self.detail_scroll = 0;
@@ -764,7 +771,11 @@ impl App {
                         return Action::None;
                     }
                     DetailMode::Repo => {
-                        // Already at rightmost tab, nowhere to go
+                        self.detail_mode = DetailMode::OpsLog;
+                        self.detail_scroll = 0;
+                        return Action::None;
+                    }
+                    DetailMode::OpsLog => {
                         return Action::None;
                     }
                 }

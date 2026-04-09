@@ -28,6 +28,8 @@ pub enum DetailMode {
     Node,
     /// Show repository overview (config, feature flags, status)
     Repo,
+    /// Show repository operations log (mutation history)
+    OpsLog,
 }
 
 /// Actions that components can return from key handling
