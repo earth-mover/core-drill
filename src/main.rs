@@ -250,7 +250,7 @@ async fn open_via_arraylake(
         })
         .unwrap_or_else(|| "?".to_string());
 
-    eprintln!("Arraylake: {org}/{repo_name}  →  {bucket_name} ({platform}, {region})");
+    tracing::info!("Arraylake: {org}/{repo_name}  →  {bucket_name} ({platform}, {region})");
 
     let storage = client
         .get_storage_for_repo(&repo_info)
