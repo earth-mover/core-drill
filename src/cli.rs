@@ -34,9 +34,10 @@ pub struct Cli {
     #[arg(long)]
     pub endpoint_url: Option<String>,
 
-    /// Arraylake API endpoint (used when REPO is an org/repo reference)
-    #[arg(long, default_value = "https://dev.api.earthmover.io")]
-    pub arraylake_api: String,
+    /// Arraylake API endpoint (used when REPO is an al:org/repo reference).
+    /// If not set, uses the arraylake crate default.
+    #[arg(long)]
+    pub arraylake_api: Option<String>,
 
     /// Output format for non-interactive use
     ///

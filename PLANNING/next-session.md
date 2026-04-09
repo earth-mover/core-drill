@@ -34,7 +34,7 @@
 The MCP now has feature parity. Test it:
 1. Rebuild: `cargo build`
 2. MCP is already configured: `claude mcp add --transport stdio core-drill -- ./target/debug/core-drill --serve`
-3. Have an agent explore `al:earthmover-demos/subsync-e2e-test-again-target-3` using ALL 10 tools
+3. Have an agent explore an Arraylake repo using ALL 10 tools
 4. Also test with a larger repo (e.g., ERA5 WeatherBench2) for performance
 5. Fix any issues found
 

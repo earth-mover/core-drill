@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
         let (repo, label) = if let Some(ref repo_str) = cli.repo {
             let (repository, repo_id) = open_repo(
                 repo_str,
-                &cli.arraylake_api,
+                cli.arraylake_api.as_deref(),
                 &repo::StorageOverrides {
                     region: cli.region.clone(),
                     endpoint_url: cli.endpoint_url.clone(),
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
             &label,
             async move {
                 if is_arraylake {
-                    open_via_arraylake(&repo_str, &api_url).await
+                    open_via_arraylake(&repo_str, api_url.as_deref()).await
                 } else {
                     let repo = repo::open(&repo_str, &overrides).await?;
                     let identity = if repo_str.contains("://") {
@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
 
         let (repository, repo_id) = open_repo(
             &repo_str,
-            &cli.arraylake_api,
+            cli.arraylake_api.as_deref(),
             &repo::StorageOverrides {
                 region: cli.region.clone(),
                 endpoint_url: cli.endpoint_url.clone(),
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
 /// Shared by main dispatch and MCP server's `open` tool.
 pub async fn open_repo(
     repo_str: &str,
-    arraylake_api: &str,
+    arraylake_api: Option<&str>,
     overrides: &repo::StorageOverrides,
 ) -> Result<(icechunk::Repository, app::RepoIdentity)> {
     if looks_like_arraylake_ref(repo_str) {
@@ -162,14 +162,19 @@ fn looks_like_arraylake_ref(s: &str) -> bool {
 
 /// Open a repo via Arraylake, handling credentials automatically.
 /// Reads the OAuth token from ~/.arraylake/token.json.
+/// API endpoint priority: explicit arg > ARRAYLAKE_SERVICE__URI env > crate default.
 async fn open_via_arraylake(
     al_ref: &str,
-    api_url: &str,
+    api_url: Option<&str>,
 ) -> Result<(icechunk::Repository, app::RepoIdentity)> {
     let ref_str = al_ref.strip_prefix("al:").unwrap_or(al_ref);
     let (org, repo_name) = ref_str.split_once('/').ok_or_else(|| {
         color_eyre::eyre::eyre!("Invalid Arraylake ref: expected 'al:org/repo', got '{al_ref}'")
     })?;
+
+    // Resolve API endpoint: CLI flag > env var > crate default (None)
+    let env_api = std::env::var("ARRAYLAKE_SERVICE__URI").ok();
+    let api_url = api_url.or(env_api.as_deref());
 
     // Read token from ~/.arraylake/token.json
     let home = std::env::var("HOME")
@@ -190,7 +195,7 @@ async fn open_via_arraylake(
         .ok_or_else(|| color_eyre::eyre::eyre!("No id_token in Arraylake token file"))?;
 
     let client = Arc::new(
-        arraylake::ALClient::new(Some(api_url.to_string()), id_token.to_string())
+        arraylake::ALClient::new(api_url.map(|s| s.to_string()), id_token.to_string())
             .map_err(|e| color_eyre::eyre::eyre!("Failed to create Arraylake client: {e}"))?,
     );
 
@@ -198,14 +203,14 @@ async fn open_via_arraylake(
     // Verify auth first with a quick user check
     if let Err(e) = client.get_current_user().await {
         color_eyre::eyre::bail!(
-            "Arraylake authentication failed ({api_url}):\n  {e}\n\n\
+            "Arraylake authentication failed:\n  {e}\n\n\
              Run `arraylake auth login` to refresh your token."
         );
     }
 
     let repo_info = client.get_repo_info(org, repo_name).await.map_err(|e| {
         color_eyre::eyre::eyre!(
-            "Repo '{ref_str}' not found on {api_url}:\n  {e}\n\n\
+            "Repo '{ref_str}' not found:\n  {e}\n\n\
              Check the org/repo name, or verify access with `arraylake repo list {org}`."
         )
     })?;

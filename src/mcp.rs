@@ -71,7 +71,7 @@ struct OpenParams {
     region: Option<String>,
     /// Storage endpoint URL (optional, for S3-compatible services)
     endpoint_url: Option<String>,
-    /// Arraylake API endpoint (optional, defaults to https://dev.api.earthmover.io)
+    /// Arraylake API endpoint (optional, uses arraylake crate default if not set)
     arraylake_api: Option<String>,
 }
 
@@ -268,15 +268,12 @@ impl CoreDrillServer {
     async fn open(&self, Parameters(params): Parameters<OpenParams>) -> String {
         let _start = std::time::Instant::now();
         info!("MCP open: repo={}", params.repo);
-        let arraylake_api = params
-            .arraylake_api
-            .unwrap_or_else(|| "https://dev.api.earthmover.io".to_string());
         let overrides = repo::StorageOverrides {
             region: params.region,
             endpoint_url: params.endpoint_url,
         };
 
-        let result = match crate::open_repo(&params.repo, &arraylake_api, &overrides).await {
+        let result = match crate::open_repo(&params.repo, params.arraylake_api.as_deref(), &overrides).await {
             Ok((repository, identity)) => {
                 let label = identity.display_short();
                 let msg = format!("Opened repository: {label}");
