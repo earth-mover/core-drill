@@ -735,10 +735,23 @@ async fn fetch_repo_config(repo: &Repository) -> Result<RepoConfig, String> {
         Err(_) => vec![],
     };
 
+    // Virtual chunk containers
+    let vcc = config
+        .virtual_chunk_containers
+        .as_ref()
+        .map(|containers| {
+            containers
+                .iter()
+                .map(|(name, container)| (sanitize(name), sanitize(container.url_prefix())))
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(RepoConfig {
         spec_version,
         inline_chunk_threshold: inline_threshold,
         availability,
         feature_flags: flags,
+        virtual_chunk_containers: vcc,
     })
 }

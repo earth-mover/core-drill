@@ -119,6 +119,8 @@ pub struct RepoConfig {
     pub inline_chunk_threshold: Option<u16>,
     pub availability: String,
     pub feature_flags: Vec<FeatureFlagInfo>,
+    /// Virtual chunk container names → URL prefixes
+    pub virtual_chunk_containers: Vec<(String, String)>,
 }
 
 /// A single feature flag with its state

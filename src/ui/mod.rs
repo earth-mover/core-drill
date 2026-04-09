@@ -1332,6 +1332,18 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                 ]));
             }
         }
+
+        // ─── Virtual Chunk Containers ───
+        if !config.virtual_chunk_containers.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(section_header("Virtual Sources"));
+            for (name, prefix) in &config.virtual_chunk_containers {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {name}: "), app.theme.text_dim),
+                    Span::styled(prefix.clone(), app.theme.text),
+                ]));
+            }
+        }
     }
 
     lines.push(Line::from(""));
