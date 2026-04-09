@@ -491,17 +491,20 @@ impl CoreDrillServer {
     async fn tree(&self, Parameters(params): Parameters<TreeParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_tree_flat(&repo, &params.r#ref, params.path.as_deref()).await {
+        // Resolve ref once upfront — reused for both tree and chunk stats.
+        let snap_id = match output::resolve_ref_to_snapshot_id(&repo, &params.r#ref).await {
+            Ok(id) => id,
+            Err(e) => return format!("Error resolving ref: {e}"),
+        };
+        let result = match output::fetch_tree_flat(&repo, &snap_id, params.path.as_deref()).await {
             Ok(tree) => {
                 if let Some(ref filter_path) = params.path {
                     if let Some(node) = tree.iter().find(|n| n.path == *filter_path) {
                         let mut out = output::fmt_node_detail(node);
                         // Append chunk stats for arrays
                         if node.is_array() {
-                            if let Ok(snap_id) = output::resolve_ref_to_snapshot_id(&repo, &params.r#ref).await {
-                                if let Ok(stats) = output::fetch_chunk_stats(&repo, &snap_id, &node.path).await {
-                                    out.push_str(&fmt_chunk_stats(&stats));
-                                }
+                            if let Ok(stats) = output::fetch_chunk_stats(&repo, &snap_id, &node.path).await {
+                                out.push_str(&fmt_chunk_stats(&stats));
                             }
                         }
                         out
