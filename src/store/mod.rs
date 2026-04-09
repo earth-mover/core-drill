@@ -630,77 +630,15 @@ async fn fetch_all_nodes(
 }
 
 /// Fetch chunk type statistics for an array node by iterating all its chunks.
+/// Delegates to the shared implementation in output.rs.
 async fn fetch_chunk_stats(
     repo: &Repository,
     snapshot_id: &str,
     path: &str,
 ) -> Result<ChunkStats, String> {
-    use futures::StreamExt;
-    use icechunk::format::SnapshotId;
-    use icechunk::repository::VersionInfo;
-
-    let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| e.to_string())?;
-    let version = VersionInfo::SnapshotId(snap_id);
-    let session = repo
-        .readonly_session(&version)
+    crate::output::fetch_chunk_stats(repo, snapshot_id, path)
         .await
-        .map_err(|e| e.to_string())?;
-    let node_path = icechunk::format::Path::try_from(path)
-        .map_err(|e: icechunk::format::PathError| e.to_string())?;
-
-    let mut total = 0usize;
-    let mut inline = 0usize;
-    let mut inline_total_bytes = 0u64;
-    let mut native = 0usize;
-    let mut native_total_bytes = 0u64;
-    let mut virtual_count = 0usize;
-    let mut virtual_total_bytes = 0u64;
-    let mut url_counts: HashMap<String, usize> = HashMap::new();
-
-    let stream = session.array_chunk_iterator(&node_path).await;
-    futures::pin_mut!(stream);
-
-    while let Some(result) = stream.next().await {
-        let chunk_info = result.map_err(|e| e.to_string())?;
-        total += 1;
-        match &chunk_info.payload {
-            icechunk::format::manifest::ChunkPayload::Inline(bytes) => {
-                inline += 1;
-                inline_total_bytes += bytes.len() as u64;
-            }
-            icechunk::format::manifest::ChunkPayload::Ref(chunk_ref) => {
-                native += 1;
-                native_total_bytes += chunk_ref.length;
-            }
-            icechunk::format::manifest::ChunkPayload::Virtual(vref) => {
-                virtual_count += 1;
-                virtual_total_bytes += vref.length;
-                // Extract URL prefix (everything up to and including the last '/')
-                let url = vref.location.url();
-                let prefix = url.rsplit_once('/').map(|x| x.0).unwrap_or(url).to_string();
-                *url_counts.entry(prefix).or_insert(0) += 1;
-            }
-            _ => {}
-        }
-    }
-
-    let virtual_source_count = url_counts.len();
-    let mut virtual_prefixes: Vec<(String, usize)> = url_counts.into_iter().collect();
-    virtual_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
-    virtual_prefixes.truncate(10);
-
-    Ok(ChunkStats {
-        total_chunks: total,
-        inline_count: inline,
-        inline_total_bytes,
-        native_count: native,
-        native_total_bytes,
-        virtual_count,
-        virtual_prefixes,
-        virtual_source_count,
-        virtual_total_bytes,
-        stats_complete: true,
-    })
+        .map_err(|e| e.to_string())
 }
 
 /// Fetch the diff between a snapshot and its parent using only the transaction log.
@@ -769,112 +707,17 @@ async fn fetch_diff(
 }
 
 /// Fetch repository configuration, status, and feature flags.
+/// Delegates to the shared implementation in output.rs.
 async fn fetch_repo_config(repo: &Repository) -> Result<RepoConfig, String> {
-    let config = repo.config();
-    let spec_version = repo.spec_version().to_string();
-    let inline_threshold = config.inline_chunk_threshold_bytes;
-
-    // Fetch status
-    let availability = match repo.get_status().await {
-        Ok(status) => format!("{:?}", status.availability),
-        Err(_) => "unknown".to_string(),
-    };
-
-    // Fetch feature flags
-    let flags = match repo.feature_flags().await {
-        Ok(iter) => iter
-            .map(|f| FeatureFlagInfo {
-                name: sanitize(f.name()),
-                enabled: f.enabled(),
-                explicit: f.setting().is_some(),
-            })
-            .collect(),
-        Err(_) => vec![],
-    };
-
-    // Virtual chunk containers
-    let vcc = config
-        .virtual_chunk_containers
-        .as_ref()
-        .map(|containers| {
-            containers
-                .iter()
-                .map(|(name, container)| (sanitize(name), sanitize(container.url_prefix())))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(RepoConfig {
-        spec_version,
-        inline_chunk_threshold: inline_threshold,
-        availability,
-        feature_flags: flags,
-        virtual_chunk_containers: vcc,
-    })
+    crate::output::fetch_repo_config(repo)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Fetch the repository operations log (mutation history).
+/// Delegates to the shared implementation in output.rs.
 async fn fetch_ops_log(repo: &Repository) -> Result<Vec<OpsLogEntry>, String> {
-    use futures::StreamExt;
-    use icechunk::format::repo_info::UpdateType;
-
-    let (stream, _repo_info, _version) = repo.ops_log().await.map_err(|e| e.to_string())?;
-    futures::pin_mut!(stream);
-
-    let mut entries = Vec::new();
-    while let Some(result) = stream.next().await {
-        let (timestamp, update_type, backup_path) = result.map_err(|e| e.to_string())?;
-
-        let description = match &update_type {
-            UpdateType::RepoInitializedUpdate => "Repository initialized".to_string(),
-            UpdateType::RepoMigratedUpdate {
-                from_version,
-                to_version,
-            } => format!("Migrated from v{from_version} to v{to_version}"),
-            UpdateType::RepoStatusChangedUpdate { status } => {
-                format!("Status changed to {status:?}")
-            }
-            UpdateType::ConfigChangedUpdate => "Configuration changed".to_string(),
-            UpdateType::MetadataChangedUpdate => "Metadata changed".to_string(),
-            UpdateType::TagCreatedUpdate { name } => format!("Tag created: {}", sanitize(name)),
-            UpdateType::TagDeletedUpdate { name, .. } => {
-                format!("Tag deleted: {}", sanitize(name))
-            }
-            UpdateType::BranchCreatedUpdate { name } => {
-                format!("Branch created: {}", sanitize(name))
-            }
-            UpdateType::BranchDeletedUpdate { name, .. } => {
-                format!("Branch deleted: {}", sanitize(name))
-            }
-            UpdateType::BranchResetUpdate { name, .. } => {
-                format!("Branch reset: {}", sanitize(name))
-            }
-            UpdateType::NewCommitUpdate {
-                branch,
-                new_snap_id,
-            } => format!(
-                "Commit on {}: {}",
-                sanitize(branch),
-                &new_snap_id.to_string()[..12]
-            ),
-            UpdateType::CommitAmendedUpdate { branch, .. } => {
-                format!("Commit amended on {}", sanitize(branch))
-            }
-            UpdateType::NewDetachedSnapshotUpdate { new_snap_id } => {
-                format!("Detached snapshot: {}", &new_snap_id.to_string()[..12])
-            }
-            UpdateType::GCRanUpdate => "Garbage collection ran".to_string(),
-            UpdateType::ExpirationRanUpdate => "Snapshot expiration ran".to_string(),
-            UpdateType::FeatureFlagChanged { id, new_value } => {
-                format!("Feature flag '{id}' → {new_value:?}")
-            }
-        };
-
-        entries.push(OpsLogEntry {
-            timestamp,
-            description,
-            backup_path,
-        });
-    }
-    Ok(entries)
+    crate::output::fetch_ops_log(repo, None)
+        .await
+        .map_err(|e| e.to_string())
 }

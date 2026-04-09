@@ -914,3 +914,193 @@ pub(crate) async fn fetch_ops_log(
     }
     Ok(entries)
 }
+
+/// Fetch chunk type statistics for an array node by iterating all its chunks.
+pub(crate) async fn fetch_chunk_stats(
+    repo: &Repository,
+    snapshot_id: &str,
+    path: &str,
+) -> color_eyre::Result<ChunkStats> {
+    use futures::StreamExt;
+    use icechunk::format::SnapshotId;
+    use icechunk::repository::VersionInfo;
+    use std::collections::HashMap;
+
+    let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| color_eyre::eyre::eyre!(e))?;
+    let version = VersionInfo::SnapshotId(snap_id);
+    let session = repo.readonly_session(&version).await?;
+    let node_path = icechunk::format::Path::try_from(path)?;
+
+    let mut total = 0usize;
+    let mut inline = 0usize;
+    let mut inline_total_bytes = 0u64;
+    let mut native = 0usize;
+    let mut native_total_bytes = 0u64;
+    let mut virtual_count = 0usize;
+    let mut virtual_total_bytes = 0u64;
+    let mut url_counts: HashMap<String, usize> = HashMap::new();
+
+    let stream = session.array_chunk_iterator(&node_path).await;
+    futures::pin_mut!(stream);
+
+    while let Some(result) = stream.next().await {
+        let chunk_info = result?;
+        total += 1;
+        match &chunk_info.payload {
+            icechunk::format::manifest::ChunkPayload::Inline(bytes) => {
+                inline += 1;
+                inline_total_bytes += bytes.len() as u64;
+            }
+            icechunk::format::manifest::ChunkPayload::Ref(chunk_ref) => {
+                native += 1;
+                native_total_bytes += chunk_ref.length;
+            }
+            icechunk::format::manifest::ChunkPayload::Virtual(vref) => {
+                virtual_count += 1;
+                virtual_total_bytes += vref.length;
+                let url = vref.location.url();
+                let prefix = url.rsplit_once('/').map(|x| x.0).unwrap_or(url).to_string();
+                *url_counts.entry(prefix).or_insert(0) += 1;
+            }
+            _ => {}
+        }
+    }
+
+    let virtual_source_count = url_counts.len();
+    let mut virtual_prefixes: Vec<(String, usize)> = url_counts.into_iter().collect();
+    virtual_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
+    virtual_prefixes.truncate(10);
+
+    Ok(ChunkStats {
+        total_chunks: total,
+        inline_count: inline,
+        inline_total_bytes,
+        native_count: native,
+        native_total_bytes,
+        virtual_count,
+        virtual_prefixes,
+        virtual_source_count,
+        virtual_total_bytes,
+        stats_complete: true,
+    })
+}
+
+/// Fetch the diff for a snapshot with resolved paths (for CLI/MCP output).
+pub(crate) async fn fetch_diff(
+    repo: &Repository,
+    snapshot_id: &str,
+    parent_id: Option<&str>,
+) -> color_eyre::Result<DiffDetail> {
+    use icechunk::format::SnapshotId;
+    use std::collections::HashMap;
+
+    // Initial commit: no parent, return empty diff
+    if parent_id.is_none() {
+        return Ok(DiffDetail {
+            snapshot_id: snapshot_id.to_string(),
+            parent_id: None,
+            added_arrays: vec![],
+            added_groups: vec![],
+            deleted_arrays: vec![],
+            deleted_groups: vec![],
+            modified_arrays: vec![],
+            modified_groups: vec![],
+            chunk_changes: vec![],
+            is_initial_commit: true,
+        });
+    }
+
+    let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| color_eyre::eyre::eyre!(e))?;
+
+    // Fetch transaction log (1 S3 fetch)
+    let tx_log = repo.asset_manager().fetch_transaction_log(&snap_id).await?;
+
+    let added_array_ids: Vec<String> = tx_log.new_arrays().map(|id| id.to_string()).collect();
+    let added_group_ids: Vec<String> = tx_log.new_groups().map(|id| id.to_string()).collect();
+    let deleted_array_ids: Vec<String> = tx_log.deleted_arrays().map(|id| id.to_string()).collect();
+    let deleted_group_ids: Vec<String> = tx_log.deleted_groups().map(|id| id.to_string()).collect();
+    let modified_array_ids: Vec<String> = tx_log.updated_arrays().map(|id| id.to_string()).collect();
+    let modified_group_ids: Vec<String> = tx_log.updated_groups().map(|id| id.to_string()).collect();
+    let chunk_change_ids: Vec<(String, usize)> = tx_log
+        .updated_chunks()
+        .map(|(node_id, chunks_iter)| (node_id.to_string(), chunks_iter.count()))
+        .collect();
+
+    // Build NodeId→Path map by listing all nodes at this snapshot
+    let version = icechunk::repository::VersionInfo::SnapshotId(snap_id);
+    let session = repo.readonly_session(&version).await?;
+    let nodes_iter = session.list_nodes(&icechunk::format::Path::root()).await?;
+
+    let mut id_to_path: HashMap<String, String> = HashMap::new();
+    for node_result in nodes_iter {
+        let node = node_result?;
+        id_to_path.insert(node.id.to_string(), sanitize(&node.path.to_string()));
+    }
+
+    let resolve = |id: &str| -> String {
+        id_to_path
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| format!("<node:{}>", id))
+    };
+
+    Ok(DiffDetail {
+        snapshot_id: snapshot_id.to_string(),
+        parent_id: parent_id.map(|s| s.to_string()),
+        added_arrays: added_array_ids.iter().map(|id| resolve(id)).collect(),
+        added_groups: added_group_ids.iter().map(|id| resolve(id)).collect(),
+        deleted_arrays: deleted_array_ids.iter().map(|id| resolve(id)).collect(),
+        deleted_groups: deleted_group_ids.iter().map(|id| resolve(id)).collect(),
+        modified_arrays: modified_array_ids.iter().map(|id| resolve(id)).collect(),
+        modified_groups: modified_group_ids.iter().map(|id| resolve(id)).collect(),
+        chunk_changes: chunk_change_ids
+            .iter()
+            .map(|(id, count)| (resolve(id), *count))
+            .collect(),
+        is_initial_commit: false,
+    })
+}
+
+/// Fetch repository configuration, status, and feature flags.
+pub(crate) async fn fetch_repo_config(
+    repo: &Repository,
+) -> color_eyre::Result<RepoConfig> {
+    let config = repo.config();
+    let spec_version = repo.spec_version().to_string();
+    let inline_threshold = config.inline_chunk_threshold_bytes;
+
+    let availability = match repo.get_status().await {
+        Ok(status) => format!("{:?}", status.availability),
+        Err(_) => "unknown".to_string(),
+    };
+
+    let flags = match repo.feature_flags().await {
+        Ok(iter) => iter
+            .map(|f| FeatureFlagInfo {
+                name: sanitize(f.name()),
+                enabled: f.enabled(),
+                explicit: f.setting().is_some(),
+            })
+            .collect(),
+        Err(_) => vec![],
+    };
+
+    let vcc = config
+        .virtual_chunk_containers
+        .as_ref()
+        .map(|containers| {
+            containers
+                .iter()
+                .map(|(name, container)| (sanitize(name), sanitize(container.url_prefix())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(RepoConfig {
+        spec_version,
+        inline_chunk_threshold: inline_threshold,
+        availability,
+        feature_flags: flags,
+        virtual_chunk_containers: vcc,
+    })
+}

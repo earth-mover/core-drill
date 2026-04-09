@@ -132,6 +132,22 @@ pub struct FeatureFlagInfo {
     pub explicit: bool,
 }
 
+/// Diff with resolved paths (for CLI/MCP output)
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffDetail {
+    pub snapshot_id: String,
+    pub parent_id: Option<String>,
+    pub added_arrays: Vec<String>,
+    pub added_groups: Vec<String>,
+    pub deleted_arrays: Vec<String>,
+    pub deleted_groups: Vec<String>,
+    pub modified_arrays: Vec<String>,
+    pub modified_groups: Vec<String>,
+    /// (path, chunk_count)
+    pub chunk_changes: Vec<(String, usize)>,
+    pub is_initial_commit: bool,
+}
+
 /// A single entry from the repository operations log
 #[derive(Debug, Clone, Serialize)]
 pub struct OpsLogEntry {
