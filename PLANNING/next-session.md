@@ -9,14 +9,24 @@
 - Aggregated virtual sources in repo overview with de-duplicated counts
 - Background chunk stats scan: drip-fed at 4 concurrent, non-blocking startup
 
-## Priority 1: Agent Testing & Real-World Polish
+## Priority 1: MCP Server Improvements
 
-The MCP server and CLI output are functional but untested with real agents.
+The MCP server is the primary interface for AI agents. It needs feature parity and real-world testing.
 
-- **MCP server**: Configure in Claude Code settings, have an agent investigate a real arraylake repo. Capture friction points.
-- **CLI markdown**: Have an agent pipe `--output md` commands. Is the output token-efficient and actionable?
-- **Large repo perf**: Test fuzzy search and background scan on repos with 100+ arrays. Does the drip-feed feel right? Should the concurrency be tunable?
-- **Arraylake repos**: Test with real org/repo on dev API. Verify VCC display, ops log, credential flow.
+### Missing MCP tools (build these first)
+- **`ops-log`** — Expose `fetch_ops_log` as an MCP tool (matches CLI `ops-log` subcommand). Params: `limit`.
+- **`diff`** — Show what changed between two snapshots (added/deleted/modified nodes, chunk changes). This is the most useful tool for agents investigating repo history. Params: `snapshot_id`, or `from`/`to` refs.
+- **`array-detail`** — Detailed array inspection: shape, dtype, codecs, chunk stats (inline/native/virtual breakdown), virtual source URLs. Currently `tree --path` gives metadata but not chunk stats. Params: `path`, `ref`.
+- **`config`** — Repository config, feature flags, virtual chunk containers, status. Currently only in `info` output but buried.
+
+### MCP polish
+- Tool descriptions should guide agents on WHEN to use each tool, not just what it does.
+- `info` tool currently dumps everything — consider making it lighter (overview only) and pointing agents to drill-down tools.
+- Test with Claude Code: configure as MCP server, have an agent investigate `al:earthmover/...` repo. Capture what's missing or confusing.
+
+### CLI output
+- Ensure `--output md` and `--output json` cover all the same data as MCP tools.
+- Test token efficiency — are the markdown tables too wide? Should we truncate snapshot IDs shorter?
 
 ## Priority 2: Clipboard & Export
 

@@ -167,13 +167,19 @@ core-drill al:org/repo --repl --output md
 
 When running with `--serve`, these tools are exposed:
 
-| Tool | Description |
-|------|-------------|
-| `info` | Repository overview |
-| `branches` | List all branches |
-| `tags` | List all tags |
-| `log` | Snapshot history |
-| `tree` | Node tree (with optional path filter) |
+| Tool | Params | Description |
+|------|--------|-------------|
+| `info` | — | Repository overview (branches, tags, recent snapshots, full tree) |
+| `branches` | — | List all branches with snapshot IDs |
+| `tags` | — | List all tags with snapshot IDs |
+| `log` | `ref`, `limit` | Snapshot history for a branch/tag/snapshot |
+| `tree` | `ref`, `path` | Node tree; use `path` to get detailed array metadata |
+
+### Planned MCP tools (not yet implemented)
+- `ops-log` — Mutation history
+- `diff` — Snapshot diff (added/deleted/modified nodes)
+- `array-detail` — Full array inspection with chunk stats
+- `config` — Repository config and feature flags
 
 ---
 
