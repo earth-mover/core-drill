@@ -1364,12 +1364,17 @@ fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                     Span::styled("  Breakdown:   ", app.theme.text_dim),
                     Span::styled(format!("{}{}", parts.join(", "), suffix), app.theme.text),
                 ]));
+                let size_label = if stats_loaded < total_arrays {
+                    format!(
+                        "{}+  (scanning…)",
+                        humansize::format_size(total_bytes, humansize::BINARY)
+                    )
+                } else {
+                    humansize::format_size(total_bytes, humansize::BINARY)
+                };
                 lines.push(Line::from(vec![
                     Span::styled("  Data size:   ", app.theme.text_dim),
-                    Span::styled(
-                        humansize::format_size(total_bytes, humansize::BINARY),
-                        app.theme.text,
-                    ),
+                    Span::styled(size_label, app.theme.text),
                 ]));
                 if virtual_bytes > 0 && stored_bytes > 0 {
                     lines.push(Line::from(vec![
