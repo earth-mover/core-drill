@@ -41,9 +41,29 @@ async fn main() -> Result<()> {
     // For TUI mode (no --output, --serve, --repl), show loading screen while opening
     let is_tui = !cli.serve && !cli.repl && cli.output.is_none();
 
-    if is_tui {
-        let repo_str = cli.repo.clone();
-        let is_arraylake = looks_like_arraylake_ref(&cli.repo);
+    if cli.serve {
+        // MCP server mode: repo is optional — agents can `open` on demand
+        let (repo, label) = if let Some(ref repo_str) = cli.repo {
+            let (repository, repo_id) = open_repo(
+                repo_str,
+                &cli.arraylake_api,
+                &repo::StorageOverrides {
+                    region: cli.region.clone(),
+                    endpoint_url: cli.endpoint_url.clone(),
+                },
+            )
+            .await?;
+            (Some(repository), repo_id.display_short())
+        } else {
+            (None, String::new())
+        };
+        mcp::serve(repo, label).await?;
+    } else if is_tui {
+        let repo_str = cli
+            .repo
+            .clone()
+            .ok_or_else(|| color_eyre::eyre::eyre!("A repo argument is required for TUI mode"))?;
+        let is_arraylake = looks_like_arraylake_ref(&repo_str);
         let api_url = cli.arraylake_api.clone();
         let overrides = repo::StorageOverrides {
             region: cli.region.clone(),
@@ -51,7 +71,10 @@ async fn main() -> Result<()> {
         };
 
         let label = if is_arraylake {
-            format!("Connecting to {}...", repo_str.strip_prefix("al:").unwrap_or(&repo_str))
+            format!(
+                "Connecting to {}...",
+                repo_str.strip_prefix("al:").unwrap_or(&repo_str)
+            )
         } else {
             format!("Opening {}...", repo_str)
         };
@@ -78,32 +101,25 @@ async fn main() -> Result<()> {
         )
         .await?;
     } else {
-        // Non-TUI modes: open repo synchronously (no loading screen needed)
-        let (repository, repo_id) = if looks_like_arraylake_ref(&cli.repo) {
-            open_via_arraylake(&cli.repo, &cli.arraylake_api).await?
-        } else {
-            let overrides = repo::StorageOverrides {
+        // Non-TUI modes (REPL, --output): repo is required
+        let repo_str = cli
+            .repo
+            .clone()
+            .ok_or_else(|| color_eyre::eyre::eyre!("A repo argument is required"))?;
+
+        let (repository, repo_id) = open_repo(
+            &repo_str,
+            &cli.arraylake_api,
+            &repo::StorageOverrides {
                 region: cli.region.clone(),
                 endpoint_url: cli.endpoint_url.clone(),
-            };
-            let repo = repo::open(&cli.repo, &overrides).await?;
-            let identity = if cli.repo.contains("://") {
-                app::RepoIdentity::S3 {
-                    url: cli.repo.clone(),
-                }
-            } else {
-                app::RepoIdentity::Local {
-                    path: cli.repo.clone(),
-                }
-            };
-            (repo, identity)
-        };
+            },
+        )
+        .await?;
 
         let display_label = repo_id.display_short();
 
-        if cli.serve {
-            mcp::serve(repository, display_label.clone()).await?;
-        } else if cli.repl {
+        if cli.repl {
             let format = cli.output.unwrap_or(cli::OutputFormat::Md);
             output::run_repl(repository, format, &display_label).await?;
         } else if let Some(format) = cli.output {
@@ -112,6 +128,30 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Open a repository from a string reference (local path, URL, or arraylake ref).
+/// Shared by main dispatch and MCP server's `open` tool.
+pub async fn open_repo(
+    repo_str: &str,
+    arraylake_api: &str,
+    overrides: &repo::StorageOverrides,
+) -> Result<(icechunk::Repository, app::RepoIdentity)> {
+    if looks_like_arraylake_ref(repo_str) {
+        open_via_arraylake(repo_str, arraylake_api).await
+    } else {
+        let repo = repo::open(repo_str, overrides).await?;
+        let identity = if repo_str.contains("://") {
+            app::RepoIdentity::S3 {
+                url: repo_str.to_string(),
+            }
+        } else {
+            app::RepoIdentity::Local {
+                path: repo_str.to_string(),
+            }
+        };
+        Ok((repo, identity))
+    }
 }
 
 /// Detect if a repo string is an Arraylake reference.

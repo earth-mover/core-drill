@@ -8,7 +8,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser, Debug)]
 #[command(name = "core-drill", version, about, long_about)]
 pub struct Cli {
-    /// Path or URL to an Icechunk repository
+    /// Path, URL, or Arraylake reference to an Icechunk repository
+    ///
+    /// Required for TUI, REPL, and --output modes. Optional for --serve
+    /// (use the `open` tool to connect on demand).
     ///
     /// Examples:
     ///   ./my-repo                    Local filesystem
@@ -16,14 +19,9 @@ pub struct Cli {
     ///   gs://bucket/prefix           Google Cloud Storage
     ///   az://container/prefix        Azure Blob Storage
     ///   https://host/path            HTTP (read-only)
-    /// Path, URL, or Arraylake reference
-    ///
-    /// Examples:
-    ///   ./my-repo                    Local filesystem
-    ///   s3://bucket/prefix           AWS S3
     ///   al:myorg/myrepo              Arraylake (credentials from ~/.arraylake/token.json)
     #[arg(value_name = "REPO")]
-    pub repo: String,
+    pub repo: Option<String>,
 
     /// Cloud storage region (e.g., us-east-1)
     ///
@@ -60,8 +58,8 @@ pub struct Cli {
     /// Start as an MCP (Model Context Protocol) server on stdio
     ///
     /// Exposes repository inspection as MCP tools for AI agents.
-    /// Configure in your agent's MCP settings:
-    ///   {"command": "core-drill", "args": ["<repo>", "--serve"]}
+    /// No repo argument needed — use the `open` tool to connect.
+    ///   claude mcp add --transport stdio core-drill -- core-drill --serve
     #[arg(long)]
     pub serve: bool,
 

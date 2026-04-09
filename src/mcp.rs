@@ -1,11 +1,11 @@
 //! MCP (Model Context Protocol) server for core-drill.
 //!
 //! Exposes repository inspection as MCP tools that agents can call.
-//! The repo stays open for the lifetime of the server, avoiding
-//! repeated S3/GCS fetches on each tool call.
+//! The server can start with or without a pre-opened repo. Use the
+//! `open` tool to connect to any repo on demand.
 //!
-//! Start with: `core-drill <repo> --serve`
-//! Configure in Claude Code settings as an MCP server.
+//! Start with: `core-drill --serve`
+//! Or pre-open: `core-drill <repo> --serve`
 
 use std::sync::Arc;
 
@@ -15,24 +15,26 @@ use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     schemars, tool, tool_handler, tool_router,
 };
+use tokio::sync::RwLock;
 
 use crate::output;
+use crate::repo;
 
 /// MCP server wrapping an open icechunk repository.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct CoreDrillServer {
     tool_router: ToolRouter<Self>,
-    repo: Arc<Repository>,
-    repo_url: String,
+    repo: Arc<RwLock<Option<Arc<Repository>>>>,
+    repo_url: Arc<RwLock<String>>,
 }
 
 impl CoreDrillServer {
-    pub fn new(repo: Repository, repo_url: String) -> Self {
+    pub fn new(repo: Option<Repository>, repo_url: String) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            repo: Arc::new(repo),
-            repo_url,
+            repo: Arc::new(RwLock::new(repo.map(Arc::new))),
+            repo_url: Arc::new(RwLock::new(repo_url)),
         }
     }
 }
@@ -41,6 +43,18 @@ impl CoreDrillServer {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct EmptyParams {}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct OpenParams {
+    /// Path, URL, or Arraylake reference (e.g., "./my-repo", "s3://bucket/prefix", "al:org/repo")
+    repo: String,
+    /// Cloud storage region (optional, for S3)
+    region: Option<String>,
+    /// Storage endpoint URL (optional, for S3-compatible services)
+    endpoint_url: Option<String>,
+    /// Arraylake API endpoint (optional, defaults to https://dev.api.earthmover.io)
+    arraylake_api: Option<String>,
+}
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct LogParams {
@@ -66,23 +80,62 @@ fn default_ref() -> String {
 
 // ─── Tool implementations ───────────────────────────────────
 
+/// Helper macro-style function: acquire repo read lock, return error string if no repo open.
+macro_rules! require_repo {
+    ($self:expr) => {{
+        let guard = $self.repo.read().await;
+        match &*guard {
+            Some(repo) => Arc::clone(repo),
+            None => return "Error: No repository open. Use the `open` tool first.".to_string(),
+        }
+    }};
+}
+
 #[tool_router]
 impl CoreDrillServer {
+    #[tool(
+        description = "Open an Icechunk repository. Supports local paths, S3/GCS/Azure URLs, and Arraylake references (al:org/repo). Call this before using other tools if the server was started without a repo."
+    )]
+    async fn open(&self, Parameters(params): Parameters<OpenParams>) -> String {
+        let arraylake_api = params
+            .arraylake_api
+            .unwrap_or_else(|| "https://dev.api.earthmover.io".to_string());
+        let overrides = repo::StorageOverrides {
+            region: params.region,
+            endpoint_url: params.endpoint_url,
+        };
+
+        match crate::open_repo(&params.repo, &arraylake_api, &overrides).await {
+            Ok((repository, identity)) => {
+                let label = identity.display_short();
+                let msg = format!("Opened repository: {label}");
+
+                *self.repo.write().await = Some(Arc::new(repository));
+                *self.repo_url.write().await = label;
+
+                msg
+            }
+            Err(e) => format!("Error opening repository: {e}"),
+        }
+    }
+
     #[tool(
         description = "Get repository overview: branches, tags, recent snapshots, and full node tree. Call this first to understand what's in the repo."
     )]
     async fn info(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
-        let repo = &self.repo;
-        let branches = match output::fetch_branches(repo).await {
+        let repo = require_repo!(self);
+        let repo_url = self.repo_url.read().await;
+
+        let branches = match output::fetch_branches(&repo).await {
             Ok(b) => b,
             Err(e) => return format!("Error: {e}"),
         };
-        let tags = match output::fetch_tags(repo).await {
+        let tags = match output::fetch_tags(&repo).await {
             Ok(t) => t,
             Err(e) => return format!("Error: {e}"),
         };
 
-        let mut out = format!("# Repository: {}\n\n", self.repo_url);
+        let mut out = format!("# Repository: {}\n\n", *repo_url);
 
         out.push_str(&format!("## Branches ({})\n\n", branches.len()));
         for b in &branches {
@@ -121,7 +174,7 @@ impl CoreDrillServer {
             .find(|b| b.name == "main")
             .or(branches.first());
         if let Some(branch) = main_branch {
-            if let Ok(ancestry) = output::fetch_ancestry(repo, &branch.name).await {
+            if let Ok(ancestry) = output::fetch_ancestry(&repo, &branch.name).await {
                 out.push_str(&format!("\n## Snapshots ({})\n\n", ancestry.len()));
                 out.push_str(
                     "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
@@ -144,7 +197,7 @@ impl CoreDrillServer {
                 }
             }
 
-            if let Ok(tree) = output::fetch_tree_flat(repo, &branch.name, None).await {
+            if let Ok(tree) = output::fetch_tree_flat(&repo, &branch.name, None).await {
                 let groups = tree.iter().filter(|n| n.is_group()).count();
                 let arrays = tree.iter().filter(|n| n.is_array()).count();
                 out.push_str(&format!(
@@ -157,13 +210,14 @@ impl CoreDrillServer {
             }
         }
 
-        out.push_str("\n---\n*Tools: `info`, `branches`, `tags`, `log`, `tree`*");
+        out.push_str("\n---\n*Tools: `open`, `info`, `branches`, `tags`, `log`, `tree`*");
         out
     }
 
     #[tool(description = "List all branches with their tip snapshot IDs")]
     async fn branches(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
-        match output::fetch_branches(&self.repo).await {
+        let repo = require_repo!(self);
+        match output::fetch_branches(&repo).await {
             Ok(branches) => {
                 let mut out = format!("# Branches ({})\n\n", branches.len());
                 out.push_str("| Branch | Snapshot |\n|--------|----------|\n");
@@ -182,7 +236,8 @@ impl CoreDrillServer {
 
     #[tool(description = "List all tags")]
     async fn tags(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
-        match output::fetch_tags(&self.repo).await {
+        let repo = require_repo!(self);
+        match output::fetch_tags(&repo).await {
             Ok(tags) if tags.is_empty() => "(no tags)".to_string(),
             Ok(tags) => {
                 let mut out = format!("# Tags ({})\n\n", tags.len());
@@ -203,7 +258,8 @@ impl CoreDrillServer {
         description = "Show snapshot history (commit log). Use ref to specify a branch, tag, or snapshot ID."
     )]
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
-        match output::fetch_ancestry(&self.repo, &params.r#ref).await {
+        let repo = require_repo!(self);
+        match output::fetch_ancestry(&repo, &params.r#ref).await {
             Ok(entries) => {
                 let entries: Vec<_> = if let Some(n) = params.limit {
                     entries.into_iter().take(n).collect()
@@ -235,7 +291,8 @@ impl CoreDrillServer {
         description = "Browse the node tree. Use path to inspect a specific array's detailed metadata (shape, dtype, chunks, codecs, fill value, initialization %)."
     )]
     async fn tree(&self, Parameters(params): Parameters<TreeParams>) -> String {
-        match output::fetch_tree_flat(&self.repo, &params.r#ref, params.path.as_deref()).await {
+        let repo = require_repo!(self);
+        match output::fetch_tree_flat(&repo, &params.r#ref, params.path.as_deref()).await {
             Ok(tree) => {
                 if let Some(ref filter_path) = params.path {
                     if let Some(node) = tree.iter().find(|n| n.path == *filter_path) {
@@ -276,7 +333,7 @@ impl CoreDrillServer {
 impl ServerHandler for CoreDrillServer {}
 
 /// Start the MCP server on stdio transport.
-pub async fn serve(repo: Repository, repo_url: String) -> color_eyre::Result<()> {
+pub async fn serve(repo: Option<Repository>, repo_url: String) -> color_eyre::Result<()> {
     use rmcp::ServiceExt;
 
     let server = CoreDrillServer::new(repo, repo_url);
