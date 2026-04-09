@@ -22,13 +22,28 @@ The MCP server is the primary interface for AI agents. It needs feature parity a
 ### MCP installation & launch
 The key value of MCP is a **long-lived session** — open the repo once, then make many queries without re-connecting. Agents need a way to discover and launch core-drill.
 
-- **Claude Code config**: Document how to add core-drill as an MCP server in `.claude/settings.json`. Example:
-  ```json
-  {"mcpServers": {"core-drill": {"command": "core-drill", "args": ["al:org/repo", "--serve"]}}}
-  ```
-- **`cargo install`**: Ensure `cargo install core-drill` works (publish to crates.io or document `--git` install).
-- **Dynamic repo**: Consider a way for the agent to specify the repo at runtime rather than hardcoding in config. Options: (a) an `open-repo` MCP tool that takes a path/URL, (b) environment variable, (c) multiple server configs per-repo.
-- **Session lifecycle**: Document that the server stays alive for the connection lifetime — no need to re-open the repo between tool calls. This is the key advantage over CLI `--output` mode.
+**Installation:**
+```bash
+# Install the binary
+cargo install --git https://github.com/earthmover/core-drill
+
+# Add to Claude Code (per-project, checked into git)
+claude mcp add --scope project --transport stdio core-drill -- core-drill al:org/repo --serve
+
+# Or add globally (personal)
+claude mcp add --transport stdio core-drill -- core-drill al:org/repo --serve
+```
+
+**One-command install helper:** Consider adding a `core-drill mcp-install` subcommand that runs the `claude mcp add` for you:
+```bash
+core-drill mcp-install al:org/repo          # → runs claude mcp add ...
+core-drill mcp-install --scope project al:org/repo
+```
+This is the smoothest UX — one command to install + configure.
+
+**Dynamic repo (important):** Currently the repo is hardcoded in the MCP config args. Better approach: support `REPO` as an env var so configs can be parameterized, or add an `open-repo` MCP tool that accepts a path/URL at runtime (requires deferred repo open architecture).
+
+**Session lifecycle**: Document that the server stays alive for the connection lifetime — no need to re-open the repo between tool calls. This is the key advantage over CLI `--output` mode.
 
 ### MCP polish
 - Tool descriptions should guide agents on WHEN to use each tool, not just what it does.
