@@ -42,8 +42,6 @@ mod colors {
     use ratatui::prelude::Color;
 
     // Primary palette
-    #[allow(dead_code)]
-    pub const MIDNIGHT: Color = Color::Rgb(32, 31, 43);
     pub const VIOLET: Color = Color::Rgb(155, 87, 250);
     pub const LIME: Color = Color::Rgb(192, 227, 50);
 
@@ -52,8 +50,6 @@ mod colors {
     pub const GREEN: Color = Color::Rgb(49, 212, 149);
     pub const ORANGE: Color = Color::Rgb(255, 158, 13);
     pub const RED: Color = Color::Rgb(255, 101, 84);
-    #[allow(dead_code)]
-    pub const PINK: Color = Color::Rgb(248, 129, 209);
 
     // UI support
     pub const DARK_GRAY: Color = Color::Rgb(120, 120, 120);

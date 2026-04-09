@@ -387,9 +387,6 @@ impl App {
             Action::SwitchBottomTab(tab) => {
                 self.bottom_tab = tab;
             }
-            Action::RequestData(request) => {
-                self.store.submit(request);
-            }
             Action::Quit => {
                 self.should_quit = true;
             }

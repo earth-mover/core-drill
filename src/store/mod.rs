@@ -1,3 +1,4 @@
+pub mod stats;
 pub mod types;
 
 use std::collections::HashMap;
@@ -257,12 +258,6 @@ impl DataStore {
         had_responses
     }
 
-    /// Check if response channel has a message (for tokio::select wakeup)
-    #[allow(dead_code)]
-    pub async fn recv_response(&mut self) -> Option<DataResponse> {
-        self.response_rx.recv().await
-    }
-
     /// Resolve a NodeId string (Crockford Base32) to a path string using the
     /// node_children cache. Falls back to a `<node:ID>` placeholder if not found.
     fn node_id_to_path(&self, node_id: &str) -> String {
@@ -471,75 +466,15 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
 }
 
 async fn fetch_branches(repo: &Repository) -> Result<Vec<BranchInfo>, String> {
-    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await.map_err(|e| e.to_string())?;
-    let mut result: Vec<BranchInfo> = repo_info
-        .branches()
-        .map_err(|e| e.to_string())?
-        .map(|(name, snap_id)| {
-            let (tip_timestamp, tip_message) = repo_info
-                .find_snapshot(&snap_id)
-                .map(|info| (Some(info.flushed_at), Some(sanitize(&info.message))))
-                .unwrap_or((None, None));
-            BranchInfo {
-                name: sanitize(name),
-                snapshot_id: snap_id.to_string(),
-                tip_timestamp,
-                tip_message,
-            }
-        })
-        .collect();
-    // Put "main" first, then alphabetical
-    result.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
-        ("main", _) => std::cmp::Ordering::Less,
-        (_, "main") => std::cmp::Ordering::Greater,
-        _ => a.name.cmp(&b.name),
-    });
-    Ok(result)
+    crate::fetch::fetch_branches(repo).await.map_err(|e| e.to_string())
 }
 
 async fn fetch_tags(repo: &Repository) -> Result<Vec<TagInfo>, String> {
-    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await.map_err(|e| e.to_string())?;
-    let result: Vec<TagInfo> = repo_info
-        .tags()
-        .map_err(|e| e.to_string())?
-        .map(|(name, snap_id)| {
-            let (tip_timestamp, tip_message) = repo_info
-                .find_snapshot(&snap_id)
-                .map(|info| (Some(info.flushed_at), Some(sanitize(&info.message))))
-                .unwrap_or((None, None));
-            TagInfo {
-                name: sanitize(name),
-                snapshot_id: snap_id.to_string(),
-                tip_timestamp,
-                tip_message,
-            }
-        })
-        .collect();
-    Ok(result)
+    crate::fetch::fetch_tags(repo).await.map_err(|e| e.to_string())
 }
 
 async fn fetch_ancestry(repo: &Repository, branch: &str) -> Result<Vec<SnapshotEntry>, String> {
-    let (repo_info, _) = repo.asset_manager().fetch_repo_info().await.map_err(|e| e.to_string())?;
-
-    // Resolve branch to snapshot ID from repo info (in-memory, no network)
-    let snapshot_id = repo_info.resolve_branch(branch).map_err(|e| e.to_string())?;
-
-    // Walk ancestry in-memory. The current repo info file contains ALL snapshots
-    // (each new file copies the full snapshot array + inserts the new one), so
-    // ancestry() gives complete history with no chain-following needed.
-    // The repo_before_updates linked list is for the ops log, not snapshots.
-    let ancestry = repo_info.ancestry(&snapshot_id).map_err(|e| e.to_string())?;
-    let mut entries = Vec::new();
-    for result in ancestry {
-        let info = result.map_err(|e| e.to_string())?;
-        entries.push(SnapshotEntry {
-            id: info.id.to_string(),
-            parent_id: info.parent_id.map(|id| id.to_string()),
-            timestamp: info.flushed_at,
-            message: sanitize(&info.message),
-        });
-    }
-    Ok(entries)
+    crate::fetch::fetch_ancestry(repo, branch).await.map_err(|e| e.to_string())
 }
 
 /// Fetch ALL nodes from root in a single request and organize them by parent path.
@@ -661,13 +596,13 @@ async fn fetch_all_nodes(
 }
 
 /// Fetch chunk type statistics for an array node by iterating all its chunks.
-/// Delegates to the shared implementation in output.rs.
+/// Delegates to the shared implementation in fetch.rs.
 async fn fetch_chunk_stats(
     repo: &Repository,
     snapshot_id: &str,
     path: &str,
 ) -> Result<ChunkStats, String> {
-    crate::output::fetch_chunk_stats(repo, snapshot_id, path)
+    crate::fetch::fetch_chunk_stats(repo, snapshot_id, path)
         .await
         .map_err(|e| e.to_string())
 }
@@ -747,17 +682,17 @@ async fn fetch_diff(
 }
 
 /// Fetch repository configuration, status, and feature flags.
-/// Delegates to the shared implementation in output.rs.
+/// Delegates to the shared implementation in fetch.rs.
 async fn fetch_repo_config(repo: &Repository) -> Result<RepoConfig, String> {
-    crate::output::fetch_repo_config(repo)
+    crate::fetch::fetch_repo_config(repo)
         .await
         .map_err(|e| e.to_string())
 }
 
 /// Fetch the repository operations log (mutation history).
-/// Delegates to the shared implementation in output.rs.
+/// Delegates to the shared implementation in fetch.rs.
 async fn fetch_ops_log(repo: &Repository) -> Result<Vec<OpsLogEntry>, String> {
-    crate::output::fetch_ops_log(repo, None)
+    crate::fetch::fetch_ops_log(repo, None)
         .await
         .map_err(|e| e.to_string())
 }

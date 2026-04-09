@@ -21,6 +21,7 @@ use tokio::sync::RwLock;
 
 use tracing::info;
 
+use crate::fetch;
 use crate::output;
 use crate::repo;
 use crate::store::types::{BranchInfo, SnapshotEntry, TagInfo};
@@ -33,8 +34,6 @@ struct McpCache {
     tags: Option<Vec<TagInfo>>,
     /// Ancestry (snapshot log) per ref name
     ancestry: HashMap<String, Vec<SnapshotEntry>>,
-    /// Prefix → full snapshot ID mappings (like git short hash cache)
-    snapshot_prefix: HashMap<String, String>,
 }
 
 /// MCP server wrapping an open icechunk repository.
@@ -348,7 +347,7 @@ impl CoreDrillServer {
                 return Ok(branches.clone());
             }
         }
-        let branches = output::fetch_branches(repo).await?;
+        let branches = fetch::fetch_branches(repo).await?;
         self.cache.write().await.branches = Some(branches.clone());
         Ok(branches)
     }
@@ -361,7 +360,7 @@ impl CoreDrillServer {
                 return Ok(tags.clone());
             }
         }
-        let tags = output::fetch_tags(repo).await?;
+        let tags = fetch::fetch_tags(repo).await?;
         self.cache.write().await.tags = Some(tags.clone());
         Ok(tags)
     }
@@ -378,44 +377,13 @@ impl CoreDrillServer {
                 return Ok(entries.clone());
             }
         }
-        let entries = output::fetch_ancestry(repo, r).await?;
+        let entries = fetch::fetch_ancestry(repo, r).await?;
         self.cache
             .write()
             .await
             .ancestry
             .insert(r.to_string(), entries.clone());
         Ok(entries)
-    }
-
-    /// Resolve a ref, caching prefix→full ID mappings for snapshot IDs.
-    #[allow(dead_code)]
-    async fn cached_resolve_ref(
-        &self,
-        repo: &Repository,
-        r: &str,
-    ) -> color_eyre::Result<icechunk::repository::VersionInfo> {
-        // Check prefix cache first
-        {
-            let cache = self.cache.read().await;
-            if let Some(full_id) = cache.snapshot_prefix.get(r) {
-                if let Ok(snap_id) = full_id.as_str().try_into() {
-                    return Ok(icechunk::repository::VersionInfo::SnapshotId(snap_id));
-                }
-            }
-        }
-        let version = output::resolve_ref(repo, r).await?;
-        // Cache if it resolved to a snapshot ID and the input was a prefix
-        if let icechunk::repository::VersionInfo::SnapshotId(ref snap_id) = version {
-            let full_id: String = snap_id.into();
-            if r != full_id {
-                self.cache
-                    .write()
-                    .await
-                    .snapshot_prefix
-                    .insert(r.to_string(), full_id);
-            }
-        }
-        Ok(version)
     }
 
     #[tool(
@@ -567,18 +535,18 @@ impl CoreDrillServer {
     async fn tree(&self, Parameters(params): Parameters<TreeParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let snap_id = match output::resolve_ref_to_snapshot_id(&repo, &params.r#ref).await {
+        let snap_id = match fetch::resolve_ref_to_snapshot_id(&repo, &params.r#ref).await {
             Ok(id) => id,
             Err(e) => return format!("Error resolving ref: {e}"),
         };
-        let result = match output::fetch_tree_flat(&repo, &snap_id, params.path.as_deref()).await {
+        let result = match fetch::fetch_tree_flat(&repo, &snap_id, params.path.as_deref()).await {
             Ok(tree) => {
                 if let Some(ref filter_path) = params.path {
                     if let Some(node) = tree.iter().find(|n| n.path == *filter_path) {
                         if node.is_array() {
                             // Array: show detailed metadata + chunk stats
                             let mut out = output::fmt_node_detail(node);
-                            if let Ok(stats) = output::fetch_chunk_stats(&repo, &snap_id, &node.path).await {
+                            if let Ok(stats) = fetch::fetch_chunk_stats(&repo, &snap_id, &node.path).await {
                                 out.push_str(&fmt_chunk_stats(&stats));
                             }
                             out
@@ -678,7 +646,7 @@ impl CoreDrillServer {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
         let ops_limit = Some(params.limit.unwrap_or(50));
-        let result = match output::fetch_ops_log(&repo, ops_limit).await {
+        let result = match fetch::fetch_ops_log(&repo, ops_limit).await {
             Ok(entries) => {
                 if entries.is_empty() {
                     "(no operations recorded)".to_string()
@@ -702,7 +670,7 @@ impl CoreDrillServer {
     async fn diff(&self, Parameters(params): Parameters<DiffParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_diff(&repo, &params.snapshot_id, params.parent_id.as_deref()).await {
+        let result = match fetch::fetch_diff(&repo, &params.snapshot_id, params.parent_id.as_deref()).await {
             Ok(detail) => {
                 if detail.is_initial_commit {
                     return format!(
@@ -764,7 +732,7 @@ impl CoreDrillServer {
     async fn config(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_repo_config(&repo).await {
+        let result = match fetch::fetch_repo_config(&repo).await {
             Ok(cfg) => {
                 let mut out = "# Repository Configuration\n\n".to_string();
                 out.push_str(&format!("- **Spec version:** {}\n", cfg.spec_version));
@@ -803,7 +771,7 @@ impl CoreDrillServer {
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_tree_flat(&repo, &params.r#ref, None).await {
+        let result = match fetch::fetch_tree_flat(&repo, &params.r#ref, None).await {
             Ok(tree) => {
                 let limit = params.limit.unwrap_or(20);
 
@@ -881,9 +849,9 @@ impl CoreDrillServer {
 fn fmt_search_results(
     query: &str,
     mode: &str,
-    matched: &[&output::FlatNode],
+    matched: &[&fetch::FlatNode],
     limit: usize,
-    all_nodes: &[output::FlatNode],
+    all_nodes: &[fetch::FlatNode],
 ) -> String {
     let total = matched.len();
     if total == 0 {
@@ -911,7 +879,7 @@ fn fmt_search_results(
 ///   - **burst-133012-*** (1000 arrays) `float32` `[721 × 1440]`
 ///
 /// `max_lines` caps the total output lines (each collapsed group = 1 line).
-fn fmt_collapsed_tree(nodes: &[&output::FlatNode], all_nodes: &[output::FlatNode], max_lines: usize) -> String {
+fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode], max_lines: usize) -> String {
     if nodes.is_empty() {
         return String::new();
     }
@@ -920,14 +888,14 @@ fn fmt_collapsed_tree(nodes: &[&output::FlatNode], all_nodes: &[output::FlatNode
     // name_prefix = everything up to the last `-` or `_` separator, or the full name if no separator.
     struct CollapsedGroup<'a> {
         prefix: String,       // shared prefix (e.g. "burst-133012-")
-        nodes: Vec<&'a output::FlatNode>,
+        nodes: Vec<&'a fetch::FlatNode>,
         depth: usize,
     }
 
     let mut groups: Vec<CollapsedGroup> = Vec::new();
 
     // Sort by path so similarly-named siblings are consecutive for collapsing
-    let mut sorted: Vec<&&output::FlatNode> = nodes.iter().collect();
+    let mut sorted: Vec<&&fetch::FlatNode> = nodes.iter().collect();
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
 
     for node in sorted.into_iter().map(|n| *n) {
@@ -1145,7 +1113,7 @@ mod glob_tests {
 #[cfg(test)]
 mod collapse_tests {
     use super::fmt_collapsed_tree;
-    use crate::output::{FlatNode, FlatNodeType};
+    use crate::fetch::{FlatNode, FlatNodeType};
 
     fn make_array(path: &str) -> FlatNode {
         let name = path.rsplit('/').next().unwrap_or(path).to_string();

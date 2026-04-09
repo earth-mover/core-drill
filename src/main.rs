@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod component;
+mod fetch;
 mod mcp;
 mod multiplexer;
 mod output;

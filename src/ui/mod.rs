@@ -2,8 +2,6 @@ pub mod format;
 mod help;
 pub mod json_view;
 pub mod shape_viz;
-pub mod tree;
-
 mod bottom;
 mod detail;
 mod diff;

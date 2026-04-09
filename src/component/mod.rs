@@ -1,10 +1,3 @@
-use crossterm::event::KeyEvent;
-use ratatui::Frame;
-use ratatui::prelude::Rect;
-
-use crate::store::{DataRequest, DataStore};
-use crate::theme::Theme;
-
 /// Which pane is currently focused
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -47,34 +40,6 @@ pub enum Action {
     ToggleBottom,
     /// Switch the bottom panel tab
     SwitchBottomTab(BottomTab),
-    /// Request data from the store
-    RequestData(DataRequest),
     /// Quit the application
     Quit,
-}
-
-/// Trait implemented by all standalone UI components.
-///
-/// Components own their view state (selection index, scroll offset, etc.)
-/// but never access icechunk directly. All data comes from the DataStore.
-#[allow(dead_code)]
-pub trait Component {
-    /// Handle a key event. Return an Action for the app to process.
-    fn handle_key(&mut self, key: KeyEvent) -> Action;
-
-    /// Render into the given area using data from the store.
-    fn render(
-        &self,
-        store: &DataStore,
-        theme: &Theme,
-        focused: bool,
-        frame: &mut Frame,
-        area: Rect,
-    );
-
-    /// Return data requests needed to populate this component.
-    fn on_enter(&mut self, store: &DataStore) -> Vec<DataRequest>;
-
-    /// Called when the store has new data.
-    fn on_data_changed(&mut self, store: &DataStore);
 }
