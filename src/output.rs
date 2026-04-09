@@ -729,8 +729,13 @@ pub(crate) async fn resolve_ref_to_snapshot_id(
     r: &str,
 ) -> color_eyre::Result<String> {
     let version = resolve_ref(repo, r).await?;
-    let session = repo.readonly_session(&version).await?;
-    Ok(session.snapshot_id().to_string())
+    match version {
+        icechunk::repository::VersionInfo::SnapshotId(id) => Ok((&id).into()),
+        _ => {
+            let session = repo.readonly_session(&version).await?;
+            Ok(session.snapshot_id().to_string())
+        }
+    }
 }
 
 pub(crate) async fn fetch_ancestry(
@@ -1037,11 +1042,14 @@ pub(crate) async fn fetch_diff(
 
     // Resolve snapshot ref (supports prefix matching like git short hashes)
     let version = resolve_ref(repo, snapshot_id).await?;
-    let snap_id = match &version {
-        icechunk::repository::VersionInfo::SnapshotId(id) => id.clone(),
+    // Reuse session if we need one to extract the snapshot ID (avoids redundant
+    // readonly_session later when we list nodes).
+    let (snap_id, existing_session) = match &version {
+        icechunk::repository::VersionInfo::SnapshotId(id) => (id.clone(), None),
         _ => {
             let session = repo.readonly_session(&version).await?;
-            session.snapshot_id().clone()
+            let id = session.snapshot_id().clone();
+            (id, Some(session))
         }
     };
     let full_snapshot_id: String = (&snap_id).into();
@@ -1076,8 +1084,22 @@ pub(crate) async fn fetch_diff(
         });
     }
 
-    // Fetch transaction log (1 S3 fetch)
-    let tx_log = repo.asset_manager().fetch_transaction_log(&snap_id).await?;
+    // Fetch tx_log and session in parallel — they are independent S3 fetches.
+    let (tx_log_result, session) = tokio::join!(
+        repo.asset_manager().fetch_transaction_log(&snap_id),
+        async {
+            match existing_session {
+                Some(s) => Ok(s),
+                None => {
+                    let snap_version =
+                        icechunk::repository::VersionInfo::SnapshotId(snap_id.clone());
+                    repo.readonly_session(&snap_version).await
+                }
+            }
+        }
+    );
+    let tx_log = tx_log_result?;
+    let session = session?;
 
     let added_array_ids: Vec<String> = tx_log.new_arrays().map(|id| id.to_string()).collect();
     let added_group_ids: Vec<String> = tx_log.new_groups().map(|id| id.to_string()).collect();
@@ -1098,8 +1120,6 @@ pub(crate) async fn fetch_diff(
         .collect();
 
     // Build NodeId→Path map by listing all nodes at this snapshot
-    let snap_version = icechunk::repository::VersionInfo::SnapshotId(snap_id);
-    let session = repo.readonly_session(&snap_version).await?;
     let nodes_iter = session.list_nodes(&icechunk::format::Path::root()).await?;
 
     let mut id_to_path: HashMap<String, String> = HashMap::new();

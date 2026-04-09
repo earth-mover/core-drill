@@ -7,6 +7,7 @@
 //! Start with: `core-drill --serve`
 //! Or pre-open: `core-drill <repo> --serve`
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use humansize::{format_size, BINARY};
@@ -22,6 +23,19 @@ use tracing::info;
 
 use crate::output;
 use crate::repo;
+use crate::store::types::{BranchInfo, SnapshotEntry, TagInfo};
+
+/// Cached data shared across MCP tool calls for the current repo session.
+#[derive(Debug, Default)]
+#[allow(dead_code)]
+struct McpCache {
+    branches: Option<Vec<BranchInfo>>,
+    tags: Option<Vec<TagInfo>>,
+    /// Ancestry (snapshot log) per ref name
+    ancestry: HashMap<String, Vec<SnapshotEntry>>,
+    /// Prefix → full snapshot ID mappings (like git short hash cache)
+    snapshot_prefix: HashMap<String, String>,
+}
 
 /// MCP server wrapping an open icechunk repository.
 #[derive(Debug, Clone)]
@@ -30,6 +44,7 @@ pub struct CoreDrillServer {
     tool_router: ToolRouter<Self>,
     repo: Arc<RwLock<Option<Arc<Repository>>>>,
     repo_url: Arc<RwLock<String>>,
+    cache: Arc<RwLock<McpCache>>,
 }
 
 impl CoreDrillServer {
@@ -38,6 +53,7 @@ impl CoreDrillServer {
             tool_router: Self::tool_router(),
             repo: Arc::new(RwLock::new(repo.map(Arc::new))),
             repo_url: Arc::new(RwLock::new(repo_url)),
+            cache: Arc::new(RwLock::new(McpCache::default())),
         }
     }
 }
@@ -168,6 +184,84 @@ fn fmt_chunk_stats(stats: &ChunkStats) -> String {
 
 #[tool_router]
 impl CoreDrillServer {
+    /// Get branches, using cache if available.
+    async fn cached_branches(&self, repo: &Repository) -> color_eyre::Result<Vec<BranchInfo>> {
+        {
+            let cache = self.cache.read().await;
+            if let Some(ref branches) = cache.branches {
+                return Ok(branches.clone());
+            }
+        }
+        let branches = output::fetch_branches(repo).await?;
+        self.cache.write().await.branches = Some(branches.clone());
+        Ok(branches)
+    }
+
+    /// Get tags, using cache if available.
+    async fn cached_tags(&self, repo: &Repository) -> color_eyre::Result<Vec<TagInfo>> {
+        {
+            let cache = self.cache.read().await;
+            if let Some(ref tags) = cache.tags {
+                return Ok(tags.clone());
+            }
+        }
+        let tags = output::fetch_tags(repo).await?;
+        self.cache.write().await.tags = Some(tags.clone());
+        Ok(tags)
+    }
+
+    /// Get ancestry for a ref, using cache if available.
+    async fn cached_ancestry(
+        &self,
+        repo: &Repository,
+        r: &str,
+    ) -> color_eyre::Result<Vec<SnapshotEntry>> {
+        {
+            let cache = self.cache.read().await;
+            if let Some(entries) = cache.ancestry.get(r) {
+                return Ok(entries.clone());
+            }
+        }
+        let entries = output::fetch_ancestry(repo, r).await?;
+        self.cache
+            .write()
+            .await
+            .ancestry
+            .insert(r.to_string(), entries.clone());
+        Ok(entries)
+    }
+
+    /// Resolve a ref, caching prefix→full ID mappings for snapshot IDs.
+    #[allow(dead_code)]
+    async fn cached_resolve_ref(
+        &self,
+        repo: &Repository,
+        r: &str,
+    ) -> color_eyre::Result<icechunk::repository::VersionInfo> {
+        // Check prefix cache first
+        {
+            let cache = self.cache.read().await;
+            if let Some(full_id) = cache.snapshot_prefix.get(r) {
+                if let Ok(snap_id) = full_id.as_str().try_into() {
+                    return Ok(icechunk::repository::VersionInfo::SnapshotId(snap_id));
+                }
+            }
+        }
+        let version = output::resolve_ref(repo, r).await?;
+        // Cache if it resolved to a snapshot ID and the input was a prefix
+        if let icechunk::repository::VersionInfo::SnapshotId(ref snap_id) = version {
+            let full_id: String = snap_id.into();
+            if r != full_id {
+                self.cache
+                    .write()
+                    .await
+                    .snapshot_prefix
+                    .insert(r.to_string(), full_id);
+            }
+        }
+        Ok(version)
+    }
+
     #[tool(
         description = "Open an Icechunk repository for inspection. Must be called before other tools. Accepts local paths, S3/GCS URLs, S3-compatible (R2, MinIO, Tigris via endpoint_url), or Arraylake refs (al:org/repo)."
     )]
@@ -189,6 +283,7 @@ impl CoreDrillServer {
 
                 *self.repo.write().await = Some(Arc::new(repository));
                 *self.repo_url.write().await = label;
+                *self.cache.write().await = McpCache::default();
 
                 msg
             }
@@ -207,11 +302,11 @@ impl CoreDrillServer {
         let repo = require_repo!(self);
         let repo_url = self.repo_url.read().await;
 
-        // Fetch branches, tags, ancestry, and tree concurrently
+        // Fetch branches, tags, ancestry, and tree concurrently (with caching)
         let (branches_res, tags_res, ancestry_res, tree_res) = tokio::join!(
-            output::fetch_branches(&repo),
-            output::fetch_tags(&repo),
-            output::fetch_ancestry(&repo, &params.r#ref),
+            self.cached_branches(&repo),
+            self.cached_tags(&repo),
+            self.cached_ancestry(&repo, &params.r#ref),
             output::fetch_tree_flat(&repo, &params.r#ref, None),
         );
 
@@ -304,7 +399,7 @@ impl CoreDrillServer {
     async fn branches(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_branches(&repo).await {
+        let result = match self.cached_branches(&repo).await {
             Ok(branches) => {
                 let mut out = format!("# Branches ({})\n\n", branches.len());
                 out.push_str("| Branch | Snapshot |\n|--------|----------|\n");
@@ -327,7 +422,7 @@ impl CoreDrillServer {
     async fn tags(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_tags(&repo).await {
+        let result = match self.cached_tags(&repo).await {
             Ok(tags) if tags.is_empty() => "(no tags)".to_string(),
             Ok(tags) => {
                 let mut out = format!("# Tags ({})\n\n", tags.len());
@@ -352,7 +447,7 @@ impl CoreDrillServer {
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_ancestry(&repo, &params.r#ref).await {
+        let result = match self.cached_ancestry(&repo, &params.r#ref).await {
             Ok(entries) => {
                 let total = entries.len();
                 let display: Vec<_> = if let Some(n) = params.limit {
