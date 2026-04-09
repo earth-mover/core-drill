@@ -22,11 +22,11 @@ Drill deep into your Icechunk repos to discover their past.
 ## Install
 
 ```bash
-cargo install --git ssh://git@github.com/earth-mover/core-drill
+cargo install --git ssh://git@github.com/earth-mover/core-drill  --config net.git-fetch-with-cli=true
 
 # or
 
-cargo install --git https://github.com/earth-mover/core-drill
+cargo install --git https://github.com/earth-mover/core-drill  --config net.git-fetch-with-cli=true
 ```
 
 ## Usage
