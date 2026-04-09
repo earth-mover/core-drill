@@ -1071,6 +1071,7 @@ pub(crate) async fn fetch_diff(
             modified_arrays: vec![],
             modified_groups: vec![],
             chunk_changes: vec![],
+            moved_nodes: vec![],
             is_initial_commit: true,
         });
     }
@@ -1087,6 +1088,13 @@ pub(crate) async fn fetch_diff(
     let chunk_change_ids: Vec<(String, usize)> = tx_log
         .updated_chunks()
         .map(|(node_id, chunks_iter)| (node_id.to_string(), chunks_iter.count()))
+        .collect();
+
+    // moves() yields Move { node_id, from, to } — paths are already resolved in the tx log.
+    let moved: Vec<(String, String)> = tx_log
+        .moves()
+        .filter_map(|r| r.ok())
+        .map(|mv| (sanitize(&mv.from.to_string()), sanitize(&mv.to.to_string())))
         .collect();
 
     // Build NodeId→Path map by listing all nodes at this snapshot
@@ -1120,6 +1128,7 @@ pub(crate) async fn fetch_diff(
             .iter()
             .map(|(id, count)| (resolve(id), *count))
             .collect(),
+        moved_nodes: moved,
         is_initial_commit: false,
     })
 }

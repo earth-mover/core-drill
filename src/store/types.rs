@@ -56,6 +56,8 @@ pub struct DiffSummary {
     pub modified_arrays: Vec<String>,
     pub modified_groups: Vec<String>,
     pub chunk_changes: Vec<(String, usize)>,
+    /// (from_path, to_path) for each moved node
+    pub moved_nodes: Vec<(String, String)>,
     /// True when this is the repository's initial commit (no parent snapshot).
     pub is_initial_commit: bool,
 }
@@ -74,6 +76,8 @@ pub struct RawDiff {
     pub modified_group_ids: Vec<String>,
     /// (node_id, chunk_count)
     pub chunk_change_ids: Vec<(String, usize)>,
+    /// (node_id, from_path, to_path) — paths are already resolved from the transaction log
+    pub moved_node_ids: Vec<(String, String, String)>,
     /// True when this is the repository's initial commit (no parent snapshot).
     pub is_initial_commit: bool,
 }
@@ -145,6 +149,8 @@ pub struct DiffDetail {
     pub modified_groups: Vec<String>,
     /// (path, chunk_count)
     pub chunk_changes: Vec<(String, usize)>,
+    /// (from_path, to_path) for each moved node
+    pub moved_nodes: Vec<(String, String)>,
     pub is_initial_commit: bool,
 }
 

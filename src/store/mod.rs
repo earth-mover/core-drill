@@ -335,6 +335,11 @@ impl DataStore {
                                 .iter()
                                 .map(|(id, count)| (self.node_id_to_path(id), *count))
                                 .collect(),
+                            moved_nodes: raw
+                                .moved_node_ids
+                                .iter()
+                                .map(|(_, from, to)| (sanitize(from), sanitize(to)))
+                                .collect(),
                             is_initial_commit: raw.is_initial_commit,
                         };
                         LoadState::Loaded(summary)
@@ -664,6 +669,7 @@ async fn fetch_diff(
             modified_array_ids: vec![],
             modified_group_ids: vec![],
             chunk_change_ids: vec![],
+            moved_node_ids: vec![],
             is_initial_commit: true,
         });
     }
@@ -692,6 +698,13 @@ async fn fetch_diff(
         .map(|(node_id, chunks_iter)| (node_id.to_string(), chunks_iter.count()))
         .collect();
 
+    // moves() yields Move { node_id, from, to } — paths are already resolved in the tx log.
+    let moved_node_ids: Vec<(String, String, String)> = tx_log
+        .moves()
+        .filter_map(|r| r.ok())
+        .map(|mv| (mv.node_id.to_string(), mv.from.to_string(), mv.to.to_string()))
+        .collect();
+
     Ok(RawDiff {
         snapshot_id: snapshot_id.to_string(),
         parent_id: parent_id.map(|s| s.to_string()),
@@ -702,6 +715,7 @@ async fn fetch_diff(
         modified_array_ids,
         modified_group_ids,
         chunk_change_ids,
+        moved_node_ids,
         is_initial_commit: false,
     })
 }

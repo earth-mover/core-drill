@@ -529,6 +529,13 @@ impl CoreDrillServer {
                     }
                     out.push('\n');
                 }
+                if !detail.moved_nodes.is_empty() {
+                    out.push_str(&format!("## Moved ({})\n\n", detail.moved_nodes.len()));
+                    for (from, to) in &detail.moved_nodes {
+                        out.push_str(&format!("- {from} \u{2192} {to}\n"));
+                    }
+                    out.push('\n');
+                }
                 if detail.added_arrays.is_empty()
                     && detail.added_groups.is_empty()
                     && detail.deleted_arrays.is_empty()
@@ -536,6 +543,7 @@ impl CoreDrillServer {
                     && detail.modified_arrays.is_empty()
                     && detail.modified_groups.is_empty()
                     && detail.chunk_changes.is_empty()
+                    && detail.moved_nodes.is_empty()
                 {
                     out.push_str("No structural changes detected.\n");
                 }

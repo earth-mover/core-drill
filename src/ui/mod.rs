@@ -1666,6 +1666,7 @@ fn render_snapshot_diff_detail<'a>(
                 let added_count = diff.added_arrays.len() + diff.added_groups.len();
                 let deleted_count = diff.deleted_arrays.len() + diff.deleted_groups.len();
                 let modified_count = diff.modified_arrays.len() + diff.modified_groups.len();
+                let moved_count = diff.moved_nodes.len();
 
                 let total_chunks_changed: usize = diff.chunk_changes.iter().map(|(_, n)| n).sum();
                 let mut summary_spans = vec![
@@ -1676,6 +1677,13 @@ fn render_snapshot_diff_detail<'a>(
                     Span::styled(", ", app.theme.text_dim),
                     Span::styled(format!("{modified_count} modified"), app.theme.modified),
                 ];
+                if moved_count > 0 {
+                    summary_spans.push(Span::styled(", ", app.theme.text_dim));
+                    summary_spans.push(Span::styled(
+                        format!("{moved_count} moved"),
+                        app.theme.modified,
+                    ));
+                }
                 if total_chunks_changed > 0 {
                     summary_spans.push(Span::styled("  |  ", app.theme.text_dim));
                     summary_spans.push(Span::styled(
@@ -1811,6 +1819,23 @@ fn render_snapshot_diff_detail<'a>(
                             format!("    ... and {} more", total - max_show),
                             app.theme.text_dim,
                         )));
+                    }
+                }
+
+                // Moved section
+                if !diff.moved_nodes.is_empty() {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(
+                        format!("  Moved ({moved_count}):"),
+                        app.theme.modified,
+                    )));
+                    for (from, to) in &diff.moved_nodes {
+                        lines.push(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(from.clone(), app.theme.removed),
+                            Span::raw(" \u{2192} "),
+                            Span::styled(to.clone(), app.theme.added),
+                        ]));
                     }
                 }
             }
