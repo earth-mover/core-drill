@@ -129,6 +129,40 @@ fn default_ref() -> String {
     "main".to_string()
 }
 
+/// Render a headed list section, capping at `limit` entries.
+/// Returns empty string if `items` is empty.
+fn fmt_section(heading: &str, items: &[String], limit: usize) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("## {} ({})\n\n", heading, items.len());
+    for item in items.iter().take(limit) {
+        out.push_str(&format!("- {item}\n"));
+    }
+    if items.len() > limit {
+        out.push_str(&format!("- *… {} more*\n", items.len() - limit));
+    }
+    out.push('\n');
+    out
+}
+
+/// Hard output cap to prevent flooding the agent context window (~2 000 tokens).
+const MAX_OUTPUT_CHARS: usize = 8_000;
+
+fn cap_output(s: String) -> String {
+    if s.len() <= MAX_OUTPUT_CHARS {
+        return s;
+    }
+    let truncated = &s[..MAX_OUTPUT_CHARS];
+    // Trim to last newline so we don't cut mid-line
+    let cut = truncated.rfind('\n').map(|i| i + 1).unwrap_or(MAX_OUTPUT_CHARS);
+    format!(
+        "{}\n\n*[output truncated at {} chars — use more specific tools or add filters]*",
+        &s[..cut],
+        MAX_OUTPUT_CHARS
+    )
+}
+
 // ─── Tool implementations ───────────────────────────────────
 
 /// Helper macro-style function: acquire repo read lock, return error string if no repo open.
@@ -291,7 +325,7 @@ impl CoreDrillServer {
     }
 
     #[tool(
-        description = "Repository overview: branches, tags, recent snapshots, and node tree. Good starting point after opening a repo."
+        description = "Repository overview: branches, tags, and recent snapshots. Good starting point after opening a repo. Use `tree` to browse arrays, `search` to find a specific array."
     )]
     async fn info(&self, Parameters(params): Parameters<InfoParams>) -> String {
         let _start = std::time::Instant::now();
@@ -299,12 +333,10 @@ impl CoreDrillServer {
         let repo = require_repo!(self);
         let repo_url = self.repo_url.read().await;
 
-        // Fetch branches, tags, ancestry, and tree concurrently (with caching)
-        let (branches_res, tags_res, ancestry_res, tree_res) = tokio::join!(
+        let (branches_res, tags_res, ancestry_res) = tokio::join!(
             self.cached_branches(&repo),
             self.cached_tags(&repo),
             self.cached_ancestry(&repo, &params.r#ref),
-            output::fetch_tree_flat(&repo, &params.r#ref, None),
         );
 
         let branches = match branches_res {
@@ -349,7 +381,7 @@ impl CoreDrillServer {
 
         if let Ok(ancestry) = ancestry_res {
             out.push_str(&format!(
-                "\n## Snapshots ({} commits on {})\n\n",
+                "\n## Recent Snapshots ({} total on `{}`)\n\n",
                 ancestry.len(),
                 params.r#ref
             ));
@@ -374,22 +406,9 @@ impl CoreDrillServer {
             }
         }
 
-        if let Ok(tree) = tree_res {
-            let main_name = &params.r#ref;
-            let groups = tree.iter().filter(|n| n.is_group()).count();
-            let arrays = tree.iter().filter(|n| n.is_array()).count();
-            out.push_str(&format!(
-                "\n\n## Tree (at {})\n\n{} groups, {} arrays\n\n",
-                main_name, groups, arrays
-            ));
-            for node in &tree {
-                out.push_str(&output::fmt_tree_line(node, &tree));
-            }
-        }
-
-        out.push_str("\n---\n*This overview already includes the full tree. Use `tree` with a `path` to drill into a specific array (metadata + chunk stats). Other tools: `log` (history), `diff` (snapshot changes), `ops_log` (mutation history), `config` (repo settings), `search` (fuzzy find)*");
+        out.push_str("\n\n---\n*Next steps: `tree` (browse arrays), `search` (find array by name), `log` (full history), `diff` (snapshot changes), `ops_log` (mutation history), `config` (repo settings)*");
         info!("MCP info completed in {:?}", _start.elapsed());
-        out
+        cap_output(out)
     }
 
     #[tool(description = "List all branches with their tip snapshot IDs.")]
@@ -412,7 +431,7 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP branches completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 
     #[tool(description = "List all tags with their snapshot IDs.")]
@@ -435,7 +454,7 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP tags completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 
     #[tool(
@@ -447,11 +466,8 @@ impl CoreDrillServer {
         let result = match self.cached_ancestry(&repo, &params.r#ref).await {
             Ok(entries) => {
                 let total = entries.len();
-                let display: Vec<_> = if let Some(n) = params.limit {
-                    entries.into_iter().take(n).collect()
-                } else {
-                    entries
-                };
+                let limit = params.limit.unwrap_or(20);
+                let display: Vec<_> = entries.into_iter().take(limit).collect();
                 let mut out = format!(
                     "# Snapshot Log ({}, {} total commits)\n\n",
                     params.r#ref, total
@@ -469,17 +485,18 @@ impl CoreDrillServer {
                         e.message
                     ));
                 }
-                if let Some(n) = params.limit {
-                    if n < total {
-                        out.push_str(&format!("\n\n*Showing {} of {} commits*", n, total));
-                    }
+                if limit < total {
+                    out.push_str(&format!(
+                        "\n\n*Showing {} of {} commits — pass `limit` to see more*",
+                        limit, total
+                    ));
                 }
                 out
             }
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP log completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 
     #[tool(
@@ -516,14 +533,21 @@ impl CoreDrillServer {
                         out
                     }
                 } else {
+                    const TREE_LIST_LIMIT: usize = 100;
                     let groups = tree.iter().filter(|n| n.is_group()).count();
                     let arrays = tree.iter().filter(|n| n.is_array()).count();
                     let mut out = format!(
                         "# Tree (at {})\n\n{} groups, {} arrays\n\n",
                         params.r#ref, groups, arrays
                     );
-                    for node in &tree {
+                    for node in tree.iter().take(TREE_LIST_LIMIT) {
                         out.push_str(&output::fmt_tree_line(node, &tree));
+                    }
+                    if tree.len() > TREE_LIST_LIMIT {
+                        out.push_str(&format!(
+                            "\n*({} more nodes — use `search` to find specific arrays, or `tree` with a `path` to drill in)*\n",
+                            tree.len() - TREE_LIST_LIMIT
+                        ));
                     }
                     out
                 }
@@ -531,14 +555,15 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP tree completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 
     #[tool(description = "Show repository operations log (mutation history): commits, branch/tag operations, config changes, GC runs.")]
     async fn ops_log(&self, Parameters(params): Parameters<OpsLogParams>) -> String {
         let _start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match output::fetch_ops_log(&repo, params.limit).await {
+        let ops_limit = Some(params.limit.unwrap_or(50));
+        let result = match output::fetch_ops_log(&repo, ops_limit).await {
             Ok(entries) => {
                 if entries.is_empty() {
                     "(no operations recorded)".to_string()
@@ -555,7 +580,7 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP ops_log completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 
     #[tool(description = "Show what changed in a snapshot: added/deleted/modified arrays and groups, chunk changes. Use snapshot IDs from the `log` tool.")]
@@ -570,67 +595,37 @@ impl CoreDrillServer {
                         output::truncate(&params.snapshot_id, 12)
                     );
                 }
+                const DIFF_SECTION_LIMIT: usize = 50;
                 let mut out = format!("# Diff: `{}`\n\n", output::truncate(&params.snapshot_id, 12));
                 if let Some(ref pid) = detail.parent_id {
                     out.push_str(&format!("Parent: `{}`\n\n", output::truncate(pid, 12)));
                 }
 
-                if !detail.added_arrays.is_empty() {
-                    out.push_str(&format!("## Added Arrays ({})\n\n", detail.added_arrays.len()));
-                    for p in &detail.added_arrays {
-                        out.push_str(&format!("- {p}\n"));
-                    }
-                    out.push('\n');
-                }
-                if !detail.added_groups.is_empty() {
-                    out.push_str(&format!("## Added Groups ({})\n\n", detail.added_groups.len()));
-                    for p in &detail.added_groups {
-                        out.push_str(&format!("- {p}\n"));
-                    }
-                    out.push('\n');
-                }
-                if !detail.deleted_arrays.is_empty() {
-                    out.push_str(&format!("## Deleted Arrays ({})\n\n", detail.deleted_arrays.len()));
-                    for p in &detail.deleted_arrays {
-                        out.push_str(&format!("- {p}\n"));
-                    }
-                    out.push('\n');
-                }
-                if !detail.deleted_groups.is_empty() {
-                    out.push_str(&format!("## Deleted Groups ({})\n\n", detail.deleted_groups.len()));
-                    for p in &detail.deleted_groups {
-                        out.push_str(&format!("- {p}\n"));
-                    }
-                    out.push('\n');
-                }
-                if !detail.modified_arrays.is_empty() {
-                    out.push_str(&format!("## Modified Arrays ({})\n\n", detail.modified_arrays.len()));
-                    for p in &detail.modified_arrays {
-                        out.push_str(&format!("- {p}\n"));
-                    }
-                    out.push('\n');
-                }
-                if !detail.modified_groups.is_empty() {
-                    out.push_str(&format!("## Modified Groups ({})\n\n", detail.modified_groups.len()));
-                    for p in &detail.modified_groups {
-                        out.push_str(&format!("- {p}\n"));
-                    }
-                    out.push('\n');
-                }
+                out.push_str(&fmt_section("Added Arrays", &detail.added_arrays, DIFF_SECTION_LIMIT));
+                out.push_str(&fmt_section("Added Groups", &detail.added_groups, DIFF_SECTION_LIMIT));
+                out.push_str(&fmt_section("Deleted Arrays", &detail.deleted_arrays, DIFF_SECTION_LIMIT));
+                out.push_str(&fmt_section("Deleted Groups", &detail.deleted_groups, DIFF_SECTION_LIMIT));
+                out.push_str(&fmt_section("Modified Arrays", &detail.modified_arrays, DIFF_SECTION_LIMIT));
+                out.push_str(&fmt_section("Modified Groups", &detail.modified_groups, DIFF_SECTION_LIMIT));
+
                 if !detail.chunk_changes.is_empty() {
-                    out.push_str(&format!("## Updated Chunks ({} arrays)\n\n", detail.chunk_changes.len()));
-                    for (path, count) in &detail.chunk_changes {
-                        out.push_str(&format!("- {path}: {count} chunks written\n"));
-                    }
-                    out.push('\n');
+                    let chunk_items: Vec<String> = detail
+                        .chunk_changes
+                        .iter()
+                        .map(|(path, count)| format!("{path}: {count} chunks written"))
+                        .collect();
+                    out.push_str(&fmt_section("Updated Chunks", &chunk_items, DIFF_SECTION_LIMIT));
                 }
+
                 if !detail.moved_nodes.is_empty() {
-                    out.push_str(&format!("## Moved ({})\n\n", detail.moved_nodes.len()));
-                    for (from, to) in &detail.moved_nodes {
-                        out.push_str(&format!("- {from} \u{2192} {to}\n"));
-                    }
-                    out.push('\n');
+                    let moved_items: Vec<String> = detail
+                        .moved_nodes
+                        .iter()
+                        .map(|(from, to)| format!("{from} \u{2192} {to}"))
+                        .collect();
+                    out.push_str(&fmt_section("Moved", &moved_items, DIFF_SECTION_LIMIT));
                 }
+
                 if detail.added_arrays.is_empty()
                     && detail.added_groups.is_empty()
                     && detail.deleted_arrays.is_empty()
@@ -647,7 +642,7 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP diff completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 
     #[tool(description = "Show repository configuration: spec version, status, feature flags, virtual chunk containers, inline threshold.")]
@@ -686,7 +681,7 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP config completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 
     #[tool(description = "Fuzzy search for nodes by path. Returns matching array and group paths ranked by relevance.")]
@@ -740,7 +735,7 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {e}"),
         };
         info!("MCP search completed in {:?}", _start.elapsed());
-        result
+        cap_output(result)
     }
 }
 

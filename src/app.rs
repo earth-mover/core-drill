@@ -528,8 +528,8 @@ impl App {
             .filter(|s| matches!(s, LoadState::Loading))
             .count();
 
-        // Keep at most ~4 concurrent requests to avoid overwhelming the connection
-        let budget = 4usize.saturating_sub(in_flight);
+        // Keep at most ~16 concurrent requests
+        let budget = 16usize.saturating_sub(in_flight);
         if budget == 0 {
             return;
         }

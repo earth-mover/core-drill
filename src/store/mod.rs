@@ -223,13 +223,23 @@ impl DataStore {
         }
     }
 
-    /// Drain all pending responses from the background worker.
+    /// Drain pending responses from the background worker, up to `MAX_PER_FRAME`.
+    /// Capping per-frame updates keeps the UI smooth even when many chunk-stats
+    /// responses arrive simultaneously from high-concurrency scans.
     /// Returns true if any responses were processed (caller should notify components).
     pub fn drain_responses(&mut self) -> bool {
+        const MAX_PER_FRAME: usize = 4;
         let mut had_responses = false;
-        while let Ok(response) = self.response_rx.try_recv() {
-            had_responses = true;
-            self.apply_response(response);
+        let mut count = 0;
+        while count < MAX_PER_FRAME {
+            match self.response_rx.try_recv() {
+                Ok(response) => {
+                    had_responses = true;
+                    self.apply_response(response);
+                    count += 1;
+                }
+                Err(_) => break,
+            }
         }
         had_responses
     }
