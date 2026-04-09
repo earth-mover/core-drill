@@ -676,6 +676,7 @@ pub(crate) async fn resolve_ref(
     repo: &Repository,
     r: &str,
 ) -> color_eyre::Result<icechunk::repository::VersionInfo> {
+    use icechunk::format::SnapshotId;
     use icechunk::repository::VersionInfo;
 
     // Try branch first
@@ -686,9 +687,37 @@ pub(crate) async fn resolve_ref(
     if repo.lookup_tag(r).await.is_ok() {
         return Ok(VersionInfo::TagRef(r.to_string()));
     }
-    // Try snapshot ID (Crockford Base32)
+    // Try exact snapshot ID (full 20-char Crockford Base32)
     if let Ok(snap_id) = r.try_into() {
         return Ok(VersionInfo::SnapshotId(snap_id));
+    }
+
+    // Try prefix match — like git short hashes.
+    // Uses the repo info file (single cached fetch) which has all snapshot IDs.
+    let r_upper = r.to_uppercase();
+    if r_upper.len() >= 4 && r_upper.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c)) {
+        if let Ok((repo_info, _)) = repo.asset_manager().fetch_repo_info().await {
+            let mut matches: Vec<SnapshotId> = Vec::new();
+            if let Ok(snapshots) = repo_info.all_snapshots() {
+                for snap_result in snapshots {
+                    if let Ok(info) = snap_result {
+                        let full_id: String = (&info.id).into();
+                        if full_id.starts_with(&r_upper) {
+                            matches.push(info.id);
+                            if matches.len() > 1 {
+                                color_eyre::eyre::bail!(
+                                    "ambiguous snapshot prefix '{r}' — matches {} snapshots",
+                                    matches.len()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            if matches.len() == 1 {
+                return Ok(VersionInfo::SnapshotId(matches.remove(0)));
+            }
+        }
     }
 
     color_eyre::eyre::bail!("ref not found: '{r}' (not a branch, tag, or snapshot ID)")
@@ -996,18 +1025,44 @@ pub(crate) async fn fetch_chunk_stats(
 }
 
 /// Fetch the diff for a snapshot with resolved paths (for CLI/MCP output).
+/// If `parent_id` is `None`, auto-resolves the parent from ancestry.
+/// Returns an initial-commit marker only when the snapshot truly has no parent.
 pub(crate) async fn fetch_diff(
     repo: &Repository,
     snapshot_id: &str,
     parent_id: Option<&str>,
 ) -> color_eyre::Result<DiffDetail> {
-    use icechunk::format::SnapshotId;
+    use futures::StreamExt;
     use std::collections::HashMap;
 
-    // Initial commit: no parent, return empty diff
+    // Resolve snapshot ref (supports prefix matching like git short hashes)
+    let version = resolve_ref(repo, snapshot_id).await?;
+    let snap_id = match &version {
+        icechunk::repository::VersionInfo::SnapshotId(id) => id.clone(),
+        _ => {
+            let session = repo.readonly_session(&version).await?;
+            session.snapshot_id().clone()
+        }
+    };
+    let full_snapshot_id: String = (&snap_id).into();
+
+    // If no parent_id provided, resolve it from ancestry
+    let parent_id = match parent_id {
+        Some(pid) => Some(pid.to_string()),
+        None => {
+            let stream = repo.ancestry(&version).await?;
+            futures::pin_mut!(stream);
+            stream
+                .next()
+                .await
+                .and_then(|r| r.ok())
+                .and_then(|info| info.parent_id.map(|id| id.to_string()))
+        }
+    };
+
     if parent_id.is_none() {
         return Ok(DiffDetail {
-            snapshot_id: snapshot_id.to_string(),
+            snapshot_id: full_snapshot_id,
             parent_id: None,
             added_arrays: vec![],
             added_groups: vec![],
@@ -1019,8 +1074,6 @@ pub(crate) async fn fetch_diff(
             is_initial_commit: true,
         });
     }
-
-    let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| color_eyre::eyre::eyre!(e))?;
 
     // Fetch transaction log (1 S3 fetch)
     let tx_log = repo.asset_manager().fetch_transaction_log(&snap_id).await?;
@@ -1037,8 +1090,8 @@ pub(crate) async fn fetch_diff(
         .collect();
 
     // Build NodeId→Path map by listing all nodes at this snapshot
-    let version = icechunk::repository::VersionInfo::SnapshotId(snap_id);
-    let session = repo.readonly_session(&version).await?;
+    let snap_version = icechunk::repository::VersionInfo::SnapshotId(snap_id);
+    let session = repo.readonly_session(&snap_version).await?;
     let nodes_iter = session.list_nodes(&icechunk::format::Path::root()).await?;
 
     let mut id_to_path: HashMap<String, String> = HashMap::new();
@@ -1055,8 +1108,8 @@ pub(crate) async fn fetch_diff(
     };
 
     Ok(DiffDetail {
-        snapshot_id: snapshot_id.to_string(),
-        parent_id: parent_id.map(|s| s.to_string()),
+        snapshot_id: full_snapshot_id,
+        parent_id,
         added_arrays: added_array_ids.iter().map(|id| resolve(id)).collect(),
         added_groups: added_group_ids.iter().map(|id| resolve(id)).collect(),
         deleted_arrays: deleted_array_ids.iter().map(|id| resolve(id)).collect(),

@@ -256,7 +256,11 @@ impl CoreDrillServer {
         }
 
         if let Ok(ancestry) = ancestry_res {
-            out.push_str(&format!("\n## Snapshots ({})\n\n", ancestry.len()));
+            out.push_str(&format!(
+                "\n## Snapshots ({} commits on {})\n\n",
+                ancestry.len(),
+                params.r#ref
+            ));
             out.push_str(
                 "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
             );
@@ -350,16 +354,20 @@ impl CoreDrillServer {
         let repo = require_repo!(self);
         let result = match output::fetch_ancestry(&repo, &params.r#ref).await {
             Ok(entries) => {
-                let entries: Vec<_> = if let Some(n) = params.limit {
+                let total = entries.len();
+                let display: Vec<_> = if let Some(n) = params.limit {
                     entries.into_iter().take(n).collect()
                 } else {
                     entries
                 };
-                let mut out = format!("# Snapshot Log ({})\n\n", params.r#ref);
+                let mut out = format!(
+                    "# Snapshot Log ({}, {} total commits)\n\n",
+                    params.r#ref, total
+                );
                 out.push_str(
                     "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
                 );
-                for (i, e) in entries.iter().enumerate() {
+                for (i, e) in display.iter().enumerate() {
                     let ts = e.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
                     out.push_str(&format!(
                         "\n| {} | `{}` | {} | {} |",
@@ -369,7 +377,11 @@ impl CoreDrillServer {
                         e.message
                     ));
                 }
-                out.push_str(&format!("\n\n{} snapshot(s)", entries.len()));
+                if let Some(n) = params.limit {
+                    if n < total {
+                        out.push_str(&format!("\n\n*Showing {} of {} commits*", n, total));
+                    }
+                }
                 out
             }
             Err(e) => format!("Error: {e}"),
