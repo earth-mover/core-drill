@@ -134,14 +134,19 @@ impl CoreDrillServer {
         let repo = require_repo!(self);
         let repo_url = self.repo_url.read().await;
 
-        let branches = match output::fetch_branches(&repo).await {
+        // Fetch branches, tags, ancestry, and tree concurrently
+        let (branches_res, tags_res, ancestry_res, tree_res) = tokio::join!(
+            output::fetch_branches(&repo),
+            output::fetch_tags(&repo),
+            output::fetch_ancestry(&repo, "main"),
+            output::fetch_tree_flat(&repo, "main", None),
+        );
+
+        let branches = match branches_res {
             Ok(b) => b,
-            Err(e) => return format!("Error: {e}"),
+            Err(e) => return format!("Error fetching branches: {e}"),
         };
-        let tags = match output::fetch_tags(&repo).await {
-            Ok(t) => t,
-            Err(e) => return format!("Error: {e}"),
-        };
+        let tags = tags_res.unwrap_or_default();
 
         let mut out = format!("# Repository: {}\n\n", *repo_url);
 
@@ -177,44 +182,43 @@ impl CoreDrillServer {
             }
         }
 
-        let main_branch = branches
-            .iter()
-            .find(|b| b.name == "main")
-            .or(branches.first());
-        if let Some(branch) = main_branch {
-            if let Ok(ancestry) = output::fetch_ancestry(&repo, &branch.name).await {
-                out.push_str(&format!("\n## Snapshots ({})\n\n", ancestry.len()));
-                out.push_str(
-                    "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
-                );
-                for (i, e) in ancestry.iter().take(5).enumerate() {
-                    let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
-                    out.push_str(&format!(
-                        "\n| {} | `{}` | {} | {} |",
-                        i + 1,
-                        output::truncate(&e.id, 12),
-                        ts,
-                        e.message
-                    ));
-                }
-                if ancestry.len() > 5 {
-                    out.push_str(&format!(
-                        "\n\n*({} more — use `log` tool)*",
-                        ancestry.len() - 5
-                    ));
-                }
-            }
-
-            if let Ok(tree) = output::fetch_tree_flat(&repo, &branch.name, None).await {
-                let groups = tree.iter().filter(|n| n.is_group()).count();
-                let arrays = tree.iter().filter(|n| n.is_array()).count();
+        if let Ok(ancestry) = ancestry_res {
+            out.push_str(&format!("\n## Snapshots ({})\n\n", ancestry.len()));
+            out.push_str(
+                "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
+            );
+            for (i, e) in ancestry.iter().take(5).enumerate() {
+                let ts = e.timestamp.format("%Y-%m-%d %H:%M").to_string();
                 out.push_str(&format!(
-                    "\n\n## Tree (at {})\n\n{} groups, {} arrays\n\n",
-                    branch.name, groups, arrays
+                    "\n| {} | `{}` | {} | {} |",
+                    i + 1,
+                    output::truncate(&e.id, 12),
+                    ts,
+                    e.message
                 ));
-                for node in &tree {
-                    out.push_str(&output::fmt_tree_line(node, &tree));
-                }
+            }
+            if ancestry.len() > 5 {
+                out.push_str(&format!(
+                    "\n\n*({} more — use `log` tool)*",
+                    ancestry.len() - 5
+                ));
+            }
+        }
+
+        if let Ok(tree) = tree_res {
+            let main_name = branches
+                .iter()
+                .find(|b| b.name == "main")
+                .map(|b| b.name.as_str())
+                .unwrap_or("main");
+            let groups = tree.iter().filter(|n| n.is_group()).count();
+            let arrays = tree.iter().filter(|n| n.is_array()).count();
+            out.push_str(&format!(
+                "\n\n## Tree (at {})\n\n{} groups, {} arrays\n\n",
+                main_name, groups, arrays
+            ));
+            for node in &tree {
+                out.push_str(&output::fmt_tree_line(node, &tree));
             }
         }
 
