@@ -22,7 +22,7 @@ Drill deep into your Icechunk repos to discover their past.
 ## Install
 
 ```bash
-cargo install --git https://github.com/earth-mover/core-drill
+cargo install --git ssh://git@github.com/earth-mover/core-drill
 ```
 
 ## Usage
