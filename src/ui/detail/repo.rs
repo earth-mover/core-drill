@@ -1,7 +1,7 @@
 use ratatui::prelude::*;
 
 use crate::app::App;
-use crate::ui::widgets::{format_vcc_prefix, section_header};
+use crate::ui::widgets::{format_vcc_prefix, section_header, storage_stats_lines};
 
 pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
     let branch_count = app.store.branches.as_loaded().map(|b| b.len()).unwrap_or(0);
@@ -93,85 +93,11 @@ pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
         if ss.total_arrays > 0 || ss.total_groups > 0 {
             lines.push(Line::from(""));
             lines.push(section_header("Storage Summary"));
-            lines.push(Line::from(vec![
-                Span::styled("  Arrays:      ", app.theme.text_dim),
-                Span::styled(ss.total_arrays.to_string(), app.theme.text),
-            ]));
-            if ss.empty_arrays > 0 || ss.filled_arrays > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled("    Filled:    ", app.theme.text_dim),
-                    Span::styled(ss.filled_arrays.to_string(), app.theme.text),
-                    Span::styled(
-                        format!("  empty: {}", ss.empty_arrays),
-                        app.theme.text_dim,
-                    ),
-                ]));
-            }
-            lines.push(Line::from(vec![
-                Span::styled("  Groups:      ", app.theme.text_dim),
-                Span::styled(ss.total_groups.to_string(), app.theme.text),
-            ]));
-            if ss.total_written > 0 {
-                lines.push(Line::from(vec![
-                    Span::styled("  Chunks:      ", app.theme.text_dim),
-                    Span::styled(ss.total_written.to_string(), app.theme.text),
-                ]));
-            }
-
-            if ss.stats_loaded > 0 {
-                let total_bytes = ss.total_bytes();
-                let stored_bytes = ss.stored_bytes();
-                let parts = ss.breakdown_parts();
-
-                let suffix = if ss.stats_loaded < ss.total_arrays {
-                    format!("  ({}/{} arrays scanned)", ss.stats_loaded, ss.total_arrays)
-                } else {
-                    String::new()
-                };
-
-                lines.push(Line::from(vec![
-                    Span::styled("  Breakdown:   ", app.theme.text_dim),
-                    Span::styled(format!("{}{}", parts.join(", "), suffix), app.theme.text),
-                ]));
-                let size_label = if ss.stats_loaded < ss.total_arrays {
-                    format!(
-                        "{}+  (scanning\u{2026})",
-                        humansize::format_size(total_bytes, humansize::BINARY)
-                    )
-                } else {
-                    humansize::format_size(total_bytes, humansize::BINARY)
-                };
-                lines.push(Line::from(vec![
-                    Span::styled("  Data size:   ", app.theme.text_dim),
-                    Span::styled(size_label, app.theme.text),
-                ]));
-                if ss.virtual_bytes > 0 && stored_bytes > 0 {
-                    lines.push(Line::from(vec![
-                        Span::styled("    Stored:    ", app.theme.text_dim),
-                        Span::styled(
-                            humansize::format_size(stored_bytes, humansize::BINARY),
-                            app.theme.text,
-                        ),
-                        Span::styled("  (in this repo)", app.theme.text_dim),
-                    ]));
-                    lines.push(Line::from(vec![
-                        Span::styled("    Virtual:   ", app.theme.text_dim),
-                        Span::styled(
-                            humansize::format_size(ss.virtual_bytes, humansize::BINARY),
-                            app.theme.text,
-                        ),
-                        Span::styled("  (external sources)", app.theme.text_dim),
-                    ]));
-                }
-            }
+            lines.extend(storage_stats_lines(&ss, &app.theme, true));
 
             // ─── Virtual Sources ─────────────
             if !ss.virtual_prefixes.is_empty() {
-                let mut sorted_prefixes: Vec<(&String, &usize)> =
-                    ss.virtual_prefixes.iter().collect();
-                sorted_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
-
-                let total_vchunks: usize = sorted_prefixes.iter().map(|(_, c)| **c).sum();
+                let total_vchunks: usize = ss.virtual_prefixes.iter().map(|(_, c)| *c).sum();
 
                 lines.push(Line::from(""));
                 lines.push(section_header("Virtual Sources"));
@@ -185,7 +111,7 @@ pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                         app.theme.text,
                     ),
                 ]));
-                for (prefix, count) in &sorted_prefixes {
+                for (prefix, count) in &ss.virtual_prefixes {
                     let display = format_vcc_prefix(prefix, &app.repo_info);
                     let display = display.trim_start();
                     lines.push(Line::from(vec![

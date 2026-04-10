@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 /// Parse zarr metadata JSON and extract key fields for display
+#[derive(Debug, Clone)]
 pub struct ZarrMetadata {
     pub data_type: String,
     pub chunk_shape: Vec<u64>,

@@ -6,12 +6,20 @@
 //! Design principle: show enough overview that an agent can drill deeper
 //! with more specific subcommands.
 
+pub(crate) mod format;
+
+// Re-export all formatting helpers so existing `crate::output::*` call-sites
+// continue to work without any changes.
+pub(crate) use format::*;
+
 use std::sync::Arc;
 
 use icechunk::Repository;
 
 use crate::cli::{Command, OutputFormat};
 use crate::fetch::*;
+
+// ─── Public entry points ──────────────────────────────────────
 
 /// Run the non-interactive output path. Prints to stdout and returns.
 pub async fn run(
@@ -79,6 +87,8 @@ pub async fn run_repl(
 
     Ok(())
 }
+
+// ─── REPL command parser ──────────────────────────────────────
 
 /// Parse a single REPL line into a Command.
 /// Supports: info, branches, tags, log [-r REF] [-n LIMIT], tree [-r REF] [-p PATH]
@@ -392,7 +402,7 @@ async fn print_md_tree(
     if let Some(filter_path) = path_filter {
         // Find the specific node and show detail
         if let Some(node) = tree.iter().find(|n| n.path == filter_path) {
-            print_md_node_detail(node);
+            print!("{}", fmt_node_detail(node));
         } else {
             // Show nodes under this path prefix
             let matching: Vec<_> = tree
@@ -404,7 +414,7 @@ async fn print_md_tree(
             } else {
                 println!("# Tree: {} ({} nodes)\n", filter_path, matching.len());
                 for node in matching {
-                    print_md_node_detail(node);
+                    print!("{}", fmt_node_detail(node));
                     println!();
                 }
             }
@@ -417,13 +427,6 @@ async fn print_md_tree(
     Ok(())
 }
 
-pub(crate) fn fmt_dims(dims: &[u64]) -> String {
-    dims.iter()
-        .map(|d| d.to_string())
-        .collect::<Vec<_>>()
-        .join(" × ")
-}
-
 fn print_md_tree_nodes(tree: &[FlatNode]) {
     let groups = tree.iter().filter(|n| n.is_group()).count();
     let arrays = tree.iter().filter(|n| n.is_array()).count();
@@ -432,108 +435,3 @@ fn print_md_tree_nodes(tree: &[FlatNode]) {
         print!("{}", fmt_tree_line(node, tree));
     }
 }
-
-fn print_md_node_detail(node: &FlatNode) {
-    print!("{}", fmt_node_detail(node));
-}
-
-/// Format a single node's detailed metadata as markdown (shared by CLI + MCP).
-pub(crate) fn fmt_node_detail(node: &FlatNode) -> String {
-    let mut out = format!("### {}\n\n", node.path);
-    out.push_str(&format!("- **Type:** {}\n", node.node_type));
-    if let Some(ref shape) = node.shape {
-        out.push_str(&format!("- **Shape:** `[{}]`\n", fmt_dims(shape)));
-    }
-    if let Some(ref dtype) = node.dtype {
-        out.push_str(&format!("- **Data type:** `{dtype}`\n"));
-    }
-    if let Some(ref chunk_shape) = node.chunk_shape {
-        out.push_str(&format!(
-            "- **Chunk shape:** `[{}]`\n",
-            fmt_dims(chunk_shape)
-        ));
-    }
-    if let Some(ref dims) = node.dimensions {
-        out.push_str(&format!("- **Dimensions:** {}\n", dims.join(", ")));
-    }
-    if let (Some(written), Some(grid)) = (node.total_chunks, node.grid_chunks) {
-        if grid > 0 {
-            let pct = written * 100 / grid;
-            out.push_str(&format!(
-                "- **Initialized:** {written} of {grid} ({pct}%)\n"
-            ));
-        }
-    } else if let Some(written) = node.total_chunks {
-        out.push_str(&format!("- **Total chunks:** {written}\n"));
-    }
-    if let Some(ref codecs) = node.codecs {
-        out.push_str(&format!("- **Codecs:** {codecs}\n"));
-    }
-    if let Some(ref fill) = node.fill_value {
-        out.push_str(&format!("- **Fill value:** `{fill}`\n"));
-    }
-    out
-}
-
-/// Format a single tree node as a one-line markdown entry (shared by CLI + MCP).
-pub(crate) fn fmt_tree_line(node: &FlatNode, tree: &[FlatNode]) -> String {
-    let depth = node.path.matches('/').count().saturating_sub(1);
-    let indent = "  ".repeat(depth);
-    match node.node_type {
-        FlatNodeType::Array => {
-            let shape = node
-                .shape
-                .as_ref()
-                .map(|s| fmt_dims(s))
-                .unwrap_or_else(|| "?".to_string());
-            let dtype = node.dtype.as_deref().unwrap_or("?");
-            let chunks_info =
-                if let (Some(written), Some(grid)) = (node.total_chunks, node.grid_chunks) {
-                    if grid > 0 {
-                        let pct = written * 100 / grid;
-                        format!("  ({written}/{grid} chunks, {pct}% initialized)")
-                    } else {
-                        format!("  ({written} chunks)")
-                    }
-                } else if let Some(written) = node.total_chunks {
-                    format!("  ({written} chunks)")
-                } else {
-                    String::new()
-                };
-            format!(
-                "{indent}- **{}** `{dtype}` `[{shape}]`{chunks_info}\n",
-                node.name
-            )
-        }
-        FlatNodeType::Group => {
-            let child_count = tree
-                .iter()
-                .filter(|n| {
-                    let parent = match n.path.rfind('/') {
-                        Some(0) => "/",
-                        Some(idx) => &n.path[..idx],
-                        None => "/",
-                    };
-                    parent == node.path
-                })
-                .count();
-            format!("{indent}- **{}/** ({} children)\n", node.name, child_count)
-        }
-    }
-}
-
-
-
-pub(crate) fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        // Find a valid UTF-8 boundary at or before `max`
-        let mut end = max;
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        &s[..end]
-    }
-}
-

@@ -12,6 +12,7 @@ mod store;
 mod theme;
 mod tui;
 mod ui;
+pub mod util;
 
 use std::sync::Arc;
 

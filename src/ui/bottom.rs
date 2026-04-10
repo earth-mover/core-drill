@@ -16,7 +16,7 @@ pub(super) fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
         BottomTab::Branches => 1,
         BottomTab::Tags => 2,
     };
-    let (content_area, _tab_bar) = match render_tabbed_panel(
+    let content_area = match render_tabbed_panel(
         "[3] Version Control",
         &["Snapshots", "Branches", "Tags"],
         active_tab,
@@ -25,7 +25,7 @@ pub(super) fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
         frame,
         area,
     ) {
-        Some(areas) => areas,
+        Some(area) => area,
         None => return,
     };
 
@@ -63,11 +63,7 @@ fn render_snapshot_list(app: &App, frame: &mut Frame, area: Rect, _focused: bool
                     } else {
                         i == app.bottom_selected()
                     };
-                    let short_id = if entry.id.len() > 12 {
-                        &entry.id[..12]
-                    } else {
-                        &entry.id
-                    };
+                    let short_id = crate::output::truncate(&entry.id, 12);
                     let row = Row::new(vec![
                         Cell::from(Span::raw(short_id)),
                         Cell::from(Span::raw(

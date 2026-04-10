@@ -2,7 +2,6 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 /// Shared visual theme for all components
-#[allow(dead_code)]
 pub struct Theme {
     pub border: Style,
     pub border_focused: Style,
@@ -14,7 +13,6 @@ pub struct Theme {
 
     pub selected: Style,
     pub selected_inactive: Style,
-    pub active: Style,
 
     // Semantic: diff colors
     pub added: Style,
@@ -23,13 +21,8 @@ pub struct Theme {
 
     // Semantic: ref types
     pub branch: Style,
-    pub tag: Style,
     pub snapshot_id: Style,
     pub timestamp: Style,
-
-    // Semantic: node types
-    pub group_icon: Style,
-    pub array_icon: Style,
 
     // Status
     pub loading: Style,
@@ -42,7 +35,6 @@ mod colors {
     use ratatui::prelude::Color;
 
     // Primary palette
-    pub const VIOLET: Color = Color::Rgb(155, 87, 250);
     pub const LIME: Color = Color::Rgb(192, 227, 50);
 
     // Secondary palette
@@ -71,22 +63,15 @@ impl Default for Theme {
             text_bold: Style::default().fg(LIGHT_GRAY).add_modifier(Modifier::BOLD),
 
             selected: Style::default().fg(LIME).add_modifier(Modifier::BOLD),
-            selected_inactive: Style::default().fg(LIGHT_GRAY),
-            active: Style::default()
-                .fg(ICECHUNK_BLUE)
-                .add_modifier(Modifier::UNDERLINED),
+            selected_inactive: Style::default().fg(LIME),
 
             added: Style::default().fg(GREEN),
             removed: Style::default().fg(RED),
             modified: Style::default().fg(ORANGE),
 
             branch: Style::default().fg(ICECHUNK_BLUE),
-            tag: Style::default().fg(VIOLET),
             snapshot_id: Style::default().fg(DARK_GRAY),
             timestamp: Style::default().fg(LIGHT_VIOLET),
-
-            group_icon: Style::default().fg(ORANGE),
-            array_icon: Style::default().fg(ICECHUNK_BLUE),
 
             loading: Style::default().fg(ORANGE),
             error: Style::default().fg(RED),

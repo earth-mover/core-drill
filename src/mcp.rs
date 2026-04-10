@@ -10,7 +10,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use humansize::{format_size, BINARY};
 use icechunk::Repository;
 use rmcp::{
     ServerHandler,
@@ -28,7 +27,6 @@ use crate::store::types::{BranchInfo, SnapshotEntry, TagInfo};
 
 /// Cached data shared across MCP tool calls for the current repo session.
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 struct McpCache {
     branches: Option<Vec<BranchInfo>>,
     tags: Option<Vec<TagInfo>>,
@@ -38,7 +36,6 @@ struct McpCache {
 
 /// MCP server wrapping an open icechunk repository.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CoreDrillServer {
     tool_router: ToolRouter<Self>,
     repo: Arc<RwLock<Option<Arc<Repository>>>>,
@@ -101,6 +98,9 @@ struct TreeParams {
     path: Option<String>,
     /// Maximum depth of children to show (e.g. 1 for direct children only). If omitted, shows all descendants.
     depth: Option<usize>,
+    /// Fetch full chunk statistics (type breakdown, sizes). Slower — iterates all chunks. Default: false.
+    #[serde(default)]
+    chunk_stats: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -147,23 +147,6 @@ fn default_ref() -> String {
     "main".to_string()
 }
 
-/// Render a headed list section, capping at `limit` entries.
-/// Returns empty string if `items` is empty.
-fn fmt_section(heading: &str, items: &[String], limit: usize) -> String {
-    if items.is_empty() {
-        return String::new();
-    }
-    let mut out = format!("## {} ({})\n\n", heading, items.len());
-    for item in items.iter().take(limit) {
-        out.push_str(&format!("- {item}\n"));
-    }
-    if items.len() > limit {
-        out.push_str(&format!("- *… {} more*\n", items.len() - limit));
-    }
-    out.push('\n');
-    out
-}
-
 /// Hard output cap to prevent flooding the agent context window (~2 000 tokens).
 const MAX_OUTPUT_CHARS: usize = 8_000;
 
@@ -201,45 +184,7 @@ macro_rules! require_repo {
     }};
 }
 
-use crate::store::types::ChunkStats;
-
-fn fmt_chunk_stats(stats: &ChunkStats) -> String {
-    let mut out = "\n## Chunk Statistics\n\n".to_string();
-    out.push_str(&format!("- **Total:** {} chunks\n", stats.total_chunks));
-    if stats.stats_complete && stats.total_chunks > 0 {
-        let total = stats.total_chunks as f64;
-        let native_pct = (stats.native_count as f64 / total * 100.0) as u64;
-        let inline_pct = (stats.inline_count as f64 / total * 100.0) as u64;
-        let virtual_pct = (stats.virtual_count as f64 / total * 100.0) as u64;
-
-        out.push_str(&format!(
-            "- **Native:** {} ({}%)  {}\n",
-            stats.native_count,
-            native_pct,
-            format_size(stats.native_total_bytes, BINARY)
-        ));
-        out.push_str(&format!(
-            "- **Inline:** {} ({}%)  {}\n",
-            stats.inline_count,
-            inline_pct,
-            format_size(stats.inline_total_bytes, BINARY)
-        ));
-        out.push_str(&format!(
-            "- **Virtual:** {} ({}%)  {}  ({} sources)\n",
-            stats.virtual_count,
-            virtual_pct,
-            format_size(stats.virtual_total_bytes, BINARY),
-            stats.virtual_source_count
-        ));
-        let data_size =
-            stats.native_total_bytes + stats.inline_total_bytes + stats.virtual_total_bytes;
-        out.push_str(&format!(
-            "- **Data size:** {}\n",
-            format_size(data_size, BINARY)
-        ));
-    }
-    out
-}
+use crate::output::fmt_chunk_stats;
 
 #[tool_router]
 impl CoreDrillServer {
@@ -253,90 +198,21 @@ impl CoreDrillServer {
             self.cached_ancestry(repo, r#ref),
         );
 
-        let branches = match branches_res {
-            Ok(mut b) => {
-                // "main" first, then most recently updated (tip_timestamp now populated from repo info)
-                b.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
-                    ("main", _) => std::cmp::Ordering::Less,
-                    (_, "main") => std::cmp::Ordering::Greater,
-                    _ => b.tip_timestamp.cmp(&a.tip_timestamp),
-                });
-                b
-            }
+        let mut branches = match branches_res {
+            Ok(b) => b,
             Err(e) => return format!("Error fetching branches: {e}"),
         };
+        // "main" first, then most recently updated
+        branches.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
+            ("main", _) => std::cmp::Ordering::Less,
+            (_, "main") => std::cmp::Ordering::Greater,
+            _ => b.tip_timestamp.cmp(&a.tip_timestamp),
+        });
+
         let tags = tags_res.unwrap_or_default();
+        let ancestry = ancestry_res.unwrap_or_default();
 
-        let mut out = format!("# Repository: {}\n\n", *repo_url);
-
-        out.push_str(&format!("## Branches ({})\n\n", branches.len()));
-        let show_branches = if branches.len() > 10 { 5 } else { branches.len() };
-        for b in branches.iter().take(show_branches) {
-            let ts = b
-                .tip_timestamp
-                .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-                .unwrap_or_default();
-            let msg = b.tip_message.as_deref().unwrap_or("");
-            let msg_part = if msg.is_empty() {
-                String::new()
-            } else {
-                format!(" — {msg}")
-            };
-            out.push_str(&format!(
-                "- **{}** → `{}`  {}{}\n",
-                b.name,
-                output::truncate(&b.snapshot_id, 12),
-                ts,
-                msg_part
-            ));
-        }
-        if branches.len() > show_branches {
-            out.push_str(&format!(
-                "\n*({} more — use `branches` tool for full list)*\n",
-                branches.len() - show_branches
-            ));
-        }
-
-        if !tags.is_empty() {
-            out.push_str(&format!("\n## Tags ({})\n\n", tags.len()));
-            for t in &tags {
-                out.push_str(&format!(
-                    "- **{}** → `{}`\n",
-                    t.name,
-                    output::truncate(&t.snapshot_id, 12)
-                ));
-            }
-        }
-
-        if let Ok(ancestry) = ancestry_res {
-            out.push_str(&format!(
-                "\n## Recent Snapshots ({} total on `{}`)\n\n",
-                ancestry.len(),
-                r#ref
-            ));
-            out.push_str(
-                "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
-            );
-            for (i, e) in ancestry.iter().take(5).enumerate() {
-                let ts = e.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
-                out.push_str(&format!(
-                    "\n| {} | `{}` | {} | {} |",
-                    i + 1,
-                    output::truncate(&e.id, 12),
-                    ts,
-                    e.message
-                ));
-            }
-            if ancestry.len() > 5 {
-                out.push_str(&format!(
-                    "\n\n*({} more — use `log` tool)*",
-                    ancestry.len() - 5
-                ));
-            }
-        }
-
-        out.push_str("\n\n---\n*Next steps: `tree` (browse arrays), `search` (find array by name), `log` (full history), `diff` (snapshot changes), `ops_log` (mutation history), `config` (repo settings)*");
-        out
+        output::fmt_repo_overview(&repo_url, &branches, &tags, &ancestry, r#ref)
     }
 
     /// Get branches, using cache if available.
@@ -390,7 +266,7 @@ impl CoreDrillServer {
         description = "Open an Icechunk repository and return an overview (branches, tags, recent snapshots). Must be called before other tools. Accepts local paths, S3/GCS URLs, S3-compatible (R2, MinIO, Tigris via endpoint_url), or Arraylake refs (al:org/repo)."
     )]
     async fn open(&self, Parameters(params): Parameters<OpenParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         info!("MCP open: repo={}", params.repo);
         let overrides = repo::StorageOverrides {
             region: params.region,
@@ -411,7 +287,7 @@ impl CoreDrillServer {
             }
             Err(e) => format!("Error opening repository: {e}"),
         };
-        info!("MCP open completed in {:?}", _start.elapsed());
+        info!("MCP open completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
@@ -419,17 +295,17 @@ impl CoreDrillServer {
         description = "Repository overview: branches, tags, and recent snapshots. Good starting point after opening a repo. Use `tree` to browse arrays, `search` to find a specific array."
     )]
     async fn info(&self, Parameters(params): Parameters<InfoParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         info!("MCP info ref={}", params.r#ref);
         let repo = require_repo!(self);
         let result = self.format_info(&repo, &params.r#ref).await;
-        info!("MCP info completed in {:?}", _start.elapsed());
+        info!("MCP info completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
     #[tool(description = "List all branches with their tip snapshot IDs. Optionally filter by snapshot_id to find which branches point at a given snapshot.")]
     async fn branches(&self, Parameters(params): Parameters<BranchesParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match self.cached_branches(&repo).await {
             Ok(branches) => {
@@ -460,13 +336,13 @@ impl CoreDrillServer {
             }
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP branches completed in {:?}", _start.elapsed());
+        info!("MCP branches completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
     #[tool(description = "List all tags with their snapshot IDs.")]
     async fn tags(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match self.cached_tags(&repo).await {
             Ok(tags) if tags.is_empty() => "(no tags)".to_string(),
@@ -483,7 +359,7 @@ impl CoreDrillServer {
             }
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP tags completed in {:?}", _start.elapsed());
+        info!("MCP tags completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
@@ -491,7 +367,7 @@ impl CoreDrillServer {
         description = "Show snapshot history (commit log) for a branch, tag, or snapshot ID."
     )]
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match self.cached_ancestry(&repo, &params.r#ref).await {
             Ok(entries) => {
@@ -525,15 +401,15 @@ impl CoreDrillServer {
             }
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP log completed in {:?}", _start.elapsed());
+        info!("MCP log completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
     #[tool(
-        description = "Browse the node tree. Without `path`: lists groups and arrays (use `depth` to limit nesting). With `path` on an array: detailed metadata. With `path` on a group: lists children. `path` also works as a prefix filter (e.g. `path=/burst` matches `/burst-001`, `/burst-002`). Use `depth=1` for direct children only."
+        description = "Browse the node tree. Without `path`: lists groups and arrays (use `depth` to limit nesting). With `path` on an array: detailed metadata (shape, dtype, codecs, chunk count). With `path` on a group: lists children. `path` also works as a prefix filter (e.g. `path=/burst` matches `/burst-001`, `/burst-002`). Use `depth=1` for direct children only. Add `chunk_stats=true` for full chunk type/size breakdown (slower — iterates all chunks)."
     )]
     async fn tree(&self, Parameters(params): Parameters<TreeParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let snap_id = match fetch::resolve_ref_to_snapshot_id(&repo, &params.r#ref).await {
             Ok(id) => id,
@@ -544,10 +420,13 @@ impl CoreDrillServer {
                 if let Some(ref filter_path) = params.path {
                     if let Some(node) = tree.iter().find(|n| n.path == *filter_path) {
                         if node.is_array() {
-                            // Array: show detailed metadata + chunk stats
+                            // Array: show detailed metadata from tree (cheap)
+                            // Chunk type/size breakdown only on request (iterates all chunks)
                             let mut out = output::fmt_node_detail(node);
-                            if let Ok(stats) = fetch::fetch_chunk_stats(&repo, &snap_id, &node.path).await {
-                                out.push_str(&fmt_chunk_stats(&stats));
+                            if params.chunk_stats {
+                                if let Ok(stats) = fetch::fetch_chunk_stats(&repo, &snap_id, &node.path).await {
+                                    out.push_str(&fmt_chunk_stats(&stats));
+                                }
                             }
                             out
                         } else {
@@ -637,13 +516,13 @@ impl CoreDrillServer {
             }
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP tree completed in {:?}", _start.elapsed());
+        info!("MCP tree completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
     #[tool(description = "Show repository operations log (mutation history): commits, branch/tag operations, config changes, GC runs.")]
     async fn ops_log(&self, Parameters(params): Parameters<OpsLogParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let ops_limit = Some(params.limit.unwrap_or(50));
         let result = match fetch::fetch_ops_log(&repo, ops_limit).await {
@@ -662,114 +541,37 @@ impl CoreDrillServer {
             }
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP ops_log completed in {:?}", _start.elapsed());
+        info!("MCP ops_log completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
     #[tool(description = "Show what changed in a snapshot: added/deleted/modified arrays and groups, chunk changes. Use snapshot IDs from the `log` tool.")]
     async fn diff(&self, Parameters(params): Parameters<DiffParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match fetch::fetch_diff(&repo, &params.snapshot_id, params.parent_id.as_deref()).await {
-            Ok(detail) => {
-                if detail.is_initial_commit {
-                    return format!(
-                        "# Diff: `{}`\n\nInitial commit — all nodes are new.",
-                        output::truncate(&params.snapshot_id, 12)
-                    );
-                }
-                const DIFF_SECTION_LIMIT: usize = 50;
-                let mut out = format!("# Diff: `{}`\n\n", output::truncate(&params.snapshot_id, 12));
-                if let Some(ref pid) = detail.parent_id {
-                    out.push_str(&format!("Parent: `{}`\n\n", output::truncate(pid, 12)));
-                }
-
-                out.push_str(&fmt_section("Added Arrays", &detail.added_arrays, DIFF_SECTION_LIMIT));
-                out.push_str(&fmt_section("Added Groups", &detail.added_groups, DIFF_SECTION_LIMIT));
-                out.push_str(&fmt_section("Deleted Arrays", &detail.deleted_arrays, DIFF_SECTION_LIMIT));
-                out.push_str(&fmt_section("Deleted Groups", &detail.deleted_groups, DIFF_SECTION_LIMIT));
-                out.push_str(&fmt_section("Modified Arrays", &detail.modified_arrays, DIFF_SECTION_LIMIT));
-                out.push_str(&fmt_section("Modified Groups", &detail.modified_groups, DIFF_SECTION_LIMIT));
-
-                if !detail.chunk_changes.is_empty() {
-                    let chunk_items: Vec<String> = detail
-                        .chunk_changes
-                        .iter()
-                        .map(|(path, count)| format!("{path}: {count} chunks written"))
-                        .collect();
-                    out.push_str(&fmt_section("Updated Chunks", &chunk_items, DIFF_SECTION_LIMIT));
-                }
-
-                if !detail.moved_nodes.is_empty() {
-                    let moved_items: Vec<String> = detail
-                        .moved_nodes
-                        .iter()
-                        .map(|(from, to)| format!("{from} \u{2192} {to}"))
-                        .collect();
-                    out.push_str(&fmt_section("Moved", &moved_items, DIFF_SECTION_LIMIT));
-                }
-
-                if detail.added_arrays.is_empty()
-                    && detail.added_groups.is_empty()
-                    && detail.deleted_arrays.is_empty()
-                    && detail.deleted_groups.is_empty()
-                    && detail.modified_arrays.is_empty()
-                    && detail.modified_groups.is_empty()
-                    && detail.chunk_changes.is_empty()
-                    && detail.moved_nodes.is_empty()
-                {
-                    out.push_str("No structural changes detected.\n");
-                }
-                out
-            }
+            Ok(detail) => output::fmt_diff_detail(&detail, &params.snapshot_id),
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP diff completed in {:?}", _start.elapsed());
+        info!("MCP diff completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
     #[tool(description = "Show repository configuration: spec version, status, feature flags, virtual chunk containers, inline threshold.")]
     async fn config(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match fetch::fetch_repo_config(&repo).await {
-            Ok(cfg) => {
-                let mut out = "# Repository Configuration\n\n".to_string();
-                out.push_str(&format!("- **Spec version:** {}\n", cfg.spec_version));
-                out.push_str(&format!("- **Availability:** {}\n", cfg.availability));
-                if let Some(threshold) = cfg.inline_chunk_threshold {
-                    out.push_str(&format!(
-                        "- **Inline chunk threshold:** {}\n",
-                        format_size(threshold as u64, BINARY)
-                    ));
-                }
-
-                if !cfg.feature_flags.is_empty() {
-                    out.push_str("\n## Feature Flags\n\n");
-                    for flag in &cfg.feature_flags {
-                        let state = if flag.enabled { "enabled" } else { "disabled" };
-                        let source = if flag.explicit { "explicit" } else { "default" };
-                        out.push_str(&format!("- **{}**: {} ({})\n", flag.name, state, source));
-                    }
-                }
-
-                if !cfg.virtual_chunk_containers.is_empty() {
-                    out.push_str("\n## Virtual Chunk Containers\n\n");
-                    for (name, prefix) in &cfg.virtual_chunk_containers {
-                        out.push_str(&format!("- **{name}** → `{prefix}`\n"));
-                    }
-                }
-                out
-            }
+            Ok(cfg) => output::fmt_repo_config(&cfg),
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP config completed in {:?}", _start.elapsed());
+        info!("MCP config completed in {:?}", start.elapsed());
         cap_output(result)
     }
 
     #[tool(description = "Search for nodes by path. Modes: \"fuzzy\" (default, ranked by relevance), \"prefix\" (paths starting with query, e.g. /data), \"exact\" (substring match), \"glob\" (wildcards, e.g. /data/*/temperature). For listing direct children of a group, use `tree` with `path` and `depth=1`.")]
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> String {
-        let _start = std::time::Instant::now();
+        let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match fetch::fetch_tree_flat(&repo, &params.r#ref, None).await {
             Ok(tree) => {
@@ -840,7 +642,7 @@ impl CoreDrillServer {
             }
             Err(e) => format!("Error: {e}"),
         };
-        info!("MCP search completed in {:?}", _start.elapsed());
+        info!("MCP search completed in {:?}", start.elapsed());
         cap_output(result)
     }
 }
@@ -899,11 +701,7 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
 
     for node in sorted.into_iter().map(|n| *n) {
-        let parent = match node.path.rfind('/') {
-            Some(0) => "/",
-            Some(idx) => &node.path[..idx],
-            None => "/",
-        };
+        let parent = crate::util::parent_path(&node.path);
         let depth = node.path.matches('/').count().saturating_sub(1);
 
         // Find a prefix: strip trailing digits/chars after last `-` or `_`
@@ -973,7 +771,7 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
 
             out.push_str(&format!(
                 "{indent}- **{}\\*** ({} {}){}\n",
-                group.prefix.rsplit('/').next().unwrap_or(&group.prefix),
+                crate::util::leaf_name(&group.prefix),
                 count, kind, meta
             ));
             lines += 1;
@@ -1116,7 +914,7 @@ mod collapse_tests {
     use crate::fetch::{FlatNode, FlatNodeType};
 
     fn make_array(path: &str) -> FlatNode {
-        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let name = crate::util::leaf_name(path).to_string();
         FlatNode {
             path: path.to_string(),
             name,

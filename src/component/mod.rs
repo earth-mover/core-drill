@@ -29,8 +29,31 @@ pub enum DetailMode {
     Snapshot,
 }
 
+impl DetailMode {
+    /// Returns the next tab to the right, or None if at the rightmost.
+    pub fn next(&self) -> Option<Self> {
+        match self {
+            Self::Node => Some(Self::Repo),
+            Self::Repo => Some(Self::Branch),
+            Self::Branch => Some(Self::Snapshot),
+            Self::Snapshot => Some(Self::OpsLog),
+            Self::OpsLog => None,
+        }
+    }
+
+    /// Returns the next tab to the left, or None if at the leftmost.
+    pub fn prev(&self) -> Option<Self> {
+        match self {
+            Self::Node => None,
+            Self::Repo => Some(Self::Node),
+            Self::Branch => Some(Self::Repo),
+            Self::Snapshot => Some(Self::Branch),
+            Self::OpsLog => Some(Self::Snapshot),
+        }
+    }
+}
+
 /// Actions that components can return from key handling
-#[allow(dead_code)]
 pub enum Action {
     /// Key was not consumed
     None,
@@ -38,8 +61,6 @@ pub enum Action {
     FocusPane(Pane),
     /// Toggle the bottom panel visibility
     ToggleBottom,
-    /// Switch the bottom panel tab
-    SwitchBottomTab(BottomTab),
     /// Quit the application
     Quit,
 }

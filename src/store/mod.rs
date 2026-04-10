@@ -160,6 +160,13 @@ pub struct DataStore {
     pub repo_config: LoadState<RepoConfig>,
     pub ops_log: LoadState<Vec<OpsLogEntry>>,
 
+    /// O(1) node lookup by path: path -> (parent_key, index into parent's Vec<TreeNode>)
+    pub node_index: HashMap<String, (String, usize)>,
+
+    /// Count of ChunkStats responses received since last drain — used by App
+    /// to decrement its in-flight counter without scanning the HashMap.
+    pub(crate) chunk_stats_received: usize,
+
     // Cached aggregation — invalidated when node_children or chunk_stats change
     cached_storage_stats: Option<stats::StorageStats>,
 
@@ -187,6 +194,8 @@ impl DataStore {
             chunk_stats: HashMap::new(),
             repo_config: LoadState::NotRequested,
             ops_log: LoadState::NotRequested,
+            node_index: HashMap::new(),
+            chunk_stats_received: 0,
             cached_storage_stats: None,
             request_tx,
             response_rx,
@@ -202,6 +211,24 @@ impl DataStore {
 
     fn recompute_storage_stats(&mut self) {
         self.cached_storage_stats = Some(stats::StorageStats::from_store(self));
+    }
+
+    /// Rebuild the node_index from current node_children data.
+    fn rebuild_node_index(&mut self) {
+        self.node_index.clear();
+        for (parent, state) in &self.node_children {
+            if let LoadState::Loaded(nodes) = state {
+                for (i, node) in nodes.iter().enumerate() {
+                    self.node_index.insert(node.path.clone(), (parent.clone(), i));
+                }
+            }
+        }
+    }
+
+    /// O(1) lookup of a TreeNode by its path.
+    pub fn find_node(&self, path: &str) -> Option<&TreeNode> {
+        let (parent, idx) = self.node_index.get(path)?;
+        self.node_children.get(parent)?.as_loaded()?.get(*idx)
     }
 
     /// Submit a data request to the background worker.
@@ -254,6 +281,7 @@ impl DataStore {
     /// Returns true if any responses were processed (caller should notify components).
     pub fn drain_responses(&mut self) -> bool {
         const MAX_PER_FRAME: usize = 4;
+        self.chunk_stats_received = 0;
         let mut had_responses = false;
         let mut count = 0;
         while count < MAX_PER_FRAME {
@@ -305,6 +333,7 @@ impl DataStore {
                             .insert("/".to_string(), LoadState::Error(e));
                     }
                 }
+                self.rebuild_node_index();
             }
             DataResponse::SnapshotDiff {
                 snapshot_id,
@@ -390,6 +419,7 @@ impl DataStore {
                     Err(e) => LoadState::Error(e),
                 };
                 self.chunk_stats.insert((snapshot_id, path), state);
+                self.chunk_stats_received += 1;
                 self.recompute_storage_stats();
             }
             DataResponse::RepoConfig(result) => {
@@ -544,13 +574,9 @@ async fn fetch_all_nodes(
         }
 
         // Derive parent path: everything up to the last '/'
-        let parent_path = match path_str.rfind('/') {
-            Some(0) => "/".to_string(),
-            Some(idx) => path_str[..idx].to_string(),
-            None => "/".to_string(),
-        };
+        let parent_path = crate::util::parent_path(&path_str).to_string();
 
-        let name = path_str.rsplit('/').next().unwrap_or("").to_string();
+        let name = crate::util::leaf_name(&path_str).to_string();
 
         let node_type = match &node.node_data {
             NodeData::Group => TreeNodeType::Group,
@@ -586,12 +612,15 @@ async fn fetch_all_nodes(
                     if all_found { Some(sum) } else { None }
                 };
 
+                let zarr_metadata_str = sanitize(&zarr_metadata);
+                let parsed_metadata = crate::ui::format::ZarrMetadata::parse(&zarr_metadata_str);
                 TreeNodeType::Array(ArraySummary {
                     shape: dims,
                     dimension_names: dim_names,
                     manifest_count: manifests.len(),
-                    zarr_metadata: sanitize(&zarr_metadata),
+                    zarr_metadata: zarr_metadata_str,
                     total_chunks,
+                    parsed_metadata,
                 })
             }
         };
@@ -659,20 +688,7 @@ async fn fetch_diff(
         .await
         .map_err(|e| e.to_string())?;
 
-    let added_array_ids: Vec<String> = tx_log.new_arrays().map(|id| id.to_string()).collect();
-    let added_group_ids: Vec<String> = tx_log.new_groups().map(|id| id.to_string()).collect();
-    let deleted_array_ids: Vec<String> = tx_log.deleted_arrays().map(|id| id.to_string()).collect();
-    let deleted_group_ids: Vec<String> = tx_log.deleted_groups().map(|id| id.to_string()).collect();
-    let modified_array_ids: Vec<String> =
-        tx_log.updated_arrays().map(|id| id.to_string()).collect();
-    let modified_group_ids: Vec<String> =
-        tx_log.updated_groups().map(|id| id.to_string()).collect();
-
-    // updated_chunks gives (NodeId, Iterator<ChunkIndices>); capture (id_string, count).
-    let chunk_change_ids: Vec<(String, usize)> = tx_log
-        .updated_chunks()
-        .map(|(node_id, chunks_iter)| (node_id.to_string(), chunks_iter.count()))
-        .collect();
+    let raw_ids = crate::fetch::extract_tx_log_ids(&tx_log);
 
     // moves() yields Move { node_id, from, to } — paths are already resolved in the tx log.
     let moved_node_ids: Vec<(String, String, String)> = tx_log
@@ -684,13 +700,13 @@ async fn fetch_diff(
     Ok(RawDiff {
         snapshot_id: snapshot_id.to_string(),
         parent_id: parent_id.map(|s| s.to_string()),
-        added_array_ids,
-        added_group_ids,
-        deleted_array_ids,
-        deleted_group_ids,
-        modified_array_ids,
-        modified_group_ids,
-        chunk_change_ids,
+        added_array_ids: raw_ids.added_array_ids,
+        added_group_ids: raw_ids.added_group_ids,
+        deleted_array_ids: raw_ids.deleted_array_ids,
+        deleted_group_ids: raw_ids.deleted_group_ids,
+        modified_array_ids: raw_ids.modified_array_ids,
+        modified_group_ids: raw_ids.modified_group_ids,
+        chunk_change_ids: raw_ids.chunk_change_ids,
         moved_node_ids,
         is_initial_commit: false,
     })

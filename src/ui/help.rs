@@ -176,7 +176,7 @@ fn kv<'a>(t: &'a crate::theme::Theme, key: &'a str, desc: &'a str) -> Line<'a> {
 
 fn desc<'a>(t: &'a crate::theme::Theme, label: &'a str, description: &'a str) -> Line<'a> {
     Line::from(vec![
-        Span::styled(format!("  {label:<13}"), t.tag),
+        Span::styled(format!("  {label:<13}"), t.timestamp),
         Span::styled(description, t.text_dim),
     ])
 }

@@ -18,7 +18,8 @@ pub(crate) struct StorageStats {
     pub inline_bytes: u64,
     pub virtual_bytes: u64,
     pub stats_loaded: usize,
-    pub virtual_prefixes: HashMap<String, usize>,
+    /// Pre-sorted descending by count
+    pub virtual_prefixes: Vec<(String, usize)>,
 }
 
 impl StorageStats {
@@ -36,7 +37,7 @@ impl StorageStats {
             inline_bytes: 0,
             virtual_bytes: 0,
             stats_loaded: 0,
-            virtual_prefixes: HashMap::new(),
+            virtual_prefixes: Vec::new(),
         };
 
         for state in store.node_children.values() {
@@ -60,6 +61,7 @@ impl StorageStats {
             }
         }
 
+        let mut prefix_map: HashMap<String, usize> = HashMap::new();
         for ((_, _), state) in &store.chunk_stats {
             if let LoadState::Loaded(stats) = state {
                 s.stats_loaded += 1;
@@ -70,10 +72,14 @@ impl StorageStats {
                 s.inline_bytes += stats.inline_total_bytes;
                 s.virtual_bytes += stats.virtual_total_bytes;
                 for (prefix, count) in &stats.virtual_prefixes {
-                    *s.virtual_prefixes.entry(prefix.clone()).or_insert(0) += count;
+                    *prefix_map.entry(prefix.clone()).or_insert(0) += count;
                 }
             }
         }
+
+        let mut virtual_prefixes: Vec<(String, usize)> = prefix_map.into_iter().collect();
+        virtual_prefixes.sort_by(|a, b| b.1.cmp(&a.1));
+        s.virtual_prefixes = virtual_prefixes;
 
         s
     }

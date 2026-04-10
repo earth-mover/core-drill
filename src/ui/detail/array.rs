@@ -10,15 +10,10 @@ use crate::ui::widgets::{compute_grid_chunks, fmt_initialized, format_vcc_prefix
 pub(super) fn render_array_detail_header<'a>(
     app: &'a App,
     node: &crate::store::TreeNode,
-    summary: &ArraySummary,
+    summary: &'a ArraySummary,
     max_width: u16,
-) -> (Vec<Line<'a>>, Option<ZarrMetadata>) {
-    let shape_str = summary
-        .shape
-        .iter()
-        .map(|d| d.to_string())
-        .collect::<Vec<_>>()
-        .join(" \u{00d7} ");
+) -> (Vec<Line<'a>>, Option<&'a ZarrMetadata>) {
+    let shape_str = crate::output::fmt_dims(&summary.shape);
 
     let dim_names = summary
         .dimension_names
@@ -54,20 +49,11 @@ pub(super) fn render_array_detail_header<'a>(
         max_width,
     ));
 
-    // Parse metadata early so we can use chunk_shape for the layout section
-    let meta = if !summary.zarr_metadata.is_empty() {
-        crate::ui::format::ZarrMetadata::parse(&summary.zarr_metadata)
-    } else {
-        None
-    };
+    // Use cached parsed metadata (parsed once at construction, not per frame)
+    let meta = summary.parsed_metadata.as_ref();
 
-    if let Some(ref meta) = meta {
-        let chunk_str = meta
-            .chunk_shape
-            .iter()
-            .map(|d| d.to_string())
-            .collect::<Vec<_>>()
-            .join(" \u{00d7} ");
+    if let Some(meta) = meta {
+        let chunk_str = crate::output::fmt_dims(&meta.chunk_shape);
         lines.extend(labeled_lines(
             "  Chunk shape:   ",
             chunk_str,
@@ -106,7 +92,7 @@ pub(super) fn render_array_detail_header<'a>(
     ));
 
     // Chunks per dimension: shape[i] / chunk_shape[i]
-    if let Some(ref meta) = meta {
+    if let Some(meta) = meta {
         if !summary.shape.is_empty()
             && !meta.chunk_shape.is_empty()
             && summary.shape.len() == meta.chunk_shape.len()
@@ -363,9 +349,14 @@ pub(super) fn render_array_detail_storage<'a>(
             // Total data size across all chunk types
             let total_data = stats.native_total_bytes + stats.inline_total_bytes + stats.virtual_total_bytes;
             if total_data > 0 {
+                let avg_bytes = total_data / stats.total_chunks as u64;
                 lines.extend(labeled_lines(
                     "  Data size:     ",
-                    humansize::format_size(total_data, humansize::BINARY),
+                    format!(
+                        "{}  (avg {} / chunk)",
+                        humansize::format_size(total_data, humansize::BINARY),
+                        humansize::format_size(avg_bytes, humansize::BINARY),
+                    ),
                     app.theme.text_dim,
                     app.theme.text,
                     max_width,

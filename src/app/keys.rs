@@ -26,7 +26,7 @@ impl App {
     }
 
     fn handle_search_key(&mut self, key: KeyEvent) {
-        let candidates = self.search_candidates();
+        let candidates: Vec<String> = self.search_candidates().to_vec();
         let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
 
         match key.code {
@@ -302,49 +302,15 @@ impl App {
                 return Action::FocusPane(Pane::Detail);
             }
             KeyCode::Char('h') | KeyCode::Left if self.focused_pane == Pane::Detail => {
-                match self.detail_mode {
-                    DetailMode::Node => {
-                        return Action::FocusPane(Pane::Sidebar);
-                    }
-                    DetailMode::Repo => {
-                        self.set_detail_mode(DetailMode::Node);
-                        return Action::None;
-                    }
-                    DetailMode::Branch => {
-                        self.set_detail_mode(DetailMode::Repo);
-                        return Action::None;
-                    }
-                    DetailMode::Snapshot => {
-                        self.set_detail_mode(DetailMode::Branch);
-                        return Action::None;
-                    }
-                    DetailMode::OpsLog => {
-                        self.set_detail_mode(DetailMode::Snapshot);
-                        return Action::None;
-                    }
+                if let Some(mode) = self.detail_mode.prev() {
+                    self.set_detail_mode(mode);
+                } else {
+                    return Action::FocusPane(Pane::Sidebar);
                 }
             }
             KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Detail => {
-                match self.detail_mode {
-                    DetailMode::Node => {
-                        self.set_detail_mode(DetailMode::Repo);
-                        return Action::None;
-                    }
-                    DetailMode::Repo => {
-                        self.set_detail_mode(DetailMode::Branch);
-                        return Action::None;
-                    }
-                    DetailMode::Branch => {
-                        self.set_detail_mode(DetailMode::Snapshot);
-                        return Action::None;
-                    }
-                    DetailMode::Snapshot => {
-                        self.set_detail_mode(DetailMode::OpsLog);
-                        return Action::None;
-                    }
-                    DetailMode::OpsLog => {
-                        return Action::None;
-                    }
+                if let Some(mode) = self.detail_mode.next() {
+                    self.set_detail_mode(mode);
                 }
             }
             _ => {}
@@ -383,9 +349,6 @@ impl App {
                 if !self.bottom_visible && self.focused_pane == Pane::Bottom {
                     self.focused_pane = Pane::Sidebar;
                 }
-            }
-            Action::SwitchBottomTab(tab) => {
-                self.bottom_tab = tab;
             }
             Action::Quit => {
                 self.should_quit = true;
@@ -445,21 +408,6 @@ impl App {
             Pane::Sidebar => {
                 // Toggle open/close on the selected tree node
                 self.tree_state.toggle_selected();
-
-                // If a group just opened, trigger loading its children
-                let selected = self.tree_state.selected().to_vec();
-                if let Some(path) = selected.last()
-                    && self.tree_state.opened().contains(&selected)
-                {
-                    // All nodes are loaded upfront via AllNodes, but if somehow
-                    // children aren't cached yet, request them.
-                    if !self.store.node_children.contains_key(path) {
-                        self.store.submit(crate::store::DataRequest::AllNodes {
-                            branch: self.current_branch.clone(),
-                            snapshot_id: None,
-                        });
-                    }
-                }
             }
             Pane::Detail => {
                 // If a group is selected in the sidebar, expand it and focus sidebar

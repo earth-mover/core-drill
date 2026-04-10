@@ -92,6 +92,9 @@ pub struct ArraySummary {
     /// Total number of chunk references across all manifests, derived from snapshot metadata.
     /// `None` if the snapshot predates V2 or the manifest info is unavailable.
     pub total_chunks: Option<u64>,
+    /// Cached parsed zarr metadata — computed once at construction, not per render frame.
+    #[serde(skip)]
+    pub parsed_metadata: Option<crate::ui::format::ZarrMetadata>,
 }
 
 /// Chunk type breakdown for an array
@@ -134,24 +137,6 @@ pub struct FeatureFlagInfo {
     pub enabled: bool,
     /// True if explicitly set by user, false if using default
     pub explicit: bool,
-}
-
-/// Diff with resolved paths (for CLI/MCP output)
-#[derive(Debug, Clone, Serialize)]
-pub struct DiffDetail {
-    pub snapshot_id: String,
-    pub parent_id: Option<String>,
-    pub added_arrays: Vec<String>,
-    pub added_groups: Vec<String>,
-    pub deleted_arrays: Vec<String>,
-    pub deleted_groups: Vec<String>,
-    pub modified_arrays: Vec<String>,
-    pub modified_groups: Vec<String>,
-    /// (path, chunk_count)
-    pub chunk_changes: Vec<(String, usize)>,
-    /// (from_path, to_path) for each moved node
-    pub moved_nodes: Vec<(String, String)>,
-    pub is_initial_commit: bool,
 }
 
 /// A single entry from the repository operations log

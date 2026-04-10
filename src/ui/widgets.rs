@@ -25,7 +25,7 @@ pub(super) fn split_wrap_tokens(s: &str) -> Vec<String> {
 
 /// Render a tabbed panel: outer border with title, a tab bar, and return the content area.
 /// Used by both the Detail pane and the Bottom (Version Control) pane.
-/// Render a tabbed panel. Returns `(content_area, tab_bar_area)` if there's enough space.
+/// Returns `Some(content_area)` if there's enough space.
 pub(super) fn render_tabbed_panel(
     title: &str,
     tab_names: &[&str],
@@ -34,7 +34,7 @@ pub(super) fn render_tabbed_panel(
     theme: &crate::theme::Theme,
     frame: &mut Frame,
     area: Rect,
-) -> Option<(Rect, Rect)> {
+) -> Option<Rect> {
     let block = Block::default()
         .title(format!(" {title} "))
         .borders(Borders::ALL)
@@ -75,7 +75,7 @@ pub(super) fn render_tabbed_panel(
         .highlight_style(if focused { theme.selected } else { theme.text });
     frame.render_widget(tabs, chunks[0]);
 
-    Some((chunks[1], chunks[0]))
+    Some(chunks[1])
 }
 
 /// Compute a clamped scroll offset: cap detail_scroll so the last content line
@@ -93,20 +93,21 @@ pub(super) fn clamped_scroll(detail_scroll: usize, content_height: usize, area: 
 /// If the label + value fit within `max_width` columns, a single line is returned.
 /// Otherwise the value is split at word boundaries (spaces) and continuation lines
 /// are indented to align with the start of the value column (i.e. `label.len()` spaces).
-pub(super) fn labeled_lines<'a>(
-    label: &'a str,
+pub(super) fn labeled_lines(
+    label: &str,
     value: String,
     label_style: Style,
     value_style: Style,
     max_width: u16,
-) -> Vec<Line<'a>> {
-    let label_len = label.len();
+) -> Vec<Line<'static>> {
+    let label_owned = label.to_owned();
+    let label_len = label_owned.len();
     let available = (max_width as usize).saturating_sub(label_len);
 
     // Fast path: everything fits on one line.
     if value.len() <= available || available == 0 {
         return vec![Line::from(vec![
-            Span::styled(label, label_style),
+            Span::styled(label_owned, label_style),
             Span::styled(value, value_style),
         ])];
     }
@@ -115,7 +116,7 @@ pub(super) fn labeled_lines<'a>(
     // Split on spaces and path separators (/) so long paths like
     // "included/array-a-2026-04-08T23:12:59.721280" get wrapped properly.
     let indent = " ".repeat(label_len);
-    let mut result: Vec<Line<'a>> = Vec::new();
+    let mut result: Vec<Line<'static>> = Vec::new();
     let mut current_line = String::new();
     let mut first = true;
 
@@ -126,14 +127,13 @@ pub(super) fn labeled_lines<'a>(
             // Flush the current line.
             if first {
                 result.push(Line::from(vec![
-                    Span::styled(label, label_style),
+                    Span::styled(label_owned.clone(), label_style),
                     Span::styled(current_line.trim_end().to_string(), value_style),
                 ]));
                 first = false;
             } else {
-                let ind = indent.clone();
                 result.push(Line::from(vec![
-                    Span::styled(ind, label_style),
+                    Span::styled(indent.clone(), label_style),
                     Span::styled(current_line.trim_end().to_string(), value_style),
                 ]));
             }
@@ -146,13 +146,12 @@ pub(super) fn labeled_lines<'a>(
         let trimmed = current_line.trim_end().to_string();
         if first {
             result.push(Line::from(vec![
-                Span::styled(label, label_style),
+                Span::styled(label_owned, label_style),
                 Span::styled(trimmed, value_style),
             ]));
         } else {
-            let ind = indent.clone();
             result.push(Line::from(vec![
-                Span::styled(ind, label_style),
+                Span::styled(indent, label_style),
                 Span::styled(trimmed, value_style),
             ]));
         }
@@ -171,6 +170,92 @@ pub(super) fn section_header(label: &str) -> Line<'static> {
         line,
         Style::default().fg(Color::Rgb(120, 120, 120)),
     ))
+}
+
+/// Render storage stats lines (Arrays, Groups, Chunks, Breakdown, Data size).
+///
+/// If `show_virtual` is true, also renders the "Stored/Virtual" sub-lines and the
+/// "Virtual Sources" section.  Set to false for the branch detail pane, which only
+/// shows stats for the active snapshot without virtual-source breakdown.
+pub(super) fn storage_stats_lines(
+    ss: &crate::store::stats::StorageStats,
+    theme: &crate::theme::Theme,
+    show_virtual: bool,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(vec![
+        Span::styled("  Arrays:      ", theme.text_dim),
+        Span::styled(ss.total_arrays.to_string(), theme.text),
+    ]));
+    if ss.empty_arrays > 0 || ss.filled_arrays > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("    Filled:    ", theme.text_dim),
+            Span::styled(ss.filled_arrays.to_string(), theme.text),
+            Span::styled(format!("  empty: {}", ss.empty_arrays), theme.text_dim),
+        ]));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("  Groups:      ", theme.text_dim),
+        Span::styled(ss.total_groups.to_string(), theme.text),
+    ]));
+    if ss.total_written > 0 {
+        lines.push(Line::from(vec![
+            Span::styled("  Chunks:      ", theme.text_dim),
+            Span::styled(ss.total_written.to_string(), theme.text),
+        ]));
+    }
+
+    if ss.stats_loaded > 0 {
+        let total_bytes = ss.total_bytes();
+        let stored_bytes = ss.stored_bytes();
+        let parts = ss.breakdown_parts();
+
+        let suffix = if ss.stats_loaded < ss.total_arrays {
+            format!("  ({}/{} arrays scanned)", ss.stats_loaded, ss.total_arrays)
+        } else {
+            String::new()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("  Breakdown:   ", theme.text_dim),
+            Span::styled(format!("{}{}", parts.join(", "), suffix), theme.text),
+        ]));
+
+        let size_label = if show_virtual && ss.stats_loaded < ss.total_arrays {
+            format!(
+                "{}+  (scanning\u{2026})",
+                humansize::format_size(total_bytes, humansize::BINARY)
+            )
+        } else {
+            humansize::format_size(total_bytes, humansize::BINARY)
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  Data size:   ", theme.text_dim),
+            Span::styled(size_label, theme.text),
+        ]));
+
+        if show_virtual && ss.virtual_bytes > 0 && stored_bytes > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("    Stored:    ", theme.text_dim),
+                Span::styled(
+                    humansize::format_size(stored_bytes, humansize::BINARY),
+                    theme.text,
+                ),
+                Span::styled("  (in this repo)", theme.text_dim),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("    Virtual:   ", theme.text_dim),
+                Span::styled(
+                    humansize::format_size(ss.virtual_bytes, humansize::BINARY),
+                    theme.text,
+                ),
+                Span::styled("  (external sources)", theme.text_dim),
+            ]));
+        }
+    }
+
+    lines
 }
 
 /// Format a VCC prefix URL for display. Resolves `__al_source` container names

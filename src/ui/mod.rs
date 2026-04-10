@@ -171,12 +171,21 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
         }
         LoadState::Loaded(nodes) => {
             // When searching the tree, compute visible paths (matches + ancestors)
+            // Use the cached tree candidates if available, otherwise build on demand.
+            // This avoids rebuilding the full candidate list every render frame.
+            let owned_candidates;
+            let candidates: &[String] = if let Some(ref cached) = app.tree_candidate_cache {
+                cached
+            } else {
+                owned_candidates = crate::search::tree_candidates(&app.store);
+                &owned_candidates
+            };
+
             let visible_paths: Option<std::collections::HashSet<String>> = app
                 .search
                 .as_ref()
                 .filter(|s| s.target == crate::search::SearchTarget::Tree && !s.query.is_empty())
                 .map(|search| {
-                    let candidates = crate::search::tree_candidates(&app.store);
                     let mut visible = std::collections::HashSet::new();
                     for &idx in &search.matches {
                         if let Some(path) = candidates.get(idx) {

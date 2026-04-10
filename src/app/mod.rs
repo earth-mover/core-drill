@@ -79,15 +79,21 @@ pub struct App {
     pub(crate) tree_auto_expanded: bool,
     /// Dedup guard: last snapshot we requested a diff for
     pub last_diff_requested: Option<String>,
-    /// Dedup guard: last snapshot we requested a tree for
-    pub last_tree_snapshot_requested: Option<String>,
     /// Cached tree search candidates — invalidated when node_children changes.
     pub(crate) tree_candidate_cache: Option<Vec<String>>,
+    /// Cached bottom-panel search candidates — invalidated when tab/data changes.
+    pub(crate) bottom_candidate_cache: Option<Vec<String>>,
     /// Queue of array paths waiting to have chunk stats scanned.
     /// Drip-fed a few per frame to avoid blocking startup.
     pub(crate) chunk_scan_queue: Vec<String>,
     /// Snapshot ID for the current scan queue (invalidated on branch/snapshot change).
     pub(crate) chunk_scan_snapshot: Option<String>,
+    /// Guard: branch existence sync already done for current branches data.
+    pub(crate) branches_synced: bool,
+    /// Guard: chunk scan has completed (nothing left to scan).
+    pub(crate) chunk_scan_complete: bool,
+    /// Count of in-flight chunk stats requests (Loading state), tracked incrementally.
+    pub(crate) chunk_stats_in_flight: usize,
 
     // Layout areas (updated each render for mouse hit-testing)
     pub sidebar_area: Rect,
@@ -117,10 +123,13 @@ impl App {
             pending_z: false,
             tree_auto_expanded: false,
             last_diff_requested: None,
-            last_tree_snapshot_requested: None,
             tree_candidate_cache: None,
+            bottom_candidate_cache: None,
             chunk_scan_queue: Vec::new(),
             chunk_scan_snapshot: None,
+            branches_synced: false,
+            chunk_scan_complete: false,
+            chunk_stats_in_flight: 0,
             sidebar_area: Rect::default(),
             detail_area: Rect::default(),
             bottom_area: None,
@@ -160,7 +169,8 @@ impl App {
         self.tree_state = tui_tree_widget::TreeState::default();
         self.tree_auto_expanded = false;
         self.last_diff_requested = None;
-        self.last_tree_snapshot_requested = None;
+        self.chunk_scan_complete = false;
+        self.chunk_scan_snapshot = None;
         // Fetch tree + ancestry for this branch (branches/tags/config don't change)
         self.store.submit(DataRequest::AllNodes {
             branch: self.current_branch.clone(),
@@ -178,6 +188,8 @@ impl App {
         }
         self.current_snapshot = snapshot_id;
         self.tree_auto_expanded = false;
+        self.chunk_scan_complete = false;
+        self.chunk_scan_snapshot = None;
         // Fetch tree at this snapshot (or branch tip if None)
         let snap = self.current_snapshot.clone();
         self.store.submit(DataRequest::AllNodes {
@@ -251,8 +263,8 @@ impl App {
 
     /// Kick off initial data loads
     pub fn load_initial_data(&mut self) {
-        // Reset tree dedup guard when (re-)loading for a branch
-        self.last_tree_snapshot_requested = None;
+        self.branches_synced = false;
+        self.chunk_scan_complete = false;
         self.store.submit(DataRequest::Branches);
         self.store.submit(DataRequest::Tags);
         self.store.submit(DataRequest::AllNodes {
@@ -267,10 +279,10 @@ impl App {
     }
 
     /// Re-submit requests for any data currently in an Error state.
-    #[allow(dead_code)]
     pub fn retry_failed(&mut self) {
         // Top-level data
         if matches!(self.store.branches, LoadState::Error(_)) {
+            self.branches_synced = false;
             self.store.submit(DataRequest::Branches);
         }
         if matches!(self.store.tags, LoadState::Error(_)) {
@@ -293,7 +305,6 @@ impl App {
         // Node tree (check root key)
         if let Some(LoadState::Error(_)) = self.store.node_children.get("/") {
             self.tree_auto_expanded = false;
-            self.last_tree_snapshot_requested = None;
             self.store.submit(DataRequest::AllNodes {
                 branch: self.current_branch.clone(),
                 snapshot_id: self.current_snapshot.clone(),
@@ -305,8 +316,13 @@ impl App {
     pub fn drain_responses(&mut self) {
         let had_responses = self.store.drain_responses();
         if had_responses {
-            // Invalidate search candidate cache when data changes
+            // Invalidate search candidate caches when data changes
             self.tree_candidate_cache = None;
+            self.bottom_candidate_cache = None;
+            // Decrement in-flight chunk stats counter
+            self.chunk_stats_in_flight = self
+                .chunk_stats_in_flight
+                .saturating_sub(self.store.chunk_stats_received);
         }
 
         // After AllNodes data arrives, auto-expand groups so the user sees
@@ -325,7 +341,9 @@ impl App {
         // Once branches load, sync the Branches tab selection to current_branch.
         // Also verify current_branch actually exists — fall back to first branch if not.
         // Pre-fetch ancestry for all branches (cheap — reads from repo info file).
-        if let Some(LoadState::Loaded(branches)) = Some(&self.store.branches)
+        // Guarded: only run once per branches data load.
+        if !self.branches_synced
+            && let Some(LoadState::Loaded(branches)) = Some(&self.store.branches)
             && !branches.is_empty()
         {
             let branch_exists = branches.iter().any(|b| b.name == self.current_branch);
@@ -350,6 +368,7 @@ impl App {
                     branch: branch_name,
                 });
             }
+            self.branches_synced = true;
         }
 
         // Auto-set the active snapshot to tip when ancestry first loads
@@ -370,12 +389,17 @@ impl App {
         // Drip-feed chunk stats requests from the background scan queue.
         // If the queue is empty but we have a snapshot and tree, restart the scan
         // (handles the race where start_chunk_scan ran before data was ready).
-        if self.chunk_scan_queue.is_empty()
+        // Guarded: once all arrays have been scanned, don't restart.
+        if !self.chunk_scan_complete
+            && self.chunk_scan_queue.is_empty()
             && self.chunk_scan_snapshot.is_none()
             && self.tree_auto_expanded
             && self.current_snapshot.is_some()
         {
             self.start_chunk_scan();
+            if self.chunk_scan_queue.is_empty() {
+                self.chunk_scan_complete = true;
+            }
         }
         self.drain_chunk_scan_queue();
     }
@@ -441,15 +465,7 @@ impl App {
         // Check whether the selected node is an array
         let is_array = self
             .store
-            .node_children
-            .values()
-            .find_map(|state| {
-                if let LoadState::Loaded(nodes) = state {
-                    nodes.iter().find(|n| n.path == *path)
-                } else {
-                    None
-                }
-            })
+            .find_node(path)
             .map(|node| matches!(node.node_type, crate::store::TreeNodeType::Array(_)))
             .unwrap_or(false);
 
@@ -497,16 +513,8 @@ impl App {
         };
         let snapshot_id = snapshot_id.clone();
 
-        // How many are currently in-flight (Loading state)?
-        let in_flight = self
-            .store
-            .chunk_stats
-            .values()
-            .filter(|s| matches!(s, LoadState::Loading))
-            .count();
-
         // Keep at most ~16 concurrent requests
-        let budget = 16usize.saturating_sub(in_flight);
+        let budget = 16usize.saturating_sub(self.chunk_stats_in_flight);
         if budget == 0 {
             return;
         }
@@ -524,6 +532,7 @@ impl App {
                 snapshot_id: snapshot_id.clone(),
                 path,
             });
+            self.chunk_stats_in_flight += 1;
             submitted += 1;
         }
     }
@@ -543,42 +552,49 @@ impl App {
     }
 
     /// Get the searchable strings for the current pane context.
-    pub(crate) fn search_candidates(&mut self) -> Vec<String> {
+    /// Returns a borrowed slice backed by internal caches.
+    pub(crate) fn search_candidates(&mut self) -> &[String] {
         match self.focused_pane {
             Pane::Sidebar => {
                 if self.tree_candidate_cache.is_none() {
                     self.tree_candidate_cache =
                         Some(crate::search::tree_candidates(&self.store));
                 }
-                self.tree_candidate_cache.clone().unwrap()
+                self.tree_candidate_cache.as_ref().unwrap()
             }
-            Pane::Bottom => match self.bottom_tab {
-                BottomTab::Snapshots => self
-                    .store
-                    .ancestry
-                    .get(&self.current_branch)
-                    .and_then(|s| s.as_loaded())
-                    .map(|entries| {
-                        entries
-                            .iter()
-                            .map(|e| format!("{} {}", e.id, e.message))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                BottomTab::Branches => self
-                    .store
-                    .branches
-                    .as_loaded()
-                    .map(|b| b.iter().map(|b| b.name.clone()).collect())
-                    .unwrap_or_default(),
-                BottomTab::Tags => self
-                    .store
-                    .tags
-                    .as_loaded()
-                    .map(|t| t.iter().map(|t| t.name.clone()).collect())
-                    .unwrap_or_default(),
-            },
-            Pane::Detail => Vec::new(), // No search in detail pane
+            Pane::Bottom => {
+                if self.bottom_candidate_cache.is_none() {
+                    let candidates = match self.bottom_tab {
+                        BottomTab::Snapshots => self
+                            .store
+                            .ancestry
+                            .get(&self.current_branch)
+                            .and_then(|s| s.as_loaded())
+                            .map(|entries| {
+                                entries
+                                    .iter()
+                                    .map(|e| format!("{} {}", e.id, e.message))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        BottomTab::Branches => self
+                            .store
+                            .branches
+                            .as_loaded()
+                            .map(|b| b.iter().map(|b| b.name.clone()).collect())
+                            .unwrap_or_default(),
+                        BottomTab::Tags => self
+                            .store
+                            .tags
+                            .as_loaded()
+                            .map(|t| t.iter().map(|t| t.name.clone()).collect())
+                            .unwrap_or_default(),
+                    };
+                    self.bottom_candidate_cache = Some(candidates);
+                }
+                self.bottom_candidate_cache.as_ref().unwrap()
+            }
+            Pane::Detail => &[], // No search in detail pane
         }
     }
 
@@ -617,6 +633,7 @@ impl App {
     pub(crate) fn switch_bottom_tab(&mut self, tab: BottomTab) {
         if self.bottom_tab != tab {
             self.bottom_tab = tab;
+            self.bottom_candidate_cache = None;
             // Per-tab selection is preserved in tab_selection/tab_offset arrays,
             // so just switching the tab is enough — no need to reset to 0.
             self.on_bottom_selection_changed();

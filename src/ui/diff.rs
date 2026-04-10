@@ -20,15 +20,11 @@ pub(super) fn render_snapshot_diff_detail<'a>(
         .and_then(|entries| entries.iter().find(|e| e.id == snapshot_id));
 
     if let Some(entry) = entry {
-        let short_id = if entry.id.len() > 12 {
-            &entry.id[..12]
-        } else {
-            &entry.id
-        };
+        let short_id = crate::output::truncate(&entry.id, 12);
         let parent_short = entry
             .parent_id
             .as_ref()
-            .map(|p| if p.len() > 12 { &p[..12] } else { p.as_str() })
+            .map(|p| crate::output::truncate(p, 12))
             .unwrap_or("none");
 
         // Compute position counter: "N of M"

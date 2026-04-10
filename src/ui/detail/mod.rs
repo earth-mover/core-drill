@@ -14,21 +14,6 @@ use crate::store::types::TreeNodeType;
 use crate::ui::widgets::{clamped_scroll, render_tabbed_panel};
 use crate::ui::diff::render_snapshot_diff_detail;
 
-/// Find a TreeNode by its path, searching all cached children in the store.
-pub(super) fn find_node_by_path<'a>(
-    store: &'a crate::store::DataStore,
-    path: &str,
-) -> Option<&'a crate::store::TreeNode> {
-    for state in store.node_children.values() {
-        if let crate::store::LoadState::Loaded(nodes) = state
-            && let Some(node) = nodes.iter().find(|n| n.path == path)
-        {
-            return Some(node);
-        }
-    }
-    None
-}
-
 pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     use crate::component::DetailMode;
 
@@ -40,7 +25,7 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         DetailMode::Snapshot => 3,
         DetailMode::OpsLog => 4,
     };
-    let (content_area, _tab_bar) = match render_tabbed_panel(
+    let content_area = match render_tabbed_panel(
         "[2] Detail",
         &["Node", "Repo", "Branch", "Snap", "Ops Log"],
         active_tab,
@@ -49,7 +34,7 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         frame,
         area,
     ) {
-        Some(areas) => areas,
+        Some(area) => area,
         None => return,
     };
 
@@ -117,7 +102,7 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
 
     // For array nodes: split into header + shape (top), canvas viz (middle), storage + rest (bottom)
     if let Some(path) = selected_path
-        && let Some(node) = find_node_by_path(&app.store, path)
+        && let Some(node) = app.store.find_node(path)
         && let TreeNodeType::Array(summary) = &node.node_type
     {
         let inner_width = content_area.width;
@@ -130,7 +115,7 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
             node.path.as_str(),
             snapshot_id.as_deref(),
             summary,
-            zarr_meta.as_ref(),
+            zarr_meta,
             inner_width,
         ));
         let scroll = clamped_scroll(app.detail_scroll, text.len(), content_area);
@@ -145,7 +130,7 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
 
     // Non-array nodes: groups, repo overview
     let text = if let Some(path) = selected_path {
-        if let Some(node) = find_node_by_path(&app.store, path) {
+        if let Some(node) = app.store.find_node(path) {
             match &node.node_type {
                 TreeNodeType::Array(_) => unreachable!(),
                 TreeNodeType::Group => group::render_group_detail(app, node),

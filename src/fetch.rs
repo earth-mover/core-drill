@@ -294,7 +294,7 @@ pub(crate) async fn fetch_tree_flat(
             continue;
         }
 
-        let name = path_str.rsplit('/').next().unwrap_or("").to_string();
+        let name = crate::util::leaf_name(&path_str).to_string();
 
         match &node.node_data {
             NodeData::Group => {
@@ -434,13 +434,13 @@ pub(crate) async fn fetch_ops_log(
             } => format!(
                 "Commit on {}: {}",
                 sanitize(branch),
-                &new_snap_id.to_string()[..12]
+                crate::output::truncate(&new_snap_id.to_string(), 12)
             ),
             UpdateType::CommitAmendedUpdate { branch, .. } => {
                 format!("Commit amended on {}", sanitize(branch))
             }
             UpdateType::NewDetachedSnapshotUpdate { new_snap_id } => {
-                format!("Detached snapshot: {}", &new_snap_id.to_string()[..12])
+                format!("Detached snapshot: {}", crate::output::truncate(&new_snap_id.to_string(), 12))
             }
             UpdateType::GCRanUpdate => "Garbage collection ran".to_string(),
             UpdateType::ExpirationRanUpdate => "Snapshot expiration ran".to_string(),
@@ -532,6 +532,38 @@ pub(crate) async fn fetch_chunk_stats(
     })
 }
 
+/// Extracted node ID vectors from a transaction log, used by both the TUI (RawDiff)
+/// and the CLI/MCP (DiffSummary) fetch paths.
+pub(crate) struct TxLogIds {
+    pub added_array_ids: Vec<String>,
+    pub added_group_ids: Vec<String>,
+    pub deleted_array_ids: Vec<String>,
+    pub deleted_group_ids: Vec<String>,
+    pub modified_array_ids: Vec<String>,
+    pub modified_group_ids: Vec<String>,
+    pub chunk_change_ids: Vec<(String, usize)>,
+}
+
+/// Extract node IDs from a transaction log into categorized vectors.
+/// Moves are NOT included here because they have different shapes in each call site
+/// (store/mod.rs needs a 3-tuple with node_id; fetch.rs only needs from/to paths).
+pub(crate) fn extract_tx_log_ids(
+    tx_log: &icechunk::format::transaction_log::TransactionLog,
+) -> TxLogIds {
+    TxLogIds {
+        added_array_ids: tx_log.new_arrays().map(|id| id.to_string()).collect(),
+        added_group_ids: tx_log.new_groups().map(|id| id.to_string()).collect(),
+        deleted_array_ids: tx_log.deleted_arrays().map(|id| id.to_string()).collect(),
+        deleted_group_ids: tx_log.deleted_groups().map(|id| id.to_string()).collect(),
+        modified_array_ids: tx_log.updated_arrays().map(|id| id.to_string()).collect(),
+        modified_group_ids: tx_log.updated_groups().map(|id| id.to_string()).collect(),
+        chunk_change_ids: tx_log
+            .updated_chunks()
+            .map(|(node_id, chunks_iter)| (node_id.to_string(), chunks_iter.count()))
+            .collect(),
+    }
+}
+
 /// Fetch the diff for a snapshot with resolved paths (for CLI/MCP output).
 /// If `parent_id` is `None`, auto-resolves the parent from ancestry.
 /// Returns an initial-commit marker only when the snapshot truly has no parent.
@@ -539,7 +571,7 @@ pub(crate) async fn fetch_diff(
     repo: &Repository,
     snapshot_id: &str,
     parent_id: Option<&str>,
-) -> color_eyre::Result<DiffDetail> {
+) -> color_eyre::Result<DiffSummary> {
     use futures::StreamExt;
     use std::collections::HashMap;
 
@@ -572,7 +604,7 @@ pub(crate) async fn fetch_diff(
     };
 
     if parent_id.is_none() {
-        return Ok(DiffDetail {
+        return Ok(DiffSummary {
             snapshot_id: full_snapshot_id,
             parent_id: None,
             added_arrays: vec![],
@@ -604,16 +636,7 @@ pub(crate) async fn fetch_diff(
     let tx_log = tx_log_result?;
     let session = session?;
 
-    let added_array_ids: Vec<String> = tx_log.new_arrays().map(|id| id.to_string()).collect();
-    let added_group_ids: Vec<String> = tx_log.new_groups().map(|id| id.to_string()).collect();
-    let deleted_array_ids: Vec<String> = tx_log.deleted_arrays().map(|id| id.to_string()).collect();
-    let deleted_group_ids: Vec<String> = tx_log.deleted_groups().map(|id| id.to_string()).collect();
-    let modified_array_ids: Vec<String> = tx_log.updated_arrays().map(|id| id.to_string()).collect();
-    let modified_group_ids: Vec<String> = tx_log.updated_groups().map(|id| id.to_string()).collect();
-    let chunk_change_ids: Vec<(String, usize)> = tx_log
-        .updated_chunks()
-        .map(|(node_id, chunks_iter)| (node_id.to_string(), chunks_iter.count()))
-        .collect();
+    let raw_ids = extract_tx_log_ids(&tx_log);
 
     // moves() yields Move { node_id, from, to } — paths are already resolved in the tx log.
     let moved: Vec<(String, String)> = tx_log
@@ -638,16 +661,16 @@ pub(crate) async fn fetch_diff(
             .unwrap_or_else(|| format!("<node:{}>", id))
     };
 
-    Ok(DiffDetail {
+    Ok(DiffSummary {
         snapshot_id: full_snapshot_id,
         parent_id,
-        added_arrays: added_array_ids.iter().map(|id| resolve(id)).collect(),
-        added_groups: added_group_ids.iter().map(|id| resolve(id)).collect(),
-        deleted_arrays: deleted_array_ids.iter().map(|id| resolve(id)).collect(),
-        deleted_groups: deleted_group_ids.iter().map(|id| resolve(id)).collect(),
-        modified_arrays: modified_array_ids.iter().map(|id| resolve(id)).collect(),
-        modified_groups: modified_group_ids.iter().map(|id| resolve(id)).collect(),
-        chunk_changes: chunk_change_ids
+        added_arrays: raw_ids.added_array_ids.iter().map(|id| resolve(id)).collect(),
+        added_groups: raw_ids.added_group_ids.iter().map(|id| resolve(id)).collect(),
+        deleted_arrays: raw_ids.deleted_array_ids.iter().map(|id| resolve(id)).collect(),
+        deleted_groups: raw_ids.deleted_group_ids.iter().map(|id| resolve(id)).collect(),
+        modified_arrays: raw_ids.modified_array_ids.iter().map(|id| resolve(id)).collect(),
+        modified_groups: raw_ids.modified_group_ids.iter().map(|id| resolve(id)).collect(),
+        chunk_changes: raw_ids.chunk_change_ids
             .iter()
             .map(|(id, count)| (resolve(id), *count))
             .collect(),
