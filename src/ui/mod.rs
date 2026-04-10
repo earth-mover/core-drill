@@ -1,7 +1,6 @@
 mod bottom;
 mod detail;
 mod diff;
-pub mod format;
 mod help;
 pub mod json_view;
 pub mod shape_viz;

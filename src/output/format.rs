@@ -70,6 +70,62 @@ pub(crate) fn fmt_node_detail(node: &FlatNode) -> String {
     if let Some(ref fill) = node.fill_value {
         out.push_str(&format!("- **Fill value:** `{fill}`\n"));
     }
+
+    // Rich metadata from parsed zarr metadata
+    if let Some(ref meta) = node.zarr_metadata {
+        out.push_str(&format!("- **Zarr format:** {}\n", meta.zarr_format));
+
+        if let Some(ref v2dt) = meta.v2_dtype
+            && v2dt != &meta.data_type
+        {
+            out.push_str(&format!("- **Dtype (v2):** `{v2dt}`\n"));
+        }
+        if let Some(ref order) = meta.order {
+            out.push_str(&format!("- **Order:** {order}\n"));
+        }
+        if meta.dimension_separator != "/" {
+            out.push_str(&format!(
+                "- **Dimension separator:** `{}`\n",
+                meta.dimension_separator
+            ));
+        }
+        if let Some(ref comp) = meta.compressor
+            && !meta.codecs.is_empty()
+        {
+            out.push_str(&format!("- **Compressor:** {comp}\n"));
+        }
+        if !meta.filters.is_empty() {
+            out.push_str(&format!("- **Filters:** {}\n", meta.filters.join(", ")));
+        }
+        if !meta.storage_transformers.is_empty() {
+            out.push_str(&format!(
+                "- **Storage transformers:** {}\n",
+                meta.storage_transformers.join(", ")
+            ));
+        }
+    }
+
+    if let Some(count) = node.manifest_count {
+        out.push_str(&format!("- **Manifests:** {count}\n"));
+    }
+
+    // Attributes section
+    if let Some(ref meta) = node.zarr_metadata {
+        if !meta.attributes.is_empty() {
+            out.push_str("\n#### Attributes\n\n");
+            for (k, v) in &meta.attributes {
+                out.push_str(&format!("- **{k}:** {v}\n"));
+            }
+        }
+
+        if !meta.extra_fields.is_empty() {
+            out.push_str("\n#### Extra Metadata\n\n");
+            for (k, v) in &meta.extra_fields {
+                out.push_str(&format!("- **{k}:** {v}\n"));
+            }
+        }
+    }
+
     out
 }
 

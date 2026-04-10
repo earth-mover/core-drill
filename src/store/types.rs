@@ -93,8 +93,7 @@ pub struct ArraySummary {
     /// `None` if the snapshot predates V2 or the manifest info is unavailable.
     pub total_chunks: Option<u64>,
     /// Cached parsed zarr metadata — computed once at construction, not per render frame.
-    #[serde(skip)]
-    pub parsed_metadata: Option<crate::ui::format::ZarrMetadata>,
+    pub parsed_metadata: Option<crate::fetch::ZarrMetadata>,
 }
 
 /// Chunk type breakdown for an array

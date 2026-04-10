@@ -987,6 +987,8 @@ mod collapse_tests {
             grid_chunks: None,
             codecs: None,
             fill_value: None,
+            manifest_count: None,
+            zarr_metadata: None,
         }
     }
 

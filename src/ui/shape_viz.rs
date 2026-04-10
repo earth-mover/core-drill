@@ -50,7 +50,7 @@ mod tests {
         dim_names: Option<Vec<String>>,
         zarr_meta: &str,
     ) -> ArraySummary {
-        let parsed_metadata = crate::ui::format::ZarrMetadata::parse(zarr_meta);
+        let parsed_metadata = crate::fetch::ZarrMetadata::parse(zarr_meta);
         ArraySummary {
             shape,
             dimension_names: dim_names,

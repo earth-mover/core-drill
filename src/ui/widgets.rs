@@ -400,7 +400,7 @@ pub(super) fn render_grouped_paths<'a>(
 /// Returns None if shapes are mismatched, empty, or any chunk dimension is zero.
 pub(super) fn compute_grid_chunks(
     summary: &crate::store::types::ArraySummary,
-    meta: &super::format::ZarrMetadata,
+    meta: &crate::fetch::ZarrMetadata,
 ) -> Option<u64> {
     if summary.shape.is_empty() || meta.chunk_shape.is_empty() {
         return None;

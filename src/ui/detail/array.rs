@@ -3,7 +3,7 @@ use ratatui::prelude::*;
 use crate::app::App;
 use crate::store::LoadState;
 use crate::store::types::ArraySummary;
-use crate::ui::format::ZarrMetadata;
+use crate::fetch::ZarrMetadata;
 use crate::ui::widgets::{
     compute_grid_chunks, fmt_initialized, format_vcc_prefix, labeled_lines, section_header,
 };

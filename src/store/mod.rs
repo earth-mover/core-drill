@@ -620,7 +620,7 @@ async fn fetch_all_nodes(
                 };
 
                 let zarr_metadata_str = sanitize(&zarr_metadata);
-                let parsed_metadata = crate::ui::format::ZarrMetadata::parse(&zarr_metadata_str);
+                let parsed_metadata = crate::fetch::ZarrMetadata::parse(&zarr_metadata_str);
                 TreeNodeType::Array(Box::new(ArraySummary {
                     shape: dims,
                     dimension_names: dim_names,
