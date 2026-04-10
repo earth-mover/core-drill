@@ -33,8 +33,12 @@ impl RepoIdentity {
             Self::Local { path } => path.clone(),
             Self::S3 { url } => url.clone(),
             Self::Arraylake {
-                org, repo, bucket, ..
-            } => format!("{org}/{repo}  ({bucket})"),
+                org,
+                repo,
+                bucket,
+                platform,
+                ..
+            } => format!("{org}/{repo}  ({bucket}, {platform})"),
         }
     }
 }
