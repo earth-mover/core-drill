@@ -24,7 +24,7 @@ Drill deep into your Icechunk repos to discover their past.
 No auth needed — explore a public ERA5 weather dataset on S3:
 
 ```bash
-core-drill --anon s3://icechunk-public-data/v1/era5_weatherbench2
+core-drill s3://icechunk-public-data/v1/era5_weatherbench2
 ```
 
 ## Install
