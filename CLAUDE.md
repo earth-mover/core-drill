@@ -33,31 +33,35 @@ src/
   repo.rs              — open repos (local, S3, GCS, Azure, HTTP)
   theme.rs             — Earthmover brand colors, panel/widget helpers
   multiplexer.rs       — zellij/tmux detection, Ctrl+hjkl passthrough at pane edges
-  mcp.rs               — MCP server (11 tools), glob matching, collapsed tree output
-  output.rs            — CLI output formatting (markdown/JSON), REPL
+  util.rs              — shared path helpers: parent_path(), leaf_name()
+  mcp.rs               — MCP server (11 tools), glob matching, collapsed tree output (thin layer: delegates to fetch + output)
+  output/
+    mod.rs             — CLI output dispatch (markdown/JSON), REPL
+    format.rs          — all fmt_* functions: node detail, tree lines, chunk stats, diffs, repo config, repo overview
   app/
     mod.rs             — App struct, state management, data loading, drain_responses
     keys.rs            — keyboard/mouse input handling, search, vim fold commands
     tree.rs            — tree manipulation: expand/collapse, auto-expand, path helpers
   store/
-    mod.rs             — DataStore (cache), DataRequest/Response, background worker
-    types.rs           — BranchInfo, TagInfo, TreeNode, DiffSummary, ArraySummary
-    stats.rs           — StorageStats aggregation (cached in DataStore)
+    mod.rs             — DataStore (cache + node_index), DataRequest/Response, background worker
+    types.rs           — BranchInfo, TagInfo, TreeNode, DiffSummary, ArraySummary, ChunkStats
+    stats.rs           — StorageStats aggregation (cached, pre-sorted virtual_prefixes)
   component/
-    mod.rs             — Pane, BottomTab, DetailMode, Action enums
+    mod.rs             — Pane, BottomTab, DetailMode (with next/prev cycling), Action enums
   ui/
     mod.rs             — three-pane layout: sidebar (tree), detail, bottom (tabs)
     detail/
-      mod.rs           — detail pane dispatcher, find_node_by_path
-      array.rs         — array detail: Shape & Layout, Storage, Chunk Types, Attributes
+      mod.rs           — detail pane dispatcher (uses store.find_node for O(1) lookup)
+      array.rs         — array detail: Shape & Layout, Storage, Chunk Types (avg chunk size), Attributes
       group.rs         — group detail: path, child count, child listing
-      repo.rs          — repo overview: branch/tag/snap counts, storage summary
-      branch.rs        — branch detail: recent commits, storage stats
+      repo.rs          — repo overview: branch/tag/snap counts, storage summary (delegates to widgets)
+      branch.rs        — branch detail: recent commits, storage stats (delegates to widgets)
       ops_log.rs       — operations log viewer
     bottom.rs          — bottom panel: Snapshots/Branches/Tags lists
     diff.rs            — snapshot diff rendering
-    widgets.rs         — shared: tabbed panels, scrollable lists, text wrapping
+    widgets.rs         — shared: tabbed panels, scrollable lists, text wrapping, storage stats renderer
     format.rs          — ZarrMetadata parser (data type, chunk shape, codecs, fill value)
+    shape_viz.rs       — chunk summary line for array detail
     help.rs            — full-screen help overlay (mirrors TUI layout)
 ```
 
@@ -76,6 +80,11 @@ src/
 - **Mouse support**: click to focus pane and select row, using stored layout Rects
 - **Auto-expand tree**: on initial load, drill through single-child groups to first meaningful level
 - **Snapshot diffs**: auto-requested when browsing Snapshots tab, uses `VersionInfo::SnapshotId`
+- **O(1) node lookup**: `DataStore::find_node(path)` uses `node_index` HashMap, rebuilt on AllNodes response
+- **Cached ZarrMetadata**: parsed once at fetch time into `ArraySummary::parsed_metadata`, never per-frame
+- **Guarded per-frame work**: `branches_synced`, `chunk_scan_complete` flags prevent redundant scans in `drain_responses`
+- **MCP thin layer**: mcp.rs handles protocol only; delegates to fetch.rs for data, output/format.rs for formatting
+- **DetailMode cycling**: `next()`/`prev()` methods on enum, not verbose match arms
 
 ## Critical Rules
 
@@ -91,6 +100,9 @@ src/
 - **Run `/simplify` after every structural refactor** — refactors faithfully move code but don't optimize data flow across new boundaries. A simplify pass catches double-parsing, per-frame recomputation, and other issues introduced by the split.
 - **No per-frame recomputation of aggregate data** — if a value is derived from DataStore contents, cache it and invalidate on the specific DataResponse variants that change its inputs. Render functions must be cheap.
 - **fetch.rs is the single source of truth for data fetching** — output.rs, mcp.rs, and store/mod.rs all delegate to fetch.rs. Never duplicate fetch logic.
+- **output/format.rs is the single source of truth for text formatting** — mcp.rs and output/mod.rs delegate to format.rs for all markdown/text output. mcp.rs must not contain formatting logic.
+- **Use shared helpers, don't duplicate** — path manipulation in util.rs, ID truncation via `output::truncate()`, dimension formatting via `output::fmt_dims()`, storage stats via `widgets::storage_stats_lines()`.
+- **Guard per-frame work with flags** — use bool flags (e.g., `branches_synced`, `chunk_scan_complete`) to prevent repeated scans in `drain_responses`. Reset flags on data reload.
 
 ## Documentation
 
