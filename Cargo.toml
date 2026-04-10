@@ -54,6 +54,7 @@ humansize = "2"
 strip-ansi-escapes = "0.2"
 toml = "1.1.2"
 dirs = "6.0.0"
+clap_complete = { version = "4.6.1", features = ["unstable-dynamic"] }
 
 [profile.release]
 lto = "thin"

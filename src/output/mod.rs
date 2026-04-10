@@ -199,7 +199,9 @@ async fn run_json(
             let entries = fetch_ops_log(&repo, limit).await?;
             println!("{}", serde_json::to_string_pretty(&entries)?);
         }
-        Some(Command::Alias { .. }) => unreachable!("alias handled before repo open"),
+        Some(Command::Alias { .. } | Command::InstallCompletions { .. }) => {
+            unreachable!("handled before repo open")
+        }
     }
     Ok(())
 }
@@ -305,7 +307,9 @@ async fn run_md(
                 }
             }
         }
-        Some(Command::Alias { .. }) => unreachable!("alias handled before repo open"),
+        Some(Command::Alias { .. } | Command::InstallCompletions { .. }) => {
+            unreachable!("handled before repo open")
+        }
     }
     Ok(())
 }

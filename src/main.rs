@@ -17,7 +17,7 @@ pub mod util;
 
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::Cli;
 use color_eyre::Result;
 
@@ -27,6 +27,10 @@ async fn main() -> Result<()> {
     color_eyre::config::HookBuilder::default()
         .display_env_section(false)
         .install()?;
+
+    // Dynamic shell completions: when COMPLETE=<shell> is set, respond
+    // with completions (including alias names) and exit immediately.
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
     let cli = Cli::parse();
 
@@ -41,9 +45,13 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    // Handle alias subcommand early — no repo needed
-    if let Some(cli::Command::Alias { command }) = cli.command {
-        return run_alias_command(command);
+    // Handle subcommands that don't need a repo
+    match cli.command {
+        Some(cli::Command::Alias { command }) => return run_alias_command(command),
+        Some(cli::Command::InstallCompletions { shell }) => {
+            return install_completions(shell);
+        }
+        _ => {}
     }
 
     // For TUI mode (no --output, --serve, --repl), show loading screen while opening
@@ -373,4 +381,75 @@ fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Detect current shell from $SHELL, install completion eval line into rc file.
+fn install_completions(shell_override: Option<clap_complete::Shell>) -> Result<()> {
+    use clap_complete::Shell;
+    use std::path::PathBuf;
+
+    let shell = if let Some(s) = shell_override {
+        s
+    } else {
+        detect_shell()?
+    };
+
+    let home = std::env::var("HOME")
+        .map_err(|_| color_eyre::eyre::eyre!("Cannot determine home directory"))?;
+
+    let (rc_path, eval_line) = match shell {
+        Shell::Zsh => (
+            PathBuf::from(&home).join(".zshrc"),
+            "source <(COMPLETE=zsh core-drill)",
+        ),
+        Shell::Bash => (
+            PathBuf::from(&home).join(".bashrc"),
+            "source <(COMPLETE=bash core-drill)",
+        ),
+        Shell::Fish => (
+            PathBuf::from(&home).join(".config/fish/config.fish"),
+            "COMPLETE=fish core-drill | source",
+        ),
+        _ => color_eyre::eyre::bail!(
+            "Auto-install not supported for {shell:?}. Run `core-drill completions {shell:?}` and add the output to your shell config manually.",
+        ),
+    };
+
+    // Check if already installed
+    if rc_path.exists() {
+        let contents = std::fs::read_to_string(&rc_path)?;
+        if contents.contains("COMPLETE=") && contents.contains("core-drill") {
+            println!("Already installed in {}", rc_path.display());
+            return Ok(());
+        }
+    }
+
+    // Append
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&rc_path)?;
+    writeln!(file, "\n# core-drill tab completion")?;
+    writeln!(file, "{eval_line}")?;
+
+    println!("Added to {}", rc_path.display());
+    println!("Restart your shell or run: source {}", rc_path.display());
+    Ok(())
+}
+
+fn detect_shell() -> Result<clap_complete::Shell> {
+    use clap_complete::Shell;
+    let shell_env = std::env::var("SHELL").unwrap_or_default();
+    if shell_env.contains("zsh") {
+        Ok(Shell::Zsh)
+    } else if shell_env.contains("bash") {
+        Ok(Shell::Bash)
+    } else if shell_env.contains("fish") {
+        Ok(Shell::Fish)
+    } else {
+        color_eyre::eyre::bail!(
+            "Cannot detect shell from $SHELL='{shell_env}'. Pass the shell explicitly: core-drill install-completions bash"
+        )
+    }
 }

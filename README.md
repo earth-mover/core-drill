@@ -101,6 +101,14 @@ The `--arraylake-api` flag accepts full URLs or shorthands: `dev` (dev.api.earth
 
 Aliases are stored in `~/.config/core-drill/config.toml` (Linux) or `~/Library/Application Support/core-drill/config.toml` (macOS).
 
+## Tab completion
+
+```bash
+core-drill install-completions
+```
+
+Auto-detects your shell and adds completion setup to `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish`. Completions include subcommands, flags, and alias names. Restart your shell or `source` the config to activate.
+
 ## MCP setup
 
 Add core-drill as an MCP server so Claude Code (or any MCP client) can inspect Icechunk repos:

@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 
 /// core-drill: A terminal UI for inspecting Icechunk V2 repositories
 ///
@@ -20,7 +21,7 @@ pub struct Cli {
     ///   az://container/prefix        Azure Blob Storage
     ///   https://host/path            HTTP (read-only)
     ///   al:myorg/myrepo              Arraylake (credentials from ~/.arraylake/token.json)
-    #[arg(value_name = "REPO")]
+    #[arg(value_name = "REPO", add = ArgValueCompleter::new(complete_repo))]
     pub repo: Option<String>,
 
     /// Cloud storage region (e.g., us-east-1)
@@ -127,6 +128,15 @@ pub enum Command {
         limit: Option<usize>,
     },
 
+    /// Set up tab completion (subcommands, flags, and alias names)
+    ///
+    /// Auto-detects your shell and appends the setup line to your
+    /// shell config (~/.zshrc, ~/.bashrc, ~/.config/fish/config.fish).
+    InstallCompletions {
+        /// Shell to generate completions for (auto-detected from $SHELL if omitted)
+        shell: Option<clap_complete::Shell>,
+    },
+
     /// Manage saved repo aliases
     ///
     /// Aliases let you refer to frequently-used repositories by short names.
@@ -183,4 +193,19 @@ pub enum AliasCommand {
         /// Name of the alias to remove
         name: String,
     },
+}
+
+/// Dynamic completer for the REPO positional arg — suggests saved alias names.
+fn complete_repo(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let prefix = current.to_string_lossy();
+    let Ok(cfg) = crate::config::load() else {
+        return vec![];
+    };
+    cfg.aliases
+        .into_iter()
+        .filter(|(name, _)| name.starts_with(prefix.as_ref()))
+        .map(|(name, alias)| {
+            CompletionCandidate::new(name).help(Some(alias.repo.into()))
+        })
+        .collect()
 }
