@@ -27,12 +27,6 @@ Drill deep into your Icechunk repos to discover their past.
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/earth-mover/core-drill/releases/latest/download/core-drill-installer.sh | sh
 ```
 
-### Homebrew
-
-```bash
-brew install earth-mover/core-drill/core-drill
-```
-
 ### Nix
 
 ```bash
