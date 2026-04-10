@@ -77,6 +77,9 @@ struct OpenParams {
     endpoint_url: Option<String>,
     /// Arraylake API endpoint (optional, uses arraylake crate default if not set)
     arraylake_api: Option<String>,
+    /// Use anonymous (unsigned) requests — useful for public repos
+    #[serde(default)]
+    anonymous: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -271,22 +274,25 @@ impl CoreDrillServer {
         let overrides = repo::StorageOverrides {
             region: params.region,
             endpoint_url: params.endpoint_url,
+            anonymous: params.anonymous,
         };
 
-        let result = match crate::open_repo(&params.repo, params.arraylake_api.as_deref(), &overrides).await {
-            Ok((repository, identity)) => {
-                let label = identity.display_short();
-                let repo = Arc::new(repository);
+        let result =
+            match crate::open_repo(&params.repo, params.arraylake_api.as_deref(), &overrides).await
+            {
+                Ok((repository, identity)) => {
+                    let label = identity.display_short();
+                    let repo = Arc::new(repository);
 
-                *self.repo.write().await = Some(Arc::clone(&repo));
-                *self.repo_url.write().await = label;
-                *self.cache.write().await = McpCache::default();
+                    *self.repo.write().await = Some(Arc::clone(&repo));
+                    *self.repo_url.write().await = label;
+                    *self.cache.write().await = McpCache::default();
 
-                // Return info overview immediately — saves the agent an extra round trip
-                self.format_info(&repo, "main").await
-            }
-            Err(e) => format!("Error opening repository: {e}"),
-        };
+                    // Return info overview immediately — saves the agent an extra round trip
+                    self.format_info(&repo, "main").await
+                }
+                Err(e) => format!("Error opening repository: {e}"),
+            };
         info!("MCP open completed in {:?}", start.elapsed());
         cap_output(result)
     }
@@ -303,21 +309,29 @@ impl CoreDrillServer {
         cap_output(result)
     }
 
-    #[tool(description = "List all branches with their tip snapshot IDs. Optionally filter by snapshot_id to find which branches point at a given snapshot.")]
+    #[tool(
+        description = "List all branches with their tip snapshot IDs. Optionally filter by snapshot_id to find which branches point at a given snapshot."
+    )]
     async fn branches(&self, Parameters(params): Parameters<BranchesParams>) -> String {
         let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match self.cached_branches(&repo).await {
             Ok(branches) => {
                 let filtered: Vec<_> = if let Some(ref snap) = params.snapshot_id {
-                    branches.iter().filter(|b| b.snapshot_id.starts_with(snap)).collect()
+                    branches
+                        .iter()
+                        .filter(|b| b.snapshot_id.starts_with(snap))
+                        .collect()
                 } else {
                     branches.iter().collect()
                 };
 
                 if filtered.is_empty() {
                     if params.snapshot_id.is_some() {
-                        format!("No branches point at snapshot `{}`", params.snapshot_id.as_deref().unwrap())
+                        format!(
+                            "No branches point at snapshot `{}`",
+                            params.snapshot_id.as_deref().unwrap()
+                        )
                     } else {
                         "(no branches)".to_string()
                     }
@@ -363,9 +377,7 @@ impl CoreDrillServer {
         cap_output(result)
     }
 
-    #[tool(
-        description = "Show snapshot history (commit log) for a branch, tag, or snapshot ID."
-    )]
+    #[tool(description = "Show snapshot history (commit log) for a branch, tag, or snapshot ID.")]
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
         let start = std::time::Instant::now();
         let repo = require_repo!(self);
@@ -423,18 +435,21 @@ impl CoreDrillServer {
                             // Array: show detailed metadata from tree (cheap)
                             // Chunk type/size breakdown only on request (iterates all chunks)
                             let mut out = output::fmt_node_detail(node);
-                            if params.chunk_stats {
-                                if let Ok(stats) = fetch::fetch_chunk_stats(&repo, &snap_id, &node.path).await {
-                                    out.push_str(&fmt_chunk_stats(&stats));
-                                }
+                            if params.chunk_stats
+                                && let Ok(stats) =
+                                    fetch::fetch_chunk_stats(&repo, &snap_id, &node.path).await
+                            {
+                                out.push_str(&fmt_chunk_stats(&stats));
                             }
                             out
                         } else {
                             // Group: show children (not just "Type: group")
                             let base_depth = filter_path.matches('/').count();
-                            let children: Vec<_> = tree.iter()
+                            let children: Vec<_> = tree
+                                .iter()
                                 .filter(|n| {
-                                    n.path != *filter_path && n.path.starts_with(&format!("{filter_path}/"))
+                                    n.path != *filter_path
+                                        && n.path.starts_with(&format!("{filter_path}/"))
                                 })
                                 .filter(|n| {
                                     if let Some(max_depth) = params.depth {
@@ -448,7 +463,10 @@ impl CoreDrillServer {
 
                             let groups_count = children.iter().filter(|n| n.is_group()).count();
                             let arrays_count = children.iter().filter(|n| n.is_array()).count();
-                            let mut out = format!("# {} ({} groups, {} arrays)\n\n", filter_path, groups_count, arrays_count);
+                            let mut out = format!(
+                                "# {} ({} groups, {} arrays)\n\n",
+                                filter_path, groups_count, arrays_count
+                            );
 
                             const CHILD_LINE_LIMIT: usize = 30;
                             out.push_str(&fmt_collapsed_tree(&children, &tree, CHILD_LINE_LIMIT));
@@ -520,7 +538,9 @@ impl CoreDrillServer {
         cap_output(result)
     }
 
-    #[tool(description = "Show repository operations log (mutation history): commits, branch/tag operations, config changes, GC runs.")]
+    #[tool(
+        description = "Show repository operations log (mutation history): commits, branch/tag operations, config changes, GC runs."
+    )]
     async fn ops_log(&self, Parameters(params): Parameters<OpsLogParams>) -> String {
         let start = std::time::Instant::now();
         let repo = require_repo!(self);
@@ -545,11 +565,19 @@ impl CoreDrillServer {
         cap_output(result)
     }
 
-    #[tool(description = "Show what changed in a snapshot: added/deleted/modified arrays and groups, chunk changes. Use snapshot IDs from the `log` tool.")]
+    #[tool(
+        description = "Show what changed in a snapshot: added/deleted/modified arrays and groups, chunk changes. Use snapshot IDs from the `log` tool."
+    )]
     async fn diff(&self, Parameters(params): Parameters<DiffParams>) -> String {
         let start = std::time::Instant::now();
         let repo = require_repo!(self);
-        let result = match fetch::fetch_diff(&repo, &params.snapshot_id, params.parent_id.as_deref()).await {
+        let result = match fetch::fetch_diff(
+            &repo,
+            &params.snapshot_id,
+            params.parent_id.as_deref(),
+        )
+        .await
+        {
             Ok(detail) => output::fmt_diff_detail(&detail, &params.snapshot_id),
             Err(e) => format!("Error: {e}"),
         };
@@ -557,7 +585,9 @@ impl CoreDrillServer {
         cap_output(result)
     }
 
-    #[tool(description = "Show repository configuration: spec version, status, feature flags, virtual chunk containers, inline threshold.")]
+    #[tool(
+        description = "Show repository configuration: spec version, status, feature flags, virtual chunk containers, inline threshold."
+    )]
     async fn config(&self, Parameters(_params): Parameters<EmptyParams>) -> String {
         let start = std::time::Instant::now();
         let repo = require_repo!(self);
@@ -569,7 +599,9 @@ impl CoreDrillServer {
         cap_output(result)
     }
 
-    #[tool(description = "Search for nodes by path. Modes: \"fuzzy\" (default, ranked by relevance), \"prefix\" (paths starting with query, e.g. /data), \"exact\" (substring match), \"glob\" (wildcards, e.g. /data/*/temperature). For listing direct children of a group, use `tree` with `path` and `depth=1`.")]
+    #[tool(
+        description = "Search for nodes by path. Modes: \"fuzzy\" (default, ranked by relevance), \"prefix\" (paths starting with query, e.g. /data), \"exact\" (substring match), \"glob\" (wildcards, e.g. /data/*/temperature). For listing direct children of a group, use `tree` with `path` and `depth=1`."
+    )]
     async fn search(&self, Parameters(params): Parameters<SearchParams>) -> String {
         let start = std::time::Instant::now();
         let repo = require_repo!(self);
@@ -579,19 +611,22 @@ impl CoreDrillServer {
 
                 match params.mode.as_str() {
                     "prefix" => {
-                        let matched: Vec<_> = tree.iter()
+                        let matched: Vec<_> = tree
+                            .iter()
                             .filter(|n| n.path.starts_with(&params.query))
                             .collect();
                         fmt_search_results(&params.query, "prefix", &matched, limit, &tree)
                     }
                     "exact" => {
-                        let matched: Vec<_> = tree.iter()
+                        let matched: Vec<_> = tree
+                            .iter()
                             .filter(|n| n.path.contains(&params.query))
                             .collect();
                         fmt_search_results(&params.query, "exact", &matched, limit, &tree)
                     }
                     "glob" => {
-                        let matched: Vec<_> = tree.iter()
+                        let matched: Vec<_> = tree
+                            .iter()
                             .filter(|n| glob_matches(&params.query, &n.path))
                             .collect();
                         fmt_search_results(&params.query, "glob", &matched, limit, &tree)
@@ -659,10 +694,7 @@ fn fmt_search_results(
     if total == 0 {
         return format!("No matches for \"{}\" ({} mode)", query, mode);
     }
-    let mut out = format!(
-        "# Search: \"{}\" ({} matches, {})\n\n",
-        query, total, mode
-    );
+    let mut out = format!("# Search: \"{}\" ({} matches, {})\n\n", query, total, mode);
     for node in matched.iter().take(limit) {
         out.push_str(&output::fmt_tree_line(node, all_nodes));
     }
@@ -681,7 +713,11 @@ fn fmt_search_results(
 ///   - **burst-133012-*** (1000 arrays) `float32` `[721 × 1440]`
 ///
 /// `max_lines` caps the total output lines (each collapsed group = 1 line).
-fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode], max_lines: usize) -> String {
+fn fmt_collapsed_tree(
+    nodes: &[&fetch::FlatNode],
+    all_nodes: &[fetch::FlatNode],
+    max_lines: usize,
+) -> String {
     if nodes.is_empty() {
         return String::new();
     }
@@ -689,7 +725,7 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
     // Group nodes by (parent_path, type, name_prefix).
     // name_prefix = everything up to the last `-` or `_` separator, or the full name if no separator.
     struct CollapsedGroup<'a> {
-        prefix: String,       // shared prefix (e.g. "burst-133012-")
+        prefix: String, // shared prefix (e.g. "burst-133012-")
         nodes: Vec<&'a fetch::FlatNode>,
         depth: usize,
     }
@@ -700,7 +736,7 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
     let mut sorted: Vec<&&fetch::FlatNode> = nodes.iter().collect();
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
 
-    for node in sorted.into_iter().map(|n| *n) {
+    for node in sorted.into_iter().copied() {
         let parent = crate::util::parent_path(&node.path);
         let depth = node.path.matches('/').count().saturating_sub(1);
 
@@ -708,7 +744,7 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
         let prefix = {
             let name = &node.name;
             // Find the last separator position
-            let sep_pos = name.rfind(|c: char| c == '-' || c == '_');
+            let sep_pos = name.rfind(['-', '_']);
             match sep_pos {
                 Some(pos) if pos > 0 && pos < name.len() - 1 => {
                     format!("{}/{}", parent, &name[..=pos])
@@ -718,14 +754,13 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
         };
 
         // Try to append to the last group if same prefix, type, and depth
-        if let Some(last) = groups.last_mut() {
-            if last.prefix == prefix
-                && last.depth == depth
-                && last.nodes[0].node_type == node.node_type
-            {
-                last.nodes.push(node);
-                continue;
-            }
+        if let Some(last) = groups.last_mut()
+            && last.prefix == prefix
+            && last.depth == depth
+            && last.nodes[0].node_type == node.node_type
+        {
+            last.nodes.push(node);
+            continue;
         }
         groups.push(CollapsedGroup {
             prefix,
@@ -755,13 +790,19 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
             // Collapse into a summary line
             let indent = "  ".repeat(group.depth);
             let count = group.nodes.len();
-            let kind = if group.nodes[0].is_array() { "arrays" } else { "groups" };
+            let kind = if group.nodes[0].is_array() {
+                "arrays"
+            } else {
+                "groups"
+            };
 
             // Show representative metadata from first node
             let sample = group.nodes[0];
             let meta = if sample.is_array() {
                 let dtype = sample.dtype.as_deref().unwrap_or("?");
-                let shape = sample.shape.as_ref()
+                let shape = sample
+                    .shape
+                    .as_ref()
                     .map(|s| output::fmt_dims(s))
                     .unwrap_or_else(|| "?".to_string());
                 format!(" `{dtype}` `[{shape}]`")
@@ -772,7 +813,9 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
             out.push_str(&format!(
                 "{indent}- **{}\\*** ({} {}){}\n",
                 crate::util::leaf_name(&group.prefix),
-                count, kind, meta
+                count,
+                kind,
+                meta
             ));
             lines += 1;
         }
@@ -783,10 +826,14 @@ fn fmt_collapsed_tree(nodes: &[&fetch::FlatNode], all_nodes: &[fetch::FlatNode],
         let mut count = 0;
         let mut l = 0;
         for group in &groups {
-            if l >= max_lines { break; }
+            if l >= max_lines {
+                break;
+            }
             if group.nodes.len() < 3 {
                 for _ in &group.nodes {
-                    if l >= max_lines { break; }
+                    if l >= max_lines {
+                        break;
+                    }
                     count += 1;
                     l += 1;
                 }
@@ -821,7 +868,11 @@ fn glob_matches_inner(pattern: &[u8], path: &[u8]) -> bool {
     let mut star_si = 0; // string position when `*` was hit
 
     while si < path.len() {
-        if pi < pattern.len() && pattern[pi] == b'*' && pi + 1 < pattern.len() && pattern[pi + 1] == b'*' {
+        if pi < pattern.len()
+            && pattern[pi] == b'*'
+            && pi + 1 < pattern.len()
+            && pattern[pi + 1] == b'*'
+        {
             // `**` — match everything including `/`
             pi += 2;
             if pi < pattern.len() && pattern[pi] == b'/' {
@@ -895,9 +946,18 @@ mod glob_tests {
 
     #[test]
     fn star_in_middle() {
-        assert!(glob_matches("/data/*/temperature", "/data/era5/temperature"));
-        assert!(glob_matches("/data/*/temperature", "/data/merra2/temperature"));
-        assert!(!glob_matches("/data/*/temperature", "/data/era5/sub/temperature"));
+        assert!(glob_matches(
+            "/data/*/temperature",
+            "/data/era5/temperature"
+        ));
+        assert!(glob_matches(
+            "/data/*/temperature",
+            "/data/merra2/temperature"
+        ));
+        assert!(!glob_matches(
+            "/data/*/temperature",
+            "/data/era5/sub/temperature"
+        ));
     }
 
     #[test]
@@ -940,9 +1000,18 @@ mod collapse_tests {
 
         // Should collapse into 1 line, not 100
         let line_count = result.lines().filter(|l| !l.is_empty()).count();
-        assert!(line_count <= 3, "Expected <=3 lines, got {line_count}:\n{result}");
-        assert!(result.contains("100 arrays"), "Should mention 100 arrays:\n{result}");
-        assert!(result.contains("burst-"), "Should mention burst- prefix:\n{result}");
+        assert!(
+            line_count <= 3,
+            "Expected <=3 lines, got {line_count}:\n{result}"
+        );
+        assert!(
+            result.contains("100 arrays"),
+            "Should mention 100 arrays:\n{result}"
+        );
+        assert!(
+            result.contains("burst-"),
+            "Should mention burst- prefix:\n{result}"
+        );
     }
 
     #[test]
@@ -956,9 +1025,18 @@ mod collapse_tests {
         let result = fmt_collapsed_tree(&refs, &nodes, 30);
 
         // All unique, no collapsing
-        assert!(result.contains("temperature"), "Should list temperature:\n{result}");
-        assert!(result.contains("humidity"), "Should list humidity:\n{result}");
-        assert!(result.contains("pressure"), "Should list pressure:\n{result}");
+        assert!(
+            result.contains("temperature"),
+            "Should list temperature:\n{result}"
+        );
+        assert!(
+            result.contains("humidity"),
+            "Should list humidity:\n{result}"
+        );
+        assert!(
+            result.contains("pressure"),
+            "Should list pressure:\n{result}"
+        );
     }
 
     #[test]
@@ -973,16 +1051,27 @@ mod collapse_tests {
         let result = fmt_collapsed_tree(&refs, &nodes, 30);
 
         // burst-* collapsed, temperature and humidity shown individually
-        assert!(result.contains("50 arrays"), "Should collapse burst:\n{result}");
-        assert!(result.contains("temperature"), "Should list temperature:\n{result}");
-        assert!(result.contains("humidity"), "Should list humidity:\n{result}");
+        assert!(
+            result.contains("50 arrays"),
+            "Should collapse burst:\n{result}"
+        );
+        assert!(
+            result.contains("temperature"),
+            "Should list temperature:\n{result}"
+        );
+        assert!(
+            result.contains("humidity"),
+            "Should list humidity:\n{result}"
+        );
     }
 
     #[test]
     fn respects_line_limit() {
         // 10 different prefixes, 5 each = 50 nodes
         let mut nodes = Vec::new();
-        for prefix in &["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa"] {
+        for prefix in &[
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
+        ] {
             for i in 0..5 {
                 nodes.push(make_array(&format!("/{prefix}-{i:03}")));
             }
@@ -990,8 +1079,14 @@ mod collapse_tests {
         let refs: Vec<&FlatNode> = nodes.iter().collect();
         let result = fmt_collapsed_tree(&refs, &nodes, 5);
 
-        let line_count = result.lines().filter(|l| l.starts_with("- ") || l.starts_with("  -")).count();
-        assert!(line_count <= 5, "Should cap at 5 lines, got {line_count}:\n{result}");
+        let line_count = result
+            .lines()
+            .filter(|l| l.starts_with("- ") || l.starts_with("  -"))
+            .count();
+        assert!(
+            line_count <= 5,
+            "Should cap at 5 lines, got {line_count}:\n{result}"
+        );
     }
 }
 

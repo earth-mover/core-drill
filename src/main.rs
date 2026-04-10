@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
                 &repo::StorageOverrides {
                     region: cli.region.clone(),
                     endpoint_url: cli.endpoint_url.clone(),
+                    anonymous: cli.anonymous,
                 },
             )
             .await?;
@@ -70,6 +71,7 @@ async fn main() -> Result<()> {
         let overrides = repo::StorageOverrides {
             region: cli.region.clone(),
             endpoint_url: cli.endpoint_url.clone(),
+            anonymous: cli.anonymous,
         };
 
         let label = if is_arraylake {
@@ -115,6 +117,7 @@ async fn main() -> Result<()> {
             &repo::StorageOverrides {
                 region: cli.region.clone(),
                 endpoint_url: cli.endpoint_url.clone(),
+                anonymous: cli.anonymous,
             },
         )
         .await?;

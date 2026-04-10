@@ -12,11 +12,11 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // title bar
+            Constraint::Length(1), // title bar
             Constraint::Min(6),    // main area (sidebar + detail)
-            Constraint::Length(8),  // search + global row
-            Constraint::Length(8),  // bottom panel
-            Constraint::Length(1),  // hint bar
+            Constraint::Length(8), // search + global row
+            Constraint::Length(8), // bottom panel
+            Constraint::Length(1), // hint bar
         ])
         .split(area);
 
@@ -83,13 +83,28 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     // ─── Detail pane help ───────────────
     let detail_lines = vec![
         Line::from(""),
-        Line::from(Span::styled(" Tabs (auto-switch when browsing branches/snapshots)", t.text_bold)),
+        Line::from(Span::styled(
+            " Tabs (auto-switch when browsing branches/snapshots)",
+            t.text_bold,
+        )),
         kv(t, "Tab / S-Tab", "Cycle tabs forward / backward"),
-        kv(t, "h/← l/→", "Navigate between tabs (moves to sidebar at left edge)"),
+        kv(
+            t,
+            "h/← l/→",
+            "Navigate between tabs (moves to sidebar at left edge)",
+        ),
         Line::from(""),
         desc(t, "Node", "Array/group metadata for selected tree node"),
-        desc(t, "Repo", "Repository overview, storage, config, virtual sources"),
-        desc(t, "Ops Log", "Mutation history (commits, branch ops, config changes)"),
+        desc(
+            t,
+            "Repo",
+            "Repository overview, storage, config, virtual sources",
+        ),
+        desc(
+            t,
+            "Ops Log",
+            "Mutation history (commits, branch ops, config changes)",
+        ),
         desc(t, "Branch", "Branch detail — commits, storage stats"),
         desc(t, "Snap", "Snapshot diff — what changed between snapshots"),
         Line::from(""),
@@ -145,7 +160,10 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     // ─── Bottom panel help ──────────────
     let bottom_lines = vec![
         Line::from(""),
-        Line::from(Span::styled(" Tabs: Snapshots | Branches | Tags", t.text_bold)),
+        Line::from(Span::styled(
+            " Tabs: Snapshots | Branches | Tags",
+            t.text_bold,
+        )),
         kv(t, "h/l ←→", "Switch between tabs"),
         kv(t, "j/k ↑↓", "Move selection"),
         kv(t, "Enter", "Activate (switch branch, load diff)"),
@@ -160,10 +178,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     );
 
     // ─── Hint bar ───────────────────────
-    let hint = Line::from(Span::styled(
-        " Press ? or Esc to close help",
-        t.text_dim,
-    ));
+    let hint = Line::from(Span::styled(" Press ? or Esc to close help", t.text_dim));
     frame.render_widget(Paragraph::new(hint), hint_area);
 }
 

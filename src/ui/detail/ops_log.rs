@@ -29,15 +29,14 @@ pub(super) fn render_ops_log<'a>(app: &'a App) -> Vec<Line<'a>> {
             )));
         }
         crate::store::LoadState::Loading => {
-            lines.push(Line::from(Span::styled(
-                "  Loading...",
-                app.theme.loading,
-            )));
+            lines.push(Line::from(Span::styled("  Loading...", app.theme.loading)));
         }
         crate::store::LoadState::Error(e) => {
             let kind = crate::store::classify_error(e);
             let hint = match kind {
-                crate::store::ErrorKind::Auth => "  (credentials may be expired \u{2014} press R to retry)",
+                crate::store::ErrorKind::Auth => {
+                    "  (credentials may be expired \u{2014} press R to retry)"
+                }
                 crate::store::ErrorKind::Network => "  (network issue \u{2014} press R to retry)",
                 crate::store::ErrorKind::NotFound => "  (not found \u{2014} press R to retry)",
                 crate::store::ErrorKind::Other => "  (press R to retry)",

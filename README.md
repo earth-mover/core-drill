@@ -60,7 +60,7 @@ core-drill --serve
 Add core-drill as an MCP server so Claude Code (or any MCP client) can inspect Icechunk repos:
 
 ```bash
-claude mcp add --transport stdio core-drill -- core-drill --serve
+claude mcp add --scope user --transport stdio core-drill -- core-drill --serve
 ```
 
 Then from Claude Code, ask the agent to investigate repo path/URL to start exploring.

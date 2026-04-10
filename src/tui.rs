@@ -1,5 +1,5 @@
-use std::io::{self, Stdout};
 use std::future::Future;
+use std::io::{self, Stdout};
 
 use color_eyre::Result;
 use crossterm::{
@@ -8,8 +8,8 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use ratatui::{Terminal, prelude::*};
 use ratatui::widgets::Paragraph;
+use ratatui::{Terminal, prelude::*};
 
 use crate::app::App;
 use crate::theme::Theme;
@@ -106,11 +106,7 @@ const DRILL_FRAMES: &[&str] = &[
 
 /// Show an animated loading screen while a future resolves.
 /// Returns the future's result, or Err if the user presses q/Esc.
-pub async fn loading_screen<F, T>(
-    terminal: &mut Tui,
-    label: &str,
-    future: F,
-) -> Result<T>
+pub async fn loading_screen<F, T>(terminal: &mut Tui, label: &str, future: F) -> Result<T>
 where
     F: Future<Output = Result<T>>,
 {
@@ -139,10 +135,7 @@ where
                 let y = y_offset + i as u16;
                 if y < area.height {
                     let line_area = Rect::new(x, y, line.len() as u16, 1);
-                    f.render_widget(
-                        Paragraph::new(*line).style(theme.branch),
-                        line_area,
-                    );
+                    f.render_widget(Paragraph::new(*line).style(theme.branch), line_area);
                 }
             }
 
@@ -173,12 +166,11 @@ where
                 return result;
             }
             maybe_event = event_stream.next() => {
-                if let Some(Ok(Event::Key(key))) = maybe_event {
-                    if key.kind == KeyEventKind::Press
-                        && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
-                    {
-                        color_eyre::eyre::bail!("Cancelled by user");
-                    }
+                if let Some(Ok(Event::Key(key))) = maybe_event
+                    && key.kind == KeyEventKind::Press
+                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+                {
+                    color_eyre::eyre::bail!("Cancelled by user");
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {

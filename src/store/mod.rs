@@ -219,7 +219,8 @@ impl DataStore {
         for (parent, state) in &self.node_children {
             if let LoadState::Loaded(nodes) = state {
                 for (i, node) in nodes.iter().enumerate() {
-                    self.node_index.insert(node.path.clone(), (parent.clone(), i));
+                    self.node_index
+                        .insert(node.path.clone(), (parent.clone(), i));
                 }
             }
         }
@@ -511,15 +512,21 @@ async fn process_request(repo: &Repository, request: DataRequest) -> DataRespons
 }
 
 async fn fetch_branches(repo: &Repository) -> Result<Vec<BranchInfo>, String> {
-    crate::fetch::fetch_branches(repo).await.map_err(|e| e.to_string())
+    crate::fetch::fetch_branches(repo)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 async fn fetch_tags(repo: &Repository) -> Result<Vec<TagInfo>, String> {
-    crate::fetch::fetch_tags(repo).await.map_err(|e| e.to_string())
+    crate::fetch::fetch_tags(repo)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 async fn fetch_ancestry(repo: &Repository, branch: &str) -> Result<Vec<SnapshotEntry>, String> {
-    crate::fetch::fetch_ancestry(repo, branch).await.map_err(|e| e.to_string())
+    crate::fetch::fetch_ancestry(repo, branch)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Fetch ALL nodes from root in a single request and organize them by parent path.
@@ -614,14 +621,14 @@ async fn fetch_all_nodes(
 
                 let zarr_metadata_str = sanitize(&zarr_metadata);
                 let parsed_metadata = crate::ui::format::ZarrMetadata::parse(&zarr_metadata_str);
-                TreeNodeType::Array(ArraySummary {
+                TreeNodeType::Array(Box::new(ArraySummary {
                     shape: dims,
                     dimension_names: dim_names,
                     manifest_count: manifests.len(),
                     zarr_metadata: zarr_metadata_str,
                     total_chunks,
                     parsed_metadata,
-                })
+                }))
             }
         };
 
@@ -694,7 +701,13 @@ async fn fetch_diff(
     let moved_node_ids: Vec<(String, String, String)> = tx_log
         .moves()
         .filter_map(|r| r.ok())
-        .map(|mv| (mv.node_id.to_string(), mv.from.to_string(), mv.to.to_string()))
+        .map(|mv| {
+            (
+                mv.node_id.to_string(),
+                mv.from.to_string(),
+                mv.to.to_string(),
+            )
+        })
         .collect();
 
     Ok(RawDiff {

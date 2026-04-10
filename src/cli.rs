@@ -34,6 +34,13 @@ pub struct Cli {
     #[arg(long)]
     pub endpoint_url: Option<String>,
 
+    /// Use anonymous (unsigned) requests for cloud storage
+    ///
+    /// Skips credential lookup, useful for public repos.
+    /// Equivalent to s3://bucket/prefix?anonymous=true
+    #[arg(long, alias = "anon")]
+    pub anonymous: bool,
+
     /// Arraylake API endpoint (used when REPO is an al:org/repo reference).
     /// If not set, uses the arraylake crate default.
     #[arg(long)]

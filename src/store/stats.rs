@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use super::{DataStore, LoadState};
 use super::types::TreeNodeType;
+use super::{DataStore, LoadState};
 
 /// Aggregated storage stats computed from the current tree + chunk stats cache.
 #[derive(Default)]

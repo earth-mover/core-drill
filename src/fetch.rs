@@ -190,28 +190,29 @@ pub(crate) async fn resolve_ref(
     // Try prefix match — like git short hashes.
     // Uses the repo info file (single cached fetch) which has all snapshot IDs.
     let r_upper = r.to_uppercase();
-    if r_upper.len() >= 4 && r_upper.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c)) {
-        if let Ok((repo_info, _)) = repo.asset_manager().fetch_repo_info().await {
-            let mut matches: Vec<SnapshotId> = Vec::new();
-            if let Ok(snapshots) = repo_info.all_snapshots() {
-                for snap_result in snapshots {
-                    if let Ok(info) = snap_result {
-                        let full_id: String = (&info.id).into();
-                        if full_id.starts_with(&r_upper) {
-                            matches.push(info.id);
-                            if matches.len() > 1 {
-                                color_eyre::eyre::bail!(
-                                    "ambiguous snapshot prefix '{r}' — matches {} snapshots",
-                                    matches.len()
-                                );
-                            }
-                        }
+    if r_upper.len() >= 4
+        && r_upper
+            .chars()
+            .all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c))
+        && let Ok((repo_info, _)) = repo.asset_manager().fetch_repo_info().await
+    {
+        let mut matches: Vec<SnapshotId> = Vec::new();
+        if let Ok(snapshots) = repo_info.all_snapshots() {
+            for info in snapshots.flatten() {
+                let full_id: String = (&info.id).into();
+                if full_id.starts_with(&r_upper) {
+                    matches.push(info.id);
+                    if matches.len() > 1 {
+                        color_eyre::eyre::bail!(
+                            "ambiguous snapshot prefix '{r}' — matches {} snapshots",
+                            matches.len()
+                        );
                     }
                 }
             }
-            if matches.len() == 1 {
-                return Ok(VersionInfo::SnapshotId(matches.remove(0)));
-            }
+        }
+        if matches.len() == 1 {
+            return Ok(VersionInfo::SnapshotId(matches.remove(0)));
         }
     }
 
@@ -440,7 +441,10 @@ pub(crate) async fn fetch_ops_log(
                 format!("Commit amended on {}", sanitize(branch))
             }
             UpdateType::NewDetachedSnapshotUpdate { new_snap_id } => {
-                format!("Detached snapshot: {}", crate::output::truncate(&new_snap_id.to_string(), 12))
+                format!(
+                    "Detached snapshot: {}",
+                    crate::output::truncate(&new_snap_id.to_string(), 12)
+                )
             }
             UpdateType::GCRanUpdate => "Garbage collection ran".to_string(),
             UpdateType::ExpirationRanUpdate => "Snapshot expiration ran".to_string(),
@@ -473,7 +477,9 @@ pub(crate) async fn fetch_chunk_stats(
     use icechunk::repository::VersionInfo;
     use std::collections::HashMap;
 
-    let snap_id: SnapshotId = snapshot_id.try_into().map_err(|e: &str| color_eyre::eyre::eyre!(e))?;
+    let snap_id: SnapshotId = snapshot_id
+        .try_into()
+        .map_err(|e: &str| color_eyre::eyre::eyre!(e))?;
     let version = VersionInfo::SnapshotId(snap_id);
     let session = repo.readonly_session(&version).await?;
     let node_path = icechunk::format::Path::try_from(path)?;
@@ -664,13 +670,38 @@ pub(crate) async fn fetch_diff(
     Ok(DiffSummary {
         snapshot_id: full_snapshot_id,
         parent_id,
-        added_arrays: raw_ids.added_array_ids.iter().map(|id| resolve(id)).collect(),
-        added_groups: raw_ids.added_group_ids.iter().map(|id| resolve(id)).collect(),
-        deleted_arrays: raw_ids.deleted_array_ids.iter().map(|id| resolve(id)).collect(),
-        deleted_groups: raw_ids.deleted_group_ids.iter().map(|id| resolve(id)).collect(),
-        modified_arrays: raw_ids.modified_array_ids.iter().map(|id| resolve(id)).collect(),
-        modified_groups: raw_ids.modified_group_ids.iter().map(|id| resolve(id)).collect(),
-        chunk_changes: raw_ids.chunk_change_ids
+        added_arrays: raw_ids
+            .added_array_ids
+            .iter()
+            .map(|id| resolve(id))
+            .collect(),
+        added_groups: raw_ids
+            .added_group_ids
+            .iter()
+            .map(|id| resolve(id))
+            .collect(),
+        deleted_arrays: raw_ids
+            .deleted_array_ids
+            .iter()
+            .map(|id| resolve(id))
+            .collect(),
+        deleted_groups: raw_ids
+            .deleted_group_ids
+            .iter()
+            .map(|id| resolve(id))
+            .collect(),
+        modified_arrays: raw_ids
+            .modified_array_ids
+            .iter()
+            .map(|id| resolve(id))
+            .collect(),
+        modified_groups: raw_ids
+            .modified_group_ids
+            .iter()
+            .map(|id| resolve(id))
+            .collect(),
+        chunk_changes: raw_ids
+            .chunk_change_ids
             .iter()
             .map(|(id, count)| (resolve(id), *count))
             .collect(),
@@ -680,9 +711,7 @@ pub(crate) async fn fetch_diff(
 }
 
 /// Fetch repository configuration, status, and feature flags.
-pub(crate) async fn fetch_repo_config(
-    repo: &Repository,
-) -> color_eyre::Result<RepoConfig> {
+pub(crate) async fn fetch_repo_config(repo: &Repository) -> color_eyre::Result<RepoConfig> {
     let config = repo.config();
     let spec_version = repo.spec_version().to_string();
     let inline_threshold = config.inline_chunk_threshold_bytes;

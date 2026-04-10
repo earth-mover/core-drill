@@ -3,10 +3,12 @@
 //! All functions are pure (no I/O) and return `String`. Callers decide whether
 //! to print, truncate, or embed the result in a larger response.
 
-use humansize::{format_size, BINARY};
+use humansize::{BINARY, format_size};
 
 use crate::fetch::{FlatNode, FlatNodeType};
-use crate::store::types::{BranchInfo, ChunkStats, DiffSummary, RepoConfig, SnapshotEntry, TagInfo};
+use crate::store::types::{
+    BranchInfo, ChunkStats, DiffSummary, RepoConfig, SnapshotEntry, TagInfo,
+};
 
 // ─── Primitive helpers ────────────────────────────────────────
 
@@ -306,7 +308,11 @@ pub(crate) fn fmt_repo_overview(
     let mut out = format!("# Repository: {}\n\n", repo_url);
 
     out.push_str(&format!("## Branches ({})\n\n", branches.len()));
-    let show_branches = if branches.len() > 10 { 5 } else { branches.len() };
+    let show_branches = if branches.len() > 10 {
+        5
+    } else {
+        branches.len()
+    };
     for b in branches.iter().take(show_branches) {
         let ts = b
             .tip_timestamp

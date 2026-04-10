@@ -3,7 +3,11 @@ use ratatui::prelude::*;
 use crate::app::App;
 use crate::ui::widgets::{labeled_lines, section_header, storage_stats_lines};
 
-pub(super) fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_current: bool) -> Vec<Line<'a>> {
+pub(super) fn render_branch_detail<'a>(
+    app: &'a App,
+    branch_name: &str,
+    is_current: bool,
+) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
 
     // ─── Branch Header ─────────────────
@@ -21,7 +25,10 @@ pub(super) fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_curre
     ]));
 
     // Find the BranchInfo for snapshot ID
-    if let Some(branch) = app.store.branches.as_loaded()
+    if let Some(branch) = app
+        .store
+        .branches
+        .as_loaded()
         .and_then(|bs| bs.iter().find(|b| b.name == branch_name))
     {
         lines.push(Line::from(vec![
@@ -36,7 +43,10 @@ pub(super) fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_curre
     // ─── Recent Commits ────────────────
     if let Some(crate::store::LoadState::Loaded(ancestry)) = app.store.ancestry.get(branch_name) {
         lines.push(Line::from(""));
-        lines.push(section_header(&format!("Recent Commits ({})", ancestry.len())));
+        lines.push(section_header(&format!(
+            "Recent Commits ({})",
+            ancestry.len()
+        )));
 
         let max_width = app.detail_area.width.saturating_sub(2);
         for entry in ancestry.iter().take(10) {
@@ -77,7 +87,7 @@ pub(super) fn render_branch_detail<'a>(app: &'a App, branch_name: &str, is_curre
         if ss.total_arrays > 0 || ss.total_groups > 0 {
             lines.push(Line::from(""));
             lines.push(section_header("Storage"));
-            lines.extend(storage_stats_lines(&ss, &app.theme, false));
+            lines.extend(storage_stats_lines(ss, &app.theme, false));
         }
     }
 

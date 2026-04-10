@@ -37,7 +37,10 @@ impl App {
         // Open all descendants by finding paths that start with the selected path
         let selected_path = selected.last().cloned().unwrap_or_default();
         let prefix = format!("{selected_path}/");
-        let group_paths: Vec<String> = self.store.node_children.keys()
+        let group_paths: Vec<String> = self
+            .store
+            .node_children
+            .keys()
             .filter(|p| p.starts_with(&prefix) || **p == selected_path)
             .cloned()
             .collect();
@@ -58,12 +61,18 @@ impl App {
         let prefix = format!("{selected_path}/");
 
         // Check if this node has any descendants to close
-        let has_descendants = self.store.node_children.keys()
+        let has_descendants = self
+            .store
+            .node_children
+            .keys()
             .any(|p| p.starts_with(&prefix));
 
         if has_descendants {
             // Close all descendants
-            let group_paths: Vec<Vec<String>> = self.store.node_children.keys()
+            let group_paths: Vec<Vec<String>> = self
+                .store
+                .node_children
+                .keys()
                 .filter(|p| p.starts_with(&prefix))
                 .map(|p| Self::tree_identifier_path(p))
                 .collect();
@@ -77,7 +86,10 @@ impl App {
             // Close parent and all its descendants
             let parent_path = parent.last().cloned().unwrap_or_default();
             let parent_prefix = format!("{parent_path}/");
-            let group_paths: Vec<Vec<String>> = self.store.node_children.keys()
+            let group_paths: Vec<Vec<String>> = self
+                .store
+                .node_children
+                .keys()
                 .filter(|p| p.starts_with(&parent_prefix))
                 .map(|p| Self::tree_identifier_path(p))
                 .collect();
@@ -92,7 +104,10 @@ impl App {
 
     /// Open all nodes in the entire tree (zR).
     pub(crate) fn open_all_tree_nodes(&mut self) {
-        let group_paths: Vec<Vec<String>> = self.store.node_children.keys()
+        let group_paths: Vec<Vec<String>> = self
+            .store
+            .node_children
+            .keys()
             .map(|p| Self::tree_identifier_path(p))
             .collect();
         for id_path in group_paths {

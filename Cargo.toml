@@ -46,6 +46,7 @@ schemars = "0.8"
 nucleo = "0.5"
 
 # Utilities
+url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 humansize = "2"
 strip-ansi-escapes = "0.2"

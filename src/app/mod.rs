@@ -557,8 +557,7 @@ impl App {
         match self.focused_pane {
             Pane::Sidebar => {
                 if self.tree_candidate_cache.is_none() {
-                    self.tree_candidate_cache =
-                        Some(crate::search::tree_candidates(&self.store));
+                    self.tree_candidate_cache = Some(crate::search::tree_candidates(&self.store));
                 }
                 self.tree_candidate_cache.as_ref().unwrap()
             }

@@ -3,7 +3,10 @@ use ratatui::prelude::*;
 use crate::app::App;
 use crate::store::types::TreeNodeType;
 
-pub(super) fn render_group_detail<'a>(app: &'a App, node: &crate::store::TreeNode) -> Vec<Line<'a>> {
+pub(super) fn render_group_detail<'a>(
+    app: &'a App,
+    node: &crate::store::TreeNode,
+) -> Vec<Line<'a>> {
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled("  Group", app.theme.text_bold)),

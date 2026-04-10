@@ -11,8 +11,8 @@ use ratatui::widgets::*;
 use crate::app::App;
 use crate::component::Pane;
 use crate::store::types::TreeNodeType;
-use crate::ui::widgets::{clamped_scroll, render_tabbed_panel};
 use crate::ui::diff::render_snapshot_diff_detail;
+use crate::ui::widgets::{clamped_scroll, render_tabbed_panel};
 
 pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     use crate::component::DetailMode;
@@ -68,12 +68,21 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         {
             let branch_name = branch.name.clone();
             let is_current = branch_name == app.current_branch;
-            render_text(branch::render_branch_detail(app, &branch_name, is_current), frame);
+            render_text(
+                branch::render_branch_detail(app, &branch_name, is_current),
+                frame,
+            );
         } else {
-            render_text(vec![
-                Line::from(""),
-                Line::from(Span::styled("  Select a branch in the bottom panel.", app.theme.text_dim)),
-            ], frame);
+            render_text(
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Select a branch in the bottom panel.",
+                        app.theme.text_dim,
+                    )),
+                ],
+                frame,
+            );
         }
         return;
     }
@@ -81,15 +90,22 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
     // Snapshot mode
     if app.detail_mode == DetailMode::Snapshot {
         if let Some(sid) = app.selected_snapshot_id()
-            && (app.store.diffs.contains_key(&sid) || app.last_diff_requested.as_deref() == Some(&sid))
+            && (app.store.diffs.contains_key(&sid)
+                || app.last_diff_requested.as_deref() == Some(&sid))
         {
             let inner_width = content_area.width;
             render_text(render_snapshot_diff_detail(app, &sid, inner_width), frame);
         } else {
-            render_text(vec![
-                Line::from(""),
-                Line::from(Span::styled("  Select a snapshot in the bottom panel.", app.theme.text_dim)),
-            ], frame);
+            render_text(
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Select a snapshot in the bottom panel.",
+                        app.theme.text_dim,
+                    )),
+                ],
+                frame,
+            );
         }
         return;
     }
@@ -109,7 +125,8 @@ pub(super) fn render_detail(app: &App, frame: &mut Frame, area: Rect) {
         let snapshot_id = app
             .selected_snapshot_id()
             .or_else(|| app.get_branch_tip_snapshot_id());
-        let (mut text, zarr_meta) = array::render_array_detail_header(app, node, summary, inner_width);
+        let (mut text, zarr_meta) =
+            array::render_array_detail_header(app, node, summary, inner_width);
         text.extend(array::render_array_detail_storage(
             app,
             node.path.as_str(),

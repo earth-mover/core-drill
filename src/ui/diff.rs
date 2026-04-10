@@ -1,8 +1,8 @@
 use ratatui::prelude::*;
 
+use super::widgets::{format_vcc_prefix, labeled_lines, render_grouped_paths, section_header};
 use crate::app::App;
 use crate::store::LoadState;
-use super::widgets::{labeled_lines, section_header, format_vcc_prefix, render_grouped_paths};
 
 pub(super) fn render_snapshot_diff_detail<'a>(
     app: &'a App,
@@ -222,7 +222,10 @@ pub(super) fn render_snapshot_diff_detail<'a>(
                                     if v > 0 && s == 0 && i == 0 {
                                         if stats.virtual_prefixes.len() == 1 {
                                             // Exactly one source — show inline with resolved name
-                                            let resolved = format_vcc_prefix(&stats.virtual_prefixes[0].0, &app.repo_info);
+                                            let resolved = format_vcc_prefix(
+                                                &stats.virtual_prefixes[0].0,
+                                                &app.repo_info,
+                                            );
                                             let resolved = resolved.trim();
                                             (format!("  (virtual \u{2192} {resolved})"), vec![])
                                         } else {
@@ -231,12 +234,10 @@ pub(super) fn render_snapshot_diff_detail<'a>(
                                                 .virtual_prefixes
                                                 .iter()
                                                 .map(|(prefix, cnt)| {
-                                                    let resolved = format_vcc_prefix(prefix, &app.repo_info);
+                                                    let resolved =
+                                                        format_vcc_prefix(prefix, &app.repo_info);
                                                     Line::from(vec![
-                                                        Span::styled(
-                                                            resolved,
-                                                            app.theme.text,
-                                                        ),
+                                                        Span::styled(resolved, app.theme.text),
                                                         Span::styled(
                                                             format!("  ({cnt} chunks)"),
                                                             app.theme.text_dim,

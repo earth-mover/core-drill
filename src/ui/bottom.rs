@@ -2,12 +2,11 @@ use ratatui::Frame;
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
+use super::widgets::{render_scrollable_list, render_tabbed_panel, resolve_search_indices};
 use crate::app::App;
 use crate::component::{BottomTab, Pane};
 use crate::store::LoadState;
 use crate::theme;
-use super::widgets::{render_tabbed_panel, render_scrollable_list, resolve_search_indices};
-
 
 pub(super) fn render_bottom(app: &App, frame: &mut Frame, area: Rect) {
     let focused = app.focused_pane == Pane::Bottom;

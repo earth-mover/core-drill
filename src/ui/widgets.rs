@@ -266,7 +266,11 @@ pub(super) fn format_vcc_prefix(prefix: &str, repo_info: &crate::app::RepoIdenti
             // For __al_source in Arraylake repos, show the bucket name
             let display_name = if container == "__al_source" {
                 if let crate::app::RepoIdentity::Arraylake {
-                    org, repo, bucket, platform, ..
+                    org,
+                    repo,
+                    bucket,
+                    platform,
+                    ..
                 } = repo_info
                 {
                     format!("{org}/{repo} \u{2192} {bucket} ({platform})")
@@ -281,7 +285,11 @@ pub(super) fn format_vcc_prefix(prefix: &str, repo_info: &crate::app::RepoIdenti
             // Just a container name, no subpath
             if rest == "__al_source" {
                 if let crate::app::RepoIdentity::Arraylake {
-                    org, repo, bucket, platform, ..
+                    org,
+                    repo,
+                    bucket,
+                    platform,
+                    ..
                 } = repo_info
                 {
                     format!("      {org}/{repo} \u{2192} {bucket} ({platform})")

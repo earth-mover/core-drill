@@ -41,7 +41,7 @@ pub struct TreeNode {
 #[derive(Debug, Clone, Serialize)]
 pub enum TreeNodeType {
     Group,
-    Array(ArraySummary),
+    Array(Box<ArraySummary>),
 }
 
 /// Summary of differences between two snapshots

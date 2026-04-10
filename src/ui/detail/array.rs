@@ -4,7 +4,9 @@ use crate::app::App;
 use crate::store::LoadState;
 use crate::store::types::ArraySummary;
 use crate::ui::format::ZarrMetadata;
-use crate::ui::widgets::{compute_grid_chunks, fmt_initialized, format_vcc_prefix, labeled_lines, section_header};
+use crate::ui::widgets::{
+    compute_grid_chunks, fmt_initialized, format_vcc_prefix, labeled_lines, section_header,
+};
 
 /// Render the header + Shape & Layout section for an array node (shown above the canvas viz).
 pub(super) fn render_array_detail_header<'a>(
@@ -147,7 +149,6 @@ pub(super) fn render_array_detail_storage<'a>(
     meta: Option<&ZarrMetadata>,
     max_width: u16,
 ) -> Vec<Line<'a>> {
-
     // Pre-compute grid size (requires both shape and chunk_shape from metadata)
     let grid_chunks: Option<u64> = meta.and_then(|m| compute_grid_chunks(summary, m));
 
@@ -347,7 +348,8 @@ pub(super) fn render_array_detail_storage<'a>(
             }
 
             // Total data size across all chunk types
-            let total_data = stats.native_total_bytes + stats.inline_total_bytes + stats.virtual_total_bytes;
+            let total_data =
+                stats.native_total_bytes + stats.inline_total_bytes + stats.virtual_total_bytes;
             if total_data > 0 {
                 let avg_bytes = total_data / stats.total_chunks as u64;
                 lines.extend(labeled_lines(
@@ -503,7 +505,8 @@ pub(super) fn render_array_detail_storage<'a>(
     if !summary.zarr_metadata.is_empty() && meta.is_none() {
         lines.push(Line::from(""));
         lines.push(section_header("Raw Metadata"));
-        let json_lines = crate::ui::json_view::render_json(&summary.zarr_metadata, &app.theme, 10, 50);
+        let json_lines =
+            crate::ui::json_view::render_json(&summary.zarr_metadata, &app.theme, 10, 50);
         lines.extend(json_lines);
     }
 

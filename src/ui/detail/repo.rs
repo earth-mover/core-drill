@@ -93,7 +93,7 @@ pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
         if ss.total_arrays > 0 || ss.total_groups > 0 {
             lines.push(Line::from(""));
             lines.push(section_header("Storage Summary"));
-            lines.extend(storage_stats_lines(&ss, &app.theme, true));
+            lines.extend(storage_stats_lines(ss, &app.theme, true));
 
             // ─── Virtual Sources ─────────────
             if !ss.virtual_prefixes.is_empty() {
