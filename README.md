@@ -24,20 +24,7 @@ Drill deep into your Icechunk repos to discover their past.
 No auth needed — explore a public ERA5 weather dataset on S3:
 
 ```bash
-# Interactive TUI
 core-drill --anon s3://icechunk-public-data/v1/era5_weatherbench2
-
-# CLI overview
-core-drill --output md --anon s3://icechunk-public-data/v1/era5_weatherbench2 info
-
-# Browse the node tree
-core-drill --output md --anon s3://icechunk-public-data/v1/era5_weatherbench2 tree
-
-# Snapshot history
-core-drill --output md --anon s3://icechunk-public-data/v1/era5_weatherbench2 log
-
-# Array detail with chunk stats
-core-drill --output md --anon s3://icechunk-public-data/v1/era5_weatherbench2 tree --path /1x721x1440/2m_temperature --chunk-stats
 ```
 
 ## Install
