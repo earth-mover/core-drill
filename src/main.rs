@@ -72,7 +72,6 @@ async fn main() -> Result<()> {
             .repo
             .clone()
             .ok_or_else(|| color_eyre::eyre::eyre!("A repo argument is required for TUI mode"))?;
-        let is_arraylake = looks_like_arraylake_ref(&repo_str);
         let api_url = cli.arraylake_api.clone();
         let overrides = repo::StorageOverrides {
             region: cli.region.clone(),
@@ -80,29 +79,12 @@ async fn main() -> Result<()> {
             anonymous: cli.anonymous,
         };
 
-        let label = if is_arraylake {
-            format!(
-                "Connecting to {}...",
-                repo_str.strip_prefix("al:").unwrap_or(&repo_str)
-            )
-        } else {
-            format!("Opening {}...", repo_str)
-        };
+        let label = format!("Opening {}...", repo_str);
 
         tui::run_with_loading(
             &label,
             async move {
-                if is_arraylake {
-                    open_via_arraylake(&repo_str, api_url.as_deref()).await
-                } else {
-                    let repo = repo::open(&repo_str, &overrides).await?;
-                    let identity = if repo_str.contains("://") {
-                        app::RepoIdentity::S3 { url: repo_str }
-                    } else {
-                        app::RepoIdentity::Local { path: repo_str }
-                    };
-                    Ok((repo, identity))
-                }
+                open_repo(&repo_str, api_url.as_deref(), &overrides).await
             },
             |(repository, repo_id)| {
                 let data_store = store::DataStore::new(repository);
