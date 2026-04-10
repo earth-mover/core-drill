@@ -48,9 +48,8 @@ async fn main() -> Result<()> {
     // Handle subcommands that don't need a repo
     match cli.command {
         Some(cli::Command::Alias { command }) => return run_alias_command(command),
-        Some(cli::Command::InstallCompletions { shell }) => {
-            return install_completions(shell);
-        }
+        Some(cli::Command::InstallCompletions { shell }) => return install_completions(shell),
+        Some(cli::Command::SelfUpdate) => return self_update().await,
         _ => {}
     }
 
@@ -451,4 +450,21 @@ fn detect_shell() -> Result<clap_complete::Shell> {
             "Cannot detect shell from $SHELL='{shell_env}'. Pass the shell explicitly: core-drill install-completions bash"
         )
     }
+}
+
+async fn self_update() -> Result<()> {
+    let mut updater = axoupdater::AxoUpdater::new_for("core-drill");
+    updater.load_receipt()?;
+
+    if !updater.is_update_needed().await? {
+        println!("Already up to date ({})", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    println!("Updating core-drill...");
+    let result = updater.run().await?;
+    if let Some(outcome) = result {
+        println!("Updated to {}", outcome.new_version);
+    }
+    Ok(())
 }

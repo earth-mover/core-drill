@@ -101,6 +101,12 @@ The `--arraylake-api` flag accepts full URLs or shorthands: `dev` (dev.api.earth
 
 Aliases are stored in `~/.config/core-drill/config.toml` (Linux) or `~/Library/Application Support/core-drill/config.toml` (macOS).
 
+## Updating
+
+```bash
+core-drill self-update
+```
+
 ## Tab completion
 
 ```bash

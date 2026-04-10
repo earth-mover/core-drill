@@ -55,6 +55,7 @@ strip-ansi-escapes = "0.2"
 toml = "1.1.2"
 dirs = "6.0.0"
 clap_complete = { version = "4.6.1", features = ["unstable-dynamic"] }
+axoupdater = { version = "0.10.0", features = ["github_releases"] }
 
 [profile.release]
 lto = "thin"
@@ -63,3 +64,6 @@ lto = "thin"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[workspace.metadata.dist]
+install-updater = true

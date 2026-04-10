@@ -128,6 +128,9 @@ pub enum Command {
         limit: Option<usize>,
     },
 
+    /// Update core-drill to the latest release
+    SelfUpdate,
+
     /// Set up tab completion (subcommands, flags, and alias names)
     ///
     /// Auto-detects your shell and appends the setup line to your
