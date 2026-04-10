@@ -82,6 +82,7 @@ struct OpenParams {
     anonymous: bool,
 }
 
+#[allow(dead_code)] // fields read via serde deserialization
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct LogParams {
     /// Branch name, tag name, or snapshot ID (default: "main")
@@ -89,6 +90,10 @@ struct LogParams {
     r#ref: String,
     /// Maximum number of snapshots to return
     limit: Option<usize>,
+    /// Skip this many snapshots before returning results (for pagination). Applied after search filter.
+    offset: Option<usize>,
+    /// Filter to snapshots whose message contains this string (case-insensitive substring match)
+    search: Option<String>,
 }
 
 #[allow(dead_code)] // fields read via serde deserialization
@@ -377,39 +382,91 @@ impl CoreDrillServer {
         cap_output(result)
     }
 
-    #[tool(description = "Show snapshot history (commit log) for a branch, tag, or snapshot ID.")]
+    #[tool(
+        description = "Show snapshot history (commit log) for a branch, tag, or snapshot ID. Use `offset` and `limit` to paginate (e.g. offset=100, limit=20 for commits 101-120). Use `search` to filter by commit message (case-insensitive substring match)."
+    )]
     async fn log(&self, Parameters(params): Parameters<LogParams>) -> String {
         let start = std::time::Instant::now();
         let repo = require_repo!(self);
         let result = match self.cached_ancestry(&repo, &params.r#ref).await {
             Ok(entries) => {
                 let total = entries.len();
-                let limit = params.limit.unwrap_or(20);
-                let display: Vec<_> = entries.into_iter().take(limit).collect();
-                let mut out = format!(
-                    "# Snapshot Log ({}, {} total commits)\n\n",
-                    params.r#ref, total
-                );
-                out.push_str(
-                    "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
-                );
-                for (i, e) in display.iter().enumerate() {
-                    let ts = e.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
-                    out.push_str(&format!(
-                        "\n| {} | `{}` | {} | {} |",
-                        i + 1,
-                        output::truncate(&e.id, 12),
-                        ts,
-                        e.message
-                    ));
+
+                // Filter by search term if provided
+                let filtered: Vec<_> = if let Some(ref q) = params.search {
+                    let q_lower = q.to_lowercase();
+                    entries
+                        .into_iter()
+                        .filter(|e| e.message.to_lowercase().contains(&q_lower))
+                        .collect()
+                } else {
+                    entries
+                };
+                let matched = filtered.len();
+
+                if matched == 0 && params.search.is_some() {
+                    format!(
+                        "No snapshots matching \"{}\" in {} ({} total commits)",
+                        params.search.as_deref().unwrap(),
+                        params.r#ref,
+                        total
+                    )
+                } else {
+                    // Paginate
+                    let offset = params.offset.unwrap_or(0);
+                    let limit = params.limit.unwrap_or(20);
+                    let display: Vec<_> =
+                        filtered.into_iter().skip(offset).take(limit).collect();
+                    let showing_end = offset + display.len();
+
+                    // Header
+                    let mut out = if params.search.is_some() {
+                        format!(
+                            "# Snapshot Log ({}, {} matches of {} total, showing {}-{})\n\n",
+                            params.r#ref,
+                            matched,
+                            total,
+                            offset + 1,
+                            showing_end
+                        )
+                    } else {
+                        format!(
+                            "# Snapshot Log ({}, {} total, showing {}-{})\n\n",
+                            params.r#ref,
+                            total,
+                            offset + 1,
+                            showing_end
+                        )
+                    };
+
+                    out.push_str(
+                        "| # | Snapshot | Time | Message |\n|---|----------|------|---------|",
+                    );
+                    for (i, e) in display.iter().enumerate() {
+                        let ts = e.timestamp.format("%Y-%m-%d %H:%M UTC").to_string();
+                        out.push_str(&format!(
+                            "\n| {} | `{}` | {} | {} |",
+                            offset + i + 1,
+                            output::truncate(&e.id, 12),
+                            ts,
+                            e.message
+                        ));
+                    }
+
+                    if display.is_empty() && matched > 0 {
+                        out.push_str(&format!(
+                            "\n\n*Offset {} exceeds {} results — use a smaller offset*",
+                            offset, matched
+                        ));
+                    } else if showing_end < matched {
+                        out.push_str(&format!(
+                            "\n\n*{} more — use `offset={}` to continue*",
+                            matched - showing_end,
+                            showing_end
+                        ));
+                    }
+                    out
                 }
-                if limit < total {
-                    out.push_str(&format!(
-                        "\n\n*Showing {} of {} commits — pass `limit` to see more*",
-                        limit, total
-                    ));
-                }
-                out
             }
             Err(e) => format!("Error: {e}"),
         };
@@ -1109,7 +1166,8 @@ impl ServerHandler for CoreDrillServer {
              subsequent calls are fast (no re-auth or re-fetch). \
              Start with `open`, then `info` for a full overview (branches, snapshots, tree). \
              Use `tree` with a `path` param to drill into a specific array. \
-             Use `log`/`diff` for history, `search` for fuzzy find, `ops_log`/`config` for repo metadata.",
+             Use `log`/`diff` for history, `search` for fuzzy find, `ops_log`/`config` for repo metadata. \
+             `log` supports `offset`/`limit` for pagination and `search` for filtering by commit message.",
         )
     }
 }
