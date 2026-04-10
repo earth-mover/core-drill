@@ -188,12 +188,14 @@ async fn open_via_arraylake(
     })?;
 
     // Resolve API endpoint: CLI flag > env var > crate default (None)
+    // Accept shorthands: "dev" / "prod" expand to known Earthmover endpoints
     let env_api = std::env::var("ARRAYLAKE_SERVICE__URI").ok();
     let api_url_owned: Option<String> = api_url.or(env_api.as_deref()).map(|url| {
-        if !url.contains("://") {
-            format!("https://{url}")
-        } else {
-            url.to_string()
+        match url {
+            "dev" => "https://dev.api.earthmover.io".to_string(),
+            "prod" => "https://api.earthmover.io".to_string(),
+            u if !u.contains("://") => format!("https://{u}"),
+            u => u.to_string(),
         }
     });
     let api_url = api_url_owned.as_deref();

@@ -75,6 +75,32 @@ core-drill s3://bucket/prefix --output json
 core-drill --serve
 ```
 
+## Aliases
+
+Save frequently-used repos as short names:
+
+```bash
+# Add aliases
+core-drill alias add era5 s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous
+core-drill alias add myrepo al:myorg/myrepo
+core-drill alias add dev-repo al:myorg/myrepo --arraylake-api dev
+
+# Use them anywhere
+core-drill era5
+core-drill myrepo --output json info
+core-drill dev-repo
+
+# List / remove
+core-drill alias list
+core-drill alias rm era5
+```
+
+Storage flags (`--region`, `--anonymous`, `--endpoint-url`, `--arraylake-api`) are saved with the alias. CLI flags override alias values when both are present.
+
+The `--arraylake-api` flag accepts full URLs or shorthands: `dev` (dev.api.earthmover.io) and `prod` (api.earthmover.io).
+
+Aliases are stored in `~/.config/core-drill/config.toml` (Linux) or `~/Library/Application Support/core-drill/config.toml` (macOS).
+
 ## MCP setup
 
 Add core-drill as an MCP server so Claude Code (or any MCP client) can inspect Icechunk repos:
