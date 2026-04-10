@@ -171,6 +171,10 @@ pub enum AliasCommand {
         /// Use anonymous (unsigned) requests
         #[arg(long, alias = "anon")]
         anonymous: bool,
+
+        /// Arraylake API endpoint (for dev/staging environments)
+        #[arg(long)]
+        arraylake_api: Option<String>,
     },
 
     /// Remove a saved alias

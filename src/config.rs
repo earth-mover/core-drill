@@ -26,6 +26,9 @@ pub struct Alias {
     /// Use anonymous (unsigned) requests
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub anonymous: bool,
+    /// Arraylake API endpoint (for non-production environments)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arraylake_api: Option<String>,
 }
 
 /// Path to the config file: `~/.config/core-drill/config.toml`

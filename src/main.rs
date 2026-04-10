@@ -134,7 +134,7 @@ pub async fn open_repo(
     overrides: &repo::StorageOverrides,
 ) -> Result<(icechunk::Repository, app::RepoIdentity)> {
     // Try alias resolution — if the string matches an alias, expand it
-    let (resolved, resolved_overrides);
+    let (resolved, resolved_overrides, resolved_api);
     if let Some(alias) = config::resolve_alias(repo_str)? {
         resolved = alias.repo;
         // CLI flags override alias values
@@ -143,6 +143,9 @@ pub async fn open_repo(
             endpoint_url: overrides.endpoint_url.clone().or(alias.endpoint_url),
             anonymous: overrides.anonymous || alias.anonymous,
         };
+        resolved_api = arraylake_api
+            .map(|s| s.to_string())
+            .or(alias.arraylake_api);
     } else {
         resolved = repo_str.to_string();
         resolved_overrides = repo::StorageOverrides {
@@ -150,10 +153,11 @@ pub async fn open_repo(
             endpoint_url: overrides.endpoint_url.clone(),
             anonymous: overrides.anonymous,
         };
+        resolved_api = arraylake_api.map(|s| s.to_string());
     }
 
     if looks_like_arraylake_ref(&resolved) {
-        open_via_arraylake(&resolved, arraylake_api).await
+        open_via_arraylake(&resolved, resolved_api.as_deref()).await
     } else {
         let repo = repo::open(&resolved, &resolved_overrides).await?;
         let identity = if resolved.contains("://") {
@@ -318,6 +322,9 @@ fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
                     if let Some(ref e) = alias.endpoint_url {
                         flags.push(format!("endpoint={e}"));
                     }
+                    if let Some(ref api) = alias.arraylake_api {
+                        flags.push(format!("api={api}"));
+                    }
                     if flags.is_empty() {
                         println!("  {name:16} → {}", alias.repo);
                     } else {
@@ -332,6 +339,7 @@ fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
             region,
             endpoint_url,
             anonymous,
+            arraylake_api,
         } => {
             let mut cfg = config::load()?;
             let is_update = cfg.aliases.contains_key(&name);
@@ -342,6 +350,7 @@ fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
                     region,
                     endpoint_url,
                     anonymous,
+                    arraylake_api,
                 },
             );
             config::save(&cfg)?;
