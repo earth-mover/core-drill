@@ -126,4 +126,57 @@ pub enum Command {
         #[arg(short = 'n', long)]
         limit: Option<usize>,
     },
+
+    /// Manage saved repo aliases
+    ///
+    /// Aliases let you refer to frequently-used repositories by short names.
+    /// Stored in ~/.config/core-drill/config.toml.
+    ///
+    /// Examples:
+    ///   core-drill alias add era5 s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous
+    ///   core-drill alias list
+    ///   core-drill era5              # opens the aliased repo
+    Alias {
+        #[command(subcommand)]
+        command: AliasCommand,
+    },
+}
+
+/// Subcommands for managing repo aliases
+#[derive(Subcommand, Debug)]
+pub enum AliasCommand {
+    /// List all saved aliases
+    #[command(alias = "ls")]
+    List,
+
+    /// Save a new alias (or update an existing one)
+    ///
+    /// Storage flags (--region, --anonymous, --endpoint-url) are saved
+    /// with the alias and applied automatically when it's used.
+    Add {
+        /// Short name for the alias
+        name: String,
+
+        /// Full repo reference (path, URL, or al:org/repo)
+        repo: String,
+
+        /// Cloud storage region
+        #[arg(long)]
+        region: Option<String>,
+
+        /// Storage endpoint URL (for S3-compatible services)
+        #[arg(long)]
+        endpoint_url: Option<String>,
+
+        /// Use anonymous (unsigned) requests
+        #[arg(long, alias = "anon")]
+        anonymous: bool,
+    },
+
+    /// Remove a saved alias
+    #[command(alias = "rm")]
+    Remove {
+        /// Name of the alias to remove
+        name: String,
+    },
 }

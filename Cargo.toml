@@ -52,6 +52,8 @@ url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 humansize = "2"
 strip-ansi-escapes = "0.2"
+toml = "1.1.2"
+dirs = "6.0.0"
 
 [profile.release]
 lto = "thin"
