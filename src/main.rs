@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod component;
+pub mod config;
 mod fetch;
 mod mcp;
 mod multiplexer;
@@ -16,7 +17,7 @@ pub mod util;
 
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::Cli;
 use color_eyre::Result;
 
@@ -26,6 +27,10 @@ async fn main() -> Result<()> {
     color_eyre::config::HookBuilder::default()
         .display_env_section(false)
         .install()?;
+
+    // Dynamic shell completions: when COMPLETE=<shell> is set, respond
+    // with completions (including alias names) and exit immediately.
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
     let cli = Cli::parse();
 
@@ -39,6 +44,15 @@ async fn main() -> Result<()> {
         .with_env_filter(env_filter)
         .with_writer(std::io::stderr)
         .init();
+
+    // Handle subcommands that don't need a repo
+    match cli.command {
+        Some(cli::Command::Alias { command }) => return run_alias_command(command),
+        Some(cli::Command::InstallCompletions { shell }) => {
+            return install_completions(shell);
+        }
+        _ => {}
+    }
 
     // For TUI mode (no --output, --serve, --repl), show loading screen while opening
     let is_tui = !cli.serve && !cli.repl && cli.output.is_none();
@@ -66,7 +80,6 @@ async fn main() -> Result<()> {
             .repo
             .clone()
             .ok_or_else(|| color_eyre::eyre::eyre!("A repo argument is required for TUI mode"))?;
-        let is_arraylake = looks_like_arraylake_ref(&repo_str);
         let api_url = cli.arraylake_api.clone();
         let overrides = repo::StorageOverrides {
             region: cli.region.clone(),
@@ -74,29 +87,12 @@ async fn main() -> Result<()> {
             anonymous: cli.anonymous,
         };
 
-        let label = if is_arraylake {
-            format!(
-                "Connecting to {}...",
-                repo_str.strip_prefix("al:").unwrap_or(&repo_str)
-            )
-        } else {
-            format!("Opening {}...", repo_str)
-        };
+        let label = format!("Opening {}...", repo_str);
 
         tui::run_with_loading(
             &label,
             async move {
-                if is_arraylake {
-                    open_via_arraylake(&repo_str, api_url.as_deref()).await
-                } else {
-                    let repo = repo::open(&repo_str, &overrides).await?;
-                    let identity = if repo_str.contains("://") {
-                        app::RepoIdentity::S3 { url: repo_str }
-                    } else {
-                        app::RepoIdentity::Local { path: repo_str }
-                    };
-                    Ok((repo, identity))
-                }
+                open_repo(&repo_str, api_url.as_deref(), &overrides).await
             },
             |(repository, repo_id)| {
                 let data_store = store::DataStore::new(repository);
@@ -135,25 +131,47 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Open a repository from a string reference (local path, URL, or arraylake ref).
+/// Open a repository from a string reference (local path, URL, alias, or arraylake ref).
 /// Shared by main dispatch and MCP server's `open` tool.
+///
+/// If `repo_str` matches a saved alias, expands it and merges stored overrides
+/// (CLI flags take precedence over alias values).
 pub async fn open_repo(
     repo_str: &str,
     arraylake_api: Option<&str>,
     overrides: &repo::StorageOverrides,
 ) -> Result<(icechunk::Repository, app::RepoIdentity)> {
-    if looks_like_arraylake_ref(repo_str) {
-        open_via_arraylake(repo_str, arraylake_api).await
+    // Try alias resolution — if the string matches an alias, expand it
+    let (resolved, resolved_overrides, resolved_api);
+    if let Some(alias) = config::resolve_alias(repo_str)? {
+        resolved = alias.repo;
+        // CLI flags override alias values
+        resolved_overrides = repo::StorageOverrides {
+            region: overrides.region.clone().or(alias.region),
+            endpoint_url: overrides.endpoint_url.clone().or(alias.endpoint_url),
+            anonymous: overrides.anonymous || alias.anonymous,
+        };
+        resolved_api = arraylake_api
+            .map(|s| s.to_string())
+            .or(alias.arraylake_api);
     } else {
-        let repo = repo::open(repo_str, overrides).await?;
-        let identity = if repo_str.contains("://") {
-            app::RepoIdentity::S3 {
-                url: repo_str.to_string(),
-            }
+        resolved = repo_str.to_string();
+        resolved_overrides = repo::StorageOverrides {
+            region: overrides.region.clone(),
+            endpoint_url: overrides.endpoint_url.clone(),
+            anonymous: overrides.anonymous,
+        };
+        resolved_api = arraylake_api.map(|s| s.to_string());
+    }
+
+    if looks_like_arraylake_ref(&resolved) {
+        open_via_arraylake(&resolved, resolved_api.as_deref()).await
+    } else {
+        let repo = repo::open(&resolved, &resolved_overrides).await?;
+        let identity = if resolved.contains("://") {
+            app::RepoIdentity::S3 { url: resolved }
         } else {
-            app::RepoIdentity::Local {
-                path: repo_str.to_string(),
-            }
+            app::RepoIdentity::Local { path: resolved }
         };
         Ok((repo, identity))
     }
@@ -178,12 +196,14 @@ async fn open_via_arraylake(
     })?;
 
     // Resolve API endpoint: CLI flag > env var > crate default (None)
+    // Accept shorthands: "dev" / "prod" expand to known Earthmover endpoints
     let env_api = std::env::var("ARRAYLAKE_SERVICE__URI").ok();
     let api_url_owned: Option<String> = api_url.or(env_api.as_deref()).map(|url| {
-        if !url.contains("://") {
-            format!("https://{url}")
-        } else {
-            url.to_string()
+        match url {
+            "dev" => "https://dev.api.earthmover.io".to_string(),
+            "prod" => "https://api.earthmover.io".to_string(),
+            u if !u.contains("://") => format!("https://{u}"),
+            u => u.to_string(),
         }
     });
     let api_url = api_url_owned.as_deref();
@@ -288,4 +308,147 @@ async fn open_via_arraylake(
         region,
     };
     Ok((repository, identity))
+}
+
+/// Handle `core-drill alias <subcommand>` — pure config file operations, no repo needed.
+fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
+    match command {
+        cli::AliasCommand::List => {
+            let cfg = config::load()?;
+            if cfg.aliases.is_empty() {
+                println!("No aliases configured.");
+                println!(
+                    "\nAdd one with: core-drill alias add <name> <repo> [--anonymous] [--region <r>]"
+                );
+            } else {
+                for (name, alias) in &cfg.aliases {
+                    let mut flags = Vec::new();
+                    if alias.anonymous {
+                        flags.push("anonymous".to_string());
+                    }
+                    if let Some(ref r) = alias.region {
+                        flags.push(format!("region={r}"));
+                    }
+                    if let Some(ref e) = alias.endpoint_url {
+                        flags.push(format!("endpoint={e}"));
+                    }
+                    if let Some(ref api) = alias.arraylake_api {
+                        flags.push(format!("api={api}"));
+                    }
+                    if flags.is_empty() {
+                        println!("  {name:16} → {}", alias.repo);
+                    } else {
+                        println!("  {name:16} → {}  ({})", alias.repo, flags.join(", "));
+                    }
+                }
+            }
+        }
+        cli::AliasCommand::Add {
+            name,
+            repo,
+            region,
+            endpoint_url,
+            anonymous,
+            arraylake_api,
+        } => {
+            let mut cfg = config::load()?;
+            let is_update = cfg.aliases.contains_key(&name);
+            cfg.aliases.insert(
+                name.clone(),
+                config::Alias {
+                    repo: repo.clone(),
+                    region,
+                    endpoint_url,
+                    anonymous,
+                    arraylake_api,
+                },
+            );
+            config::save(&cfg)?;
+            if is_update {
+                println!("Updated alias '{name}' → {repo}");
+            } else {
+                println!("Added alias '{name}' → {repo}");
+            }
+        }
+        cli::AliasCommand::Remove { name } => {
+            let mut cfg = config::load()?;
+            if cfg.aliases.remove(&name).is_some() {
+                config::save(&cfg)?;
+                println!("Removed alias '{name}'");
+            } else {
+                color_eyre::eyre::bail!("No alias named '{name}'. Run `core-drill alias list` to see available aliases.");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Detect current shell from $SHELL, install completion eval line into rc file.
+fn install_completions(shell_override: Option<clap_complete::Shell>) -> Result<()> {
+    use clap_complete::Shell;
+
+    let shell = if let Some(s) = shell_override {
+        s
+    } else {
+        detect_shell()?
+    };
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| color_eyre::eyre::eyre!("Cannot determine home directory"))?;
+
+    let (rc_path, eval_line) = match shell {
+        Shell::Zsh => (
+            home.join(".zshrc"),
+            "source <(COMPLETE=zsh core-drill)",
+        ),
+        Shell::Bash => (
+            home.join(".bashrc"),
+            "source <(COMPLETE=bash core-drill)",
+        ),
+        Shell::Fish => (
+            home.join(".config/fish/config.fish"),
+            "COMPLETE=fish core-drill | source",
+        ),
+        _ => color_eyre::eyre::bail!(
+            "Auto-install not supported for {shell:?}. Run `core-drill completions {shell:?}` and add the output to your shell config manually.",
+        ),
+    };
+
+    // Check if already installed
+    if rc_path.exists() {
+        let contents = std::fs::read_to_string(&rc_path)?;
+        if contents.contains("COMPLETE=") && contents.contains("core-drill") {
+            println!("Already installed in {}", rc_path.display());
+            return Ok(());
+        }
+    }
+
+    // Append
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&rc_path)?;
+    writeln!(file, "\n# core-drill tab completion")?;
+    writeln!(file, "{eval_line}")?;
+
+    println!("Added to {}", rc_path.display());
+    println!("Restart your shell or run: source {}", rc_path.display());
+    Ok(())
+}
+
+fn detect_shell() -> Result<clap_complete::Shell> {
+    use clap_complete::Shell;
+    let shell_env = std::env::var("SHELL").unwrap_or_default();
+    if shell_env.contains("zsh") {
+        Ok(Shell::Zsh)
+    } else if shell_env.contains("bash") {
+        Ok(Shell::Bash)
+    } else if shell_env.contains("fish") {
+        Ok(Shell::Fish)
+    } else {
+        color_eyre::eyre::bail!(
+            "Cannot detect shell from $SHELL='{shell_env}'. Pass the shell explicitly: core-drill install-completions bash"
+        )
+    }
 }

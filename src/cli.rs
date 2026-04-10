@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 
 /// core-drill: A terminal UI for inspecting Icechunk V2 repositories
 ///
@@ -20,7 +21,7 @@ pub struct Cli {
     ///   az://container/prefix        Azure Blob Storage
     ///   https://host/path            HTTP (read-only)
     ///   al:myorg/myrepo              Arraylake (credentials from ~/.arraylake/token.json)
-    #[arg(value_name = "REPO")]
+    #[arg(value_name = "REPO", add = ArgValueCompleter::new(complete_repo))]
     pub repo: Option<String>,
 
     /// Cloud storage region (e.g., us-east-1)
@@ -126,4 +127,85 @@ pub enum Command {
         #[arg(short = 'n', long)]
         limit: Option<usize>,
     },
+
+    /// Set up tab completion (subcommands, flags, and alias names)
+    ///
+    /// Auto-detects your shell and appends the setup line to your
+    /// shell config (~/.zshrc, ~/.bashrc, ~/.config/fish/config.fish).
+    InstallCompletions {
+        /// Shell to generate completions for (auto-detected from $SHELL if omitted)
+        shell: Option<clap_complete::Shell>,
+    },
+
+    /// Manage saved repo aliases
+    ///
+    /// Aliases let you refer to frequently-used repositories by short names.
+    /// Stored in ~/.config/core-drill/config.toml.
+    ///
+    /// Examples:
+    ///   core-drill alias add era5 s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous
+    ///   core-drill alias list
+    ///   core-drill era5              # opens the aliased repo
+    Alias {
+        #[command(subcommand)]
+        command: AliasCommand,
+    },
+}
+
+/// Subcommands for managing repo aliases
+#[derive(Subcommand, Debug)]
+pub enum AliasCommand {
+    /// List all saved aliases
+    #[command(alias = "ls")]
+    List,
+
+    /// Save a new alias (or update an existing one)
+    ///
+    /// Storage flags (--region, --anonymous, --endpoint-url) are saved
+    /// with the alias and applied automatically when it's used.
+    Add {
+        /// Short name for the alias
+        name: String,
+
+        /// Full repo reference (path, URL, or al:org/repo)
+        repo: String,
+
+        /// Cloud storage region
+        #[arg(long)]
+        region: Option<String>,
+
+        /// Storage endpoint URL (for S3-compatible services)
+        #[arg(long)]
+        endpoint_url: Option<String>,
+
+        /// Use anonymous (unsigned) requests
+        #[arg(long, alias = "anon")]
+        anonymous: bool,
+
+        /// Arraylake API endpoint (for dev/staging environments)
+        #[arg(long)]
+        arraylake_api: Option<String>,
+    },
+
+    /// Remove a saved alias
+    #[command(alias = "rm")]
+    Remove {
+        /// Name of the alias to remove
+        name: String,
+    },
+}
+
+/// Dynamic completer for the REPO positional arg — suggests saved alias names.
+fn complete_repo(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let prefix = current.to_string_lossy();
+    let Ok(cfg) = crate::config::load() else {
+        return vec![];
+    };
+    cfg.aliases
+        .into_iter()
+        .filter(|(name, _)| name.starts_with(prefix.as_ref()))
+        .map(|(name, alias)| {
+            CompletionCandidate::new(name).help(Some(alias.repo.into()))
+        })
+        .collect()
 }

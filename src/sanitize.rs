@@ -2,13 +2,20 @@
 use strip_ansi_escapes::strip;
 
 pub fn sanitize(s: &str) -> String {
-    // Strip ANSI/escape sequences using the crate
-    let stripped = strip(s);
-    // Then remove any remaining non-printable control chars (except \n \t)
-    String::from_utf8_lossy(&stripped)
+    // strip_ansi_escapes::strip uses a VTE parser that consumes \t and \n
+    // as control actions. Protect them with placeholders, strip ANSI, then restore.
+    // Use Private Use Area codepoints as sentinels — won't appear in real data.
+    const TAB_SENTINEL: &str = "\u{E000}";
+    const NL_SENTINEL: &str = "\u{E001}";
+    let protected = s.replace('\t', TAB_SENTINEL).replace('\n', NL_SENTINEL);
+    let stripped = strip(&protected);
+    let cleaned: String = String::from_utf8_lossy(&stripped)
         .chars()
-        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-        .collect()
+        .filter(|c| !c.is_control())
+        .collect();
+    cleaned
+        .replace(TAB_SENTINEL, "\t")
+        .replace(NL_SENTINEL, "\n")
 }
 
 pub fn sanitize_truncate(s: &str, max_len: usize) -> String {
