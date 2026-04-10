@@ -21,12 +21,30 @@ Drill deep into your Icechunk repos to discover their past.
 
 ## Install
 
+### Shell (Linux / macOS)
+
 ```bash
-cargo install --git ssh://git@github.com/earth-mover/core-drill  --config net.git-fetch-with-cli=true
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/earth-mover/core-drill/releases/latest/download/core-drill-installer.sh | sh
+```
 
-# or
+### Homebrew
 
-cargo install --git https://github.com/earth-mover/core-drill  --config net.git-fetch-with-cli=true
+```bash
+brew install earth-mover/core-drill/core-drill
+```
+
+### Nix
+
+```bash
+nix run github:earth-mover/core-drill -- --help
+# or install permanently
+nix profile install github:earth-mover/core-drill
+```
+
+### From source
+
+```bash
+cargo install --git https://github.com/earth-mover/core-drill
 ```
 
 ## Usage

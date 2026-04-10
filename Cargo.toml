@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 description = "Terminal UI for inspecting Icechunk V2 repositories"
 license = "MIT"
+repository = "https://github.com/earth-mover/core-drill"
+homepage = "https://github.com/earth-mover/core-drill"
 
 [[bin]]
 name = "core-drill"
@@ -52,4 +54,9 @@ humansize = "2"
 strip-ansi-escapes = "0.2"
 
 [profile.release]
-lto = true
+lto = "thin"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
