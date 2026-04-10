@@ -78,6 +78,10 @@ pub struct App {
     pub search: Option<SearchState>,
     /// Vim-style pending `z` prefix for fold commands (zo, zc, zO, zC, zR, zM)
     pub pending_z: bool,
+    /// Vim-style pending `g` prefix (gg = go to top)
+    pub pending_g: bool,
+    /// Last search query for n/N repeat (target + query string)
+    pub last_search: Option<(crate::search::SearchTarget, String)>,
 
     // ─── Internal bookkeeping ────────────────────────────────
     pub(crate) tree_auto_expanded: bool,
@@ -125,6 +129,8 @@ impl App {
             tab_offset: [0; 3],
             search: None,
             pending_z: false,
+            pending_g: false,
+            last_search: None,
             tree_auto_expanded: false,
             last_diff_requested: None,
             tree_candidate_cache: None,

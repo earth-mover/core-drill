@@ -64,6 +64,12 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(" Navigation", t.text_bold)),
         kv(t, "j/k ↑↓", "Move selection"),
+        kv(t, "gg / G", "Jump to top / bottom"),
+        kv(t, "H / M / L", "Screen top / middle / bottom"),
+        kv(t, "Ctrl+d/u", "Half-page down / up"),
+        kv(t, "Ctrl+f/b", "Full page down / up"),
+        kv(t, "{ / }", "Jump 10 items up / down"),
+        kv(t, "n / N", "Next / prev search match"),
         kv(t, "Enter", "Toggle expand/collapse"),
         kv(t, "l / →", "Focus detail pane"),
         Line::from(""),
@@ -110,7 +116,10 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(" Scrolling", t.text_bold)),
         kv(t, "j/k ↑↓", "Scroll content line by line"),
-        kv(t, "d / u", "Scroll half-page down / up"),
+        kv(t, "d / u", "Scroll 3 lines down / up"),
+        kv(t, "Ctrl+d/u", "Half-page down / up"),
+        kv(t, "Ctrl+f/b", "Full page down / up"),
+        kv(t, "gg / G", "Scroll to top / bottom"),
     ];
     let detail_block = theme::panel("[2] Detail", false, t);
     frame.render_widget(
@@ -166,6 +175,12 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         )),
         kv(t, "h/l ←→", "Switch between tabs"),
         kv(t, "j/k ↑↓", "Move selection"),
+        kv(t, "gg / G", "Jump to top / bottom"),
+        kv(t, "H / M / L", "Screen top / middle / bottom"),
+        kv(t, "Ctrl+d/u", "Half-page down / up"),
+        kv(t, "Ctrl+f/b", "Full page down / up"),
+        kv(t, "{ / }", "Jump 10 items up / down"),
+        kv(t, "n / N", "Next / prev search match"),
         kv(t, "Enter", "Activate (switch branch, load diff)"),
         kv(t, "/", "Search/filter — all panes update as you type"),
     ];

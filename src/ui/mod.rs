@@ -306,6 +306,17 @@ fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
+    // Show pending g-command indicator (gg = go to top)
+    if app.pending_g {
+        let line = Line::from(vec![
+            Span::styled(" g", app.theme.text_bold),
+            Span::styled("▏", app.theme.text),
+            Span::styled("  g:go to top", app.theme.text_dim),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+        return;
+    }
+
     // Show pending z-command indicator
     if app.pending_z {
         let line = Line::from(vec![
