@@ -386,7 +386,6 @@ fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
 /// Detect current shell from $SHELL, install completion eval line into rc file.
 fn install_completions(shell_override: Option<clap_complete::Shell>) -> Result<()> {
     use clap_complete::Shell;
-    use std::path::PathBuf;
 
     let shell = if let Some(s) = shell_override {
         s
@@ -394,20 +393,20 @@ fn install_completions(shell_override: Option<clap_complete::Shell>) -> Result<(
         detect_shell()?
     };
 
-    let home = std::env::var("HOME")
-        .map_err(|_| color_eyre::eyre::eyre!("Cannot determine home directory"))?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| color_eyre::eyre::eyre!("Cannot determine home directory"))?;
 
     let (rc_path, eval_line) = match shell {
         Shell::Zsh => (
-            PathBuf::from(&home).join(".zshrc"),
+            home.join(".zshrc"),
             "source <(COMPLETE=zsh core-drill)",
         ),
         Shell::Bash => (
-            PathBuf::from(&home).join(".bashrc"),
+            home.join(".bashrc"),
             "source <(COMPLETE=bash core-drill)",
         ),
         Shell::Fish => (
-            PathBuf::from(&home).join(".config/fish/config.fish"),
+            home.join(".config/fish/config.fish"),
             "COMPLETE=fish core-drill | source",
         ),
         _ => color_eyre::eyre::bail!(

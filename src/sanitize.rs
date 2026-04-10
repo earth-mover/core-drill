@@ -5,9 +5,9 @@ pub fn sanitize(s: &str) -> String {
     // strip_ansi_escapes::strip uses a VTE parser that consumes \t and \n
     // as control actions. Protect them with placeholders, strip ANSI, then restore.
     // Use Private Use Area codepoints as sentinels — won't appear in real data.
-    const TAB_SENTINEL: char = '\u{E000}';
-    const NL_SENTINEL: char = '\u{E001}';
-    let protected = s.replace('\t', &TAB_SENTINEL.to_string()).replace('\n', &NL_SENTINEL.to_string());
+    const TAB_SENTINEL: &str = "\u{E000}";
+    const NL_SENTINEL: &str = "\u{E001}";
+    let protected = s.replace('\t', TAB_SENTINEL).replace('\n', NL_SENTINEL);
     let stripped = strip(&protected);
     let cleaned: String = String::from_utf8_lossy(&stripped)
         .chars()

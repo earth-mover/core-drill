@@ -41,14 +41,15 @@ pub fn config_path() -> Result<PathBuf> {
 /// Load config from disk. Returns default config if the file doesn't exist.
 pub fn load() -> Result<Config> {
     let path = config_path()?;
-    if !path.exists() {
-        return Ok(Config::default());
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => {
+            let config: Config = toml::from_str(&contents)
+                .map_err(|e| color_eyre::eyre::eyre!("Failed to parse {}: {e}", path.display()))?;
+            Ok(config)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
+        Err(e) => color_eyre::eyre::bail!("Failed to read {}: {e}", path.display()),
     }
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to read {}: {e}", path.display()))?;
-    let config: Config = toml::from_str(&contents)
-        .map_err(|e| color_eyre::eyre::eyre!("Failed to parse {}: {e}", path.display()))?;
-    Ok(config)
 }
 
 /// Save config to disk, creating parent directories as needed.
