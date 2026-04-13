@@ -352,6 +352,183 @@ pub(crate) fn fmt_repo_config(cfg: &RepoConfig) -> String {
     out
 }
 
+// ─── MCP-specific formatters ──────────────────────────────────
+
+/// Format search results for non-fuzzy modes.
+pub(crate) fn fmt_search_results(
+    query: &str,
+    mode: &str,
+    matched: &[&FlatNode],
+    limit: usize,
+    all_nodes: &[FlatNode],
+) -> String {
+    let total = matched.len();
+    if total == 0 {
+        return format!("No matches for \"{}\" ({} mode)", query, mode);
+    }
+    let mut out = format!("# Search: \"{}\" ({} matches, {})\n\n", query, total, mode);
+    for node in matched.iter().take(limit) {
+        out.push_str(&fmt_tree_line(node, all_nodes));
+    }
+    if total > limit {
+        out.push_str(&format!(
+            "\n*({} more — increase `limit` to see more)*\n",
+            total - limit
+        ));
+    }
+    out
+}
+
+/// Render a tree listing that collapses runs of similarly-named siblings.
+///
+/// Instead of listing 1000 `burst-*` arrays individually, groups them:
+///   - **burst-133012-*** (1000 arrays) `float32` `[721 × 1440]`
+///
+/// `max_lines` caps the total output lines (each collapsed group = 1 line).
+pub(crate) fn fmt_collapsed_tree(
+    nodes: &[&FlatNode],
+    all_nodes: &[FlatNode],
+    max_lines: usize,
+) -> String {
+    if nodes.is_empty() {
+        return String::new();
+    }
+
+    // Group nodes by (parent_path, type, name_prefix).
+    // name_prefix = everything up to the last `-` or `_` separator, or the full name if no separator.
+    struct CollapsedGroup<'a> {
+        prefix: String, // shared prefix (e.g. "burst-133012-")
+        nodes: Vec<&'a FlatNode>,
+        depth: usize,
+    }
+
+    let mut groups: Vec<CollapsedGroup> = Vec::new();
+
+    // Sort by path so similarly-named siblings are consecutive for collapsing
+    let mut sorted: Vec<&&FlatNode> = nodes.iter().collect();
+    sorted.sort_by(|a, b| a.path.cmp(&b.path));
+
+    for node in sorted.into_iter().copied() {
+        let parent = crate::util::parent_path(&node.path);
+        let depth = node.path.matches('/').count().saturating_sub(1);
+
+        // Find a prefix: strip trailing digits/chars after last `-` or `_`
+        let prefix = {
+            let name = &node.name;
+            // Find the last separator position
+            let sep_pos = name.rfind(['-', '_']);
+            match sep_pos {
+                Some(pos) if pos > 0 && pos < name.len() - 1 => {
+                    format!("{}/{}", parent, &name[..=pos])
+                }
+                _ => node.path.clone(),
+            }
+        };
+
+        // Try to append to the last group if same prefix, type, and depth
+        if let Some(last) = groups.last_mut()
+            && last.prefix == prefix
+            && last.depth == depth
+            && last.nodes[0].node_type == node.node_type
+        {
+            last.nodes.push(node);
+            continue;
+        }
+        groups.push(CollapsedGroup {
+            prefix,
+            nodes: vec![node],
+            depth,
+        });
+    }
+
+    let mut out = String::new();
+    let mut lines = 0;
+
+    for group in &groups {
+        if lines >= max_lines {
+            break;
+        }
+
+        if group.nodes.len() < 3 {
+            // Not worth collapsing — show individually
+            for node in &group.nodes {
+                if lines >= max_lines {
+                    break;
+                }
+                out.push_str(&fmt_tree_line(node, all_nodes));
+                lines += 1;
+            }
+        } else {
+            // Collapse into a summary line
+            let indent = "  ".repeat(group.depth);
+            let count = group.nodes.len();
+            let kind = if group.nodes[0].is_array() {
+                "arrays"
+            } else {
+                "groups"
+            };
+
+            // Show representative metadata from first node
+            let sample = group.nodes[0];
+            let meta = if sample.is_array() {
+                let dtype = sample.dtype.as_deref().unwrap_or("?");
+                let shape = sample
+                    .shape
+                    .as_ref()
+                    .map(|s| fmt_dims(s))
+                    .unwrap_or_else(|| "?".to_string());
+                format!(" `{dtype}` `[{shape}]`")
+            } else {
+                String::new()
+            };
+
+            out.push_str(&format!(
+                "{indent}- **{}\\*** ({} {}){}\n",
+                crate::util::leaf_name(&group.prefix),
+                count,
+                kind,
+                meta
+            ));
+            lines += 1;
+        }
+    }
+
+    let total_items: usize = groups.iter().map(|g| g.nodes.len()).sum();
+    let shown_items: usize = {
+        let mut count = 0;
+        let mut l = 0;
+        for group in &groups {
+            if l >= max_lines {
+                break;
+            }
+            if group.nodes.len() < 3 {
+                for _ in &group.nodes {
+                    if l >= max_lines {
+                        break;
+                    }
+                    count += 1;
+                    l += 1;
+                }
+            } else {
+                count += group.nodes.len();
+                l += 1;
+            }
+        }
+        count
+    };
+
+    if shown_items < total_items {
+        out.push_str(&format!(
+            "\n*({} more nodes — use `path` to drill into a prefix, or `search` to find specific arrays)*\n",
+            total_items - shown_items
+        ));
+    }
+
+    out
+}
+
+// ─── Repo overview ─────────────────────────────────────────────
+
 /// Format a repo overview as markdown (branches, tags, recent snapshots).
 /// Used by both the MCP `info`/`open` tools and the CLI.
 pub(crate) fn fmt_repo_overview(

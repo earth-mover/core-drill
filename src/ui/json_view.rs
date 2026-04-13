@@ -40,6 +40,22 @@ pub fn render_json(
     lines
 }
 
+/// Render a `serde_json::Value` directly as colored, indented Lines.
+///
+/// Equivalent to `render_json` but avoids the serialize-then-parse round-trip
+/// when the caller already holds a `Value`. Prefer this over `render_json`
+/// whenever the value is already in memory.
+pub fn render_json_value(
+    value: &serde_json::Value,
+    theme: &Theme,
+    max_depth: usize,
+    max_entries: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    render_value(value, theme, 1, max_depth, max_entries, &mut lines);
+    lines
+}
+
 /// Recursively render a serde_json::Value into Lines.
 /// `indent` is the current indentation level (each level = 2 spaces).
 fn render_value(

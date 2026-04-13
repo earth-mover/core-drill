@@ -10,6 +10,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::sanitize::sanitize;
+
 use icechunk::Repository;
 use rmcp::{
     ServerHandler,
@@ -355,11 +357,8 @@ impl CoreDrillServer {
                 };
 
                 if filtered.is_empty() {
-                    if params.snapshot_id.is_some() {
-                        format!(
-                            "No branches point at snapshot `{}`",
-                            params.snapshot_id.as_deref().unwrap()
-                        )
+                    if let Some(ref snap_id) = params.snapshot_id {
+                        format!("No branches point at snapshot `{snap_id}`")
                     } else {
                         "(no branches)".to_string()
                     }
@@ -376,7 +375,7 @@ impl CoreDrillServer {
                     out
                 }
             }
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP branches completed in {:?}", start.elapsed());
         cap_output(result)
@@ -399,7 +398,7 @@ impl CoreDrillServer {
                 }
                 out
             }
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP tags completed in {:?}", start.elapsed());
         cap_output(result)
@@ -427,12 +426,10 @@ impl CoreDrillServer {
                 };
                 let matched = filtered.len();
 
-                if matched == 0 && params.search.is_some() {
+                if matched == 0 && let Some(ref query) = params.search {
                     format!(
-                        "No snapshots matching \"{}\" in {} ({} total commits)",
-                        params.search.as_deref().unwrap(),
+                        "No snapshots matching \"{query}\" in {} ({total} total commits)",
                         params.r#ref,
-                        total
                     )
                 } else {
                     // Paginate
@@ -491,7 +488,7 @@ impl CoreDrillServer {
                     out
                 }
             }
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP log completed in {:?}", start.elapsed());
         cap_output(result)
@@ -549,7 +546,7 @@ impl CoreDrillServer {
                             );
 
                             const CHILD_LINE_LIMIT: usize = 30;
-                            out.push_str(&fmt_collapsed_tree(&children, &tree, CHILD_LINE_LIMIT));
+                            out.push_str(&output::fmt_collapsed_tree(&children, &tree, CHILD_LINE_LIMIT));
                             if children.is_empty() {
                                 out.push_str("*(empty group)*\n");
                             }
@@ -578,7 +575,7 @@ impl CoreDrillServer {
                             filter_path, groups_count, arrays_count
                         );
                         const PREFIX_LINE_LIMIT: usize = 30;
-                        out.push_str(&fmt_collapsed_tree(&filtered, &tree, PREFIX_LINE_LIMIT));
+                        out.push_str(&output::fmt_collapsed_tree(&filtered, &tree, PREFIX_LINE_LIMIT));
                         out
                     }
                 } else {
@@ -601,7 +598,7 @@ impl CoreDrillServer {
                         params.r#ref, groups_count, arrays_count
                     );
                     const TREE_LINE_LIMIT: usize = 30;
-                    out.push_str(&fmt_collapsed_tree(&filtered, &tree, TREE_LINE_LIMIT));
+                    out.push_str(&output::fmt_collapsed_tree(&filtered, &tree, TREE_LINE_LIMIT));
                     let total_all = tree.len();
                     if filtered.len() < total_all {
                         out.push_str(&format!(
@@ -612,7 +609,7 @@ impl CoreDrillServer {
                     out
                 }
             }
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP tree completed in {:?}", start.elapsed());
         cap_output(result)
@@ -639,7 +636,7 @@ impl CoreDrillServer {
                     out
                 }
             }
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP ops_log completed in {:?}", start.elapsed());
         cap_output(result)
@@ -659,7 +656,7 @@ impl CoreDrillServer {
         .await
         {
             Ok(detail) => output::fmt_diff_detail(&detail, &params.snapshot_id),
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP diff completed in {:?}", start.elapsed());
         cap_output(result)
@@ -673,7 +670,7 @@ impl CoreDrillServer {
         let repo = require_repo!(self);
         let result = match fetch::fetch_repo_config(&repo).await {
             Ok(cfg) => output::fmt_repo_config(&cfg),
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP config completed in {:?}", start.elapsed());
         cap_output(result)
@@ -695,21 +692,21 @@ impl CoreDrillServer {
                             .iter()
                             .filter(|n| n.path.starts_with(&params.query))
                             .collect();
-                        fmt_search_results(&params.query, "prefix", &matched, limit, &tree)
+                        output::fmt_search_results(&params.query, "prefix", &matched, limit, &tree)
                     }
                     "exact" => {
                         let matched: Vec<_> = tree
                             .iter()
                             .filter(|n| n.path.contains(&params.query))
                             .collect();
-                        fmt_search_results(&params.query, "exact", &matched, limit, &tree)
+                        output::fmt_search_results(&params.query, "exact", &matched, limit, &tree)
                     }
                     "glob" => {
                         let matched: Vec<_> = tree
                             .iter()
                             .filter(|n| glob_matches(&params.query, &n.path))
                             .collect();
-                        fmt_search_results(&params.query, "glob", &matched, limit, &tree)
+                        output::fmt_search_results(&params.query, "glob", &matched, limit, &tree)
                     }
                     _ => {
                         // Fuzzy (default)
@@ -755,7 +752,7 @@ impl CoreDrillServer {
                     }
                 }
             }
-            Err(e) => format!("Error: {e}"),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP search completed in {:?}", start.elapsed());
         cap_output(result)
@@ -784,179 +781,6 @@ impl CoreDrillServer {
         let extra_deps = crate::config::load().map(|c| c.script_deps).unwrap_or_default();
         crate::codegen::generate_script(identity, &ctx, &format, &extra_deps)
     }
-}
-
-/// Format search results for non-fuzzy modes.
-fn fmt_search_results(
-    query: &str,
-    mode: &str,
-    matched: &[&fetch::FlatNode],
-    limit: usize,
-    all_nodes: &[fetch::FlatNode],
-) -> String {
-    let total = matched.len();
-    if total == 0 {
-        return format!("No matches for \"{}\" ({} mode)", query, mode);
-    }
-    let mut out = format!("# Search: \"{}\" ({} matches, {})\n\n", query, total, mode);
-    for node in matched.iter().take(limit) {
-        out.push_str(&output::fmt_tree_line(node, all_nodes));
-    }
-    if total > limit {
-        out.push_str(&format!(
-            "\n*({} more — increase `limit` to see more)*\n",
-            total - limit
-        ));
-    }
-    out
-}
-
-/// Render a tree listing that collapses runs of similarly-named siblings.
-///
-/// Instead of listing 1000 `burst-*` arrays individually, groups them:
-///   - **burst-133012-*** (1000 arrays) `float32` `[721 × 1440]`
-///
-/// `max_lines` caps the total output lines (each collapsed group = 1 line).
-fn fmt_collapsed_tree(
-    nodes: &[&fetch::FlatNode],
-    all_nodes: &[fetch::FlatNode],
-    max_lines: usize,
-) -> String {
-    if nodes.is_empty() {
-        return String::new();
-    }
-
-    // Group nodes by (parent_path, type, name_prefix).
-    // name_prefix = everything up to the last `-` or `_` separator, or the full name if no separator.
-    struct CollapsedGroup<'a> {
-        prefix: String, // shared prefix (e.g. "burst-133012-")
-        nodes: Vec<&'a fetch::FlatNode>,
-        depth: usize,
-    }
-
-    let mut groups: Vec<CollapsedGroup> = Vec::new();
-
-    // Sort by path so similarly-named siblings are consecutive for collapsing
-    let mut sorted: Vec<&&fetch::FlatNode> = nodes.iter().collect();
-    sorted.sort_by(|a, b| a.path.cmp(&b.path));
-
-    for node in sorted.into_iter().copied() {
-        let parent = crate::util::parent_path(&node.path);
-        let depth = node.path.matches('/').count().saturating_sub(1);
-
-        // Find a prefix: strip trailing digits/chars after last `-` or `_`
-        let prefix = {
-            let name = &node.name;
-            // Find the last separator position
-            let sep_pos = name.rfind(['-', '_']);
-            match sep_pos {
-                Some(pos) if pos > 0 && pos < name.len() - 1 => {
-                    format!("{}/{}", parent, &name[..=pos])
-                }
-                _ => node.path.clone(),
-            }
-        };
-
-        // Try to append to the last group if same prefix, type, and depth
-        if let Some(last) = groups.last_mut()
-            && last.prefix == prefix
-            && last.depth == depth
-            && last.nodes[0].node_type == node.node_type
-        {
-            last.nodes.push(node);
-            continue;
-        }
-        groups.push(CollapsedGroup {
-            prefix,
-            nodes: vec![node],
-            depth,
-        });
-    }
-
-    let mut out = String::new();
-    let mut lines = 0;
-
-    for group in &groups {
-        if lines >= max_lines {
-            break;
-        }
-
-        if group.nodes.len() < 3 {
-            // Not worth collapsing — show individually
-            for node in &group.nodes {
-                if lines >= max_lines {
-                    break;
-                }
-                out.push_str(&output::fmt_tree_line(node, all_nodes));
-                lines += 1;
-            }
-        } else {
-            // Collapse into a summary line
-            let indent = "  ".repeat(group.depth);
-            let count = group.nodes.len();
-            let kind = if group.nodes[0].is_array() {
-                "arrays"
-            } else {
-                "groups"
-            };
-
-            // Show representative metadata from first node
-            let sample = group.nodes[0];
-            let meta = if sample.is_array() {
-                let dtype = sample.dtype.as_deref().unwrap_or("?");
-                let shape = sample
-                    .shape
-                    .as_ref()
-                    .map(|s| output::fmt_dims(s))
-                    .unwrap_or_else(|| "?".to_string());
-                format!(" `{dtype}` `[{shape}]`")
-            } else {
-                String::new()
-            };
-
-            out.push_str(&format!(
-                "{indent}- **{}\\*** ({} {}){}\n",
-                crate::util::leaf_name(&group.prefix),
-                count,
-                kind,
-                meta
-            ));
-            lines += 1;
-        }
-    }
-
-    let total_items: usize = groups.iter().map(|g| g.nodes.len()).sum();
-    let shown_items: usize = {
-        let mut count = 0;
-        let mut l = 0;
-        for group in &groups {
-            if l >= max_lines {
-                break;
-            }
-            if group.nodes.len() < 3 {
-                for _ in &group.nodes {
-                    if l >= max_lines {
-                        break;
-                    }
-                    count += 1;
-                    l += 1;
-                }
-            } else {
-                count += group.nodes.len();
-                l += 1;
-            }
-        }
-        count
-    };
-
-    if shown_items < total_items {
-        out.push_str(&format!(
-            "\n*({} more nodes — use `path` to drill into a prefix, or `search` to find specific arrays)*\n",
-            total_items - shown_items
-        ));
-    }
-
-    out
 }
 
 /// Convert a simple glob pattern to a matching function.
@@ -1074,8 +898,8 @@ mod glob_tests {
 
 #[cfg(test)]
 mod collapse_tests {
-    use super::fmt_collapsed_tree;
     use crate::fetch::{FlatNode, FlatNodeType};
+    use crate::output::fmt_collapsed_tree;
 
     fn make_array(path: &str) -> FlatNode {
         let name = crate::util::leaf_name(path).to_string();

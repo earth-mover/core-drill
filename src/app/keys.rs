@@ -32,10 +32,10 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 // Save for n/N repeat even on Esc
-                if let Some(ref search) = self.search {
-                    if !search.query.is_empty() {
-                        self.last_search = Some((search.target, search.query.clone()));
-                    }
+                if let Some(ref search) = self.search
+                    && !search.query.is_empty()
+                {
+                    self.last_search = Some((search.target, search.query.clone()));
                 }
                 self.search = None;
             }
@@ -380,6 +380,8 @@ impl App {
             KeyCode::Char('l') | KeyCode::Right if self.focused_pane == Pane::Detail => {
                 if let Some(mode) = self.detail_mode.next() {
                     self.set_detail_mode(mode);
+                } else {
+                    return Action::FocusPane(Pane::Bottom);
                 }
             }
             _ => {}

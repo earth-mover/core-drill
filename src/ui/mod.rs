@@ -238,9 +238,7 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
                 .node_no_children_symbol("─ ");
 
             // Root is always open — guard against zc/zM closing it
-            static ROOT_ID: std::sync::LazyLock<Vec<String>> =
-                std::sync::LazyLock::new(|| vec!["/".to_string()]);
-            app.tree_state.open(ROOT_ID.clone());
+            app.tree_state.open(vec!["/".to_string()]);
             frame.render_stateful_widget(tree, chunks[1], &mut app.tree_state);
         }
     }
@@ -320,15 +318,15 @@ fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
     }
 
     // Transient yank confirmation — shown for 2 seconds
-    if let Some((ref msg, instant)) = app.yank_message {
-        if instant.elapsed().as_secs() < 2 {
-            let line = Line::from(vec![Span::styled(
-                format!(" \u{2713} {msg}"),
-                app.theme.status_ok,
-            )]);
-            frame.render_widget(Paragraph::new(line), area);
-            return;
-        }
+    if let Some((ref msg, instant)) = app.yank_message
+        && instant.elapsed().as_secs() < 2
+    {
+        let line = Line::from(vec![Span::styled(
+            format!(" \u{2713} {msg}"),
+            app.theme.status_ok,
+        )]);
+        frame.render_widget(Paragraph::new(line), area);
+        return;
     }
 
     // Show pending y-command indicator

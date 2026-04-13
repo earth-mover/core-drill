@@ -9,6 +9,7 @@ use icechunk::Repository;
 use crate::sanitize::sanitize;
 use crate::store::types::*;
 use std::collections::BTreeMap;
+use tracing::trace;
 
 // ─── Zarr metadata parsing (shared by TUI, CLI, MCP) ───────
 
@@ -166,21 +167,27 @@ impl ZarrMetadata {
             .map(|s| s.to_string());
 
         // Chunk shape: v3 uses chunk_grid.configuration.chunk_shape, v2 uses "chunks"
-        let chunk_shape = v
+        let chunk_shape: Vec<u64> = v
             .get("chunk_grid")
             .and_then(|cg| cg.get("configuration"))
             .and_then(|c| c.get("chunk_shape"))
             .and_then(|cs| cs.as_array())
             .or_else(|| v.get("chunks").and_then(|c| c.as_array()))
             .map(|arr| arr.iter().filter_map(|val| val.as_u64()).collect())
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                trace!("ZarrMetadata: chunk_shape not found, defaulting to empty");
+                Vec::new()
+            });
 
         // Codecs: v3 format
         let codecs: Vec<CodecEntry> = v
             .get("codecs")
             .and_then(|c| c.as_array())
             .map(|arr| arr.iter().filter_map(parse_codec_entry).collect())
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                trace!("ZarrMetadata: codecs not found, defaulting to empty");
+                Vec::new()
+            });
 
         // Compressor: v2 format
         let compressor = v
@@ -203,7 +210,10 @@ impl ZarrMetadata {
             .get("filters")
             .and_then(|f| if f.is_null() { None } else { f.as_array() })
             .map(|arr| arr.iter().map(parse_v2_filter).collect())
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                trace!("ZarrMetadata: filters not found or null, defaulting to empty");
+                Vec::new()
+            });
 
         let fill_value = v
             .get("fill_value")
@@ -225,14 +235,20 @@ impl ZarrMetadata {
                     .map(|(k, v)| (k.clone(), value_display(v)))
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                trace!("ZarrMetadata: attributes not found, defaulting to empty");
+                BTreeMap::new()
+            });
 
         // Storage transformers (v3)
         let storage_transformers: Vec<String> = v
             .get("storage_transformers")
             .and_then(|st| st.as_array())
             .map(|arr| arr.iter().map(value_display).collect())
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                trace!("ZarrMetadata: storage_transformers not found, defaulting to empty");
+                Vec::new()
+            });
 
         // Collect any extra top-level keys we didn't specifically handle
         let extra_fields: BTreeMap<String, String> = v
@@ -243,7 +259,10 @@ impl ZarrMetadata {
                     .map(|(k, v)| (k.clone(), value_display(v)))
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                trace!("ZarrMetadata: metadata value is not a JSON object, extra_fields defaulting to empty");
+                BTreeMap::new()
+            });
 
         Some(Self {
             data_type,

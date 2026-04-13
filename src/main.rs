@@ -530,28 +530,27 @@ fn detect_shell() -> Result<clap_complete::Shell> {
 /// For .ipynb, extracts the source lines from code cells.
 /// For everything else, returns the content as-is.
 fn extract_diffable(content: &str, filename: &str) -> String {
-    if filename.ends_with(".ipynb") {
-        if let Ok(nb) = serde_json::from_str::<serde_json::Value>(content) {
-            if let Some(cells) = nb["cells"].as_array() {
-                return cells
-                    .iter()
-                    .filter(|c| c["cell_type"].as_str() == Some("code"))
-                    .filter(|c| {
-                        // Skip hidden metadata cells (juv PEP 723 cell)
-                        c["metadata"]["jupyter"]["source_hidden"].as_bool() != Some(true)
-                    })
-                    .filter_map(|c| {
-                        c["source"].as_array().map(|lines| {
-                            lines
-                                .iter()
-                                .filter_map(|l| l.as_str())
-                                .collect::<String>()
-                        })
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-            }
-        }
+    if filename.ends_with(".ipynb")
+        && let Ok(nb) = serde_json::from_str::<serde_json::Value>(content)
+        && let Some(cells) = nb["cells"].as_array()
+    {
+        return cells
+            .iter()
+            .filter(|c| c["cell_type"].as_str() == Some("code"))
+            .filter(|c| {
+                // Skip hidden metadata cells (juv PEP 723 cell)
+                c["metadata"]["jupyter"]["source_hidden"].as_bool() != Some(true)
+            })
+            .filter_map(|c| {
+                c["source"].as_array().map(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(|l| l.as_str())
+                        .collect::<String>()
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
     }
     content.to_string()
 }

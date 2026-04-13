@@ -472,10 +472,9 @@ pub(super) fn render_array_detail_storage<'a>(
                 })
                 .collect(),
         );
-        if let Ok(attr_json) = serde_json::to_string(&attr_obj) {
-            let json_lines = crate::ui::json_view::render_json(&attr_json, &app.theme, 10, 50);
-            lines.extend(json_lines);
-        }
+        let json_lines =
+            crate::ui::json_view::render_json_value(&attr_obj, &app.theme, 10, 50);
+        lines.extend(json_lines);
     }
 
     // ─── Raw Metadata ────────────────────
@@ -495,10 +494,9 @@ pub(super) fn render_array_detail_storage<'a>(
                 })
                 .collect(),
         );
-        if let Ok(extra_json) = serde_json::to_string(&extra_obj) {
-            let json_lines = crate::ui::json_view::render_json(&extra_json, &app.theme, 10, 50);
-            lines.extend(json_lines);
-        }
+        let json_lines =
+            crate::ui::json_view::render_json_value(&extra_obj, &app.theme, 10, 50);
+        lines.extend(json_lines);
     }
 
     // Fallback: if metadata was present but couldn't be parsed, show with json_view

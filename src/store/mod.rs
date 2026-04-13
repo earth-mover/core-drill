@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use icechunk::Repository;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::sanitize::sanitize;
 
@@ -453,7 +453,9 @@ fn spawn_worker(
             // Each request gets its own task so they don't block each other
             tokio::spawn(async move {
                 let response = process_request(&repo, request).await;
-                let _ = tx.send(response);
+                if let Err(e) = tx.send(response) {
+                    warn!("Failed to send response to UI: {:?}", e);
+                }
             });
         }
         info!("Data store worker shutting down");

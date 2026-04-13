@@ -28,9 +28,13 @@ cargo build --release              # optimized build
 src/
   main.rs              — entry point, mode dispatch
   cli.rs               — clap CLI definition
+  codegen.rs           — code snippet generation (Python/Rust connect snippets)
+  config.rs            — application config loading (~/.config/core-drill/config.toml)
   fetch.rs             — canonical fetch layer (all icechunk data fetching lives here)
   tui.rs               — terminal init (mouse capture), tokio::select event loop
   repo.rs              — open repos (local, S3, GCS, Azure, HTTP)
+  sanitize.rs          — text sanitization (ANSI escape/control character stripping)
+  search.rs            — fuzzy search overlay (nucleo-based matching for tree/lists)
   theme.rs             — Earthmover brand colors, panel/widget helpers
   multiplexer.rs       — zellij/tmux detection, Ctrl+hjkl passthrough at pane edges
   util.rs              — shared path helpers: parent_path(), leaf_name()
@@ -63,6 +67,7 @@ src/
     format.rs          — ZarrMetadata parser (data type, chunk shape, codecs, fill value)
     shape_viz.rs       — chunk summary line for array detail
     help.rs            — full-screen help overlay (mirrors TUI layout)
+    json_view.rs       — JSON syntax-highlighted renderer (attributes & metadata display)
 ```
 
 ## Key Patterns

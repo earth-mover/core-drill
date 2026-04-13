@@ -107,22 +107,22 @@ Generate ready-to-run scripts for connecting to a repo — no network call neede
 
 ```bash
 # Python script (PEP 723 inline metadata, run with uv)
-core-drill era5 script connect.py
+core-drill s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous script connect.py
 
 # Jupyter notebook (juv metadata)
-core-drill era5 script explore.ipynb
+core-drill s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous script explore.ipynb
 
 # marimo reactive notebook
-core-drill era5 script notebook.py --marimo
+core-drill s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous script notebook.py --marimo
 
 # Rust
-core-drill era5 script analysis.rs
+core-drill s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous script analysis.rs
 
 # With options
-core-drill era5 script connect.py --branch v2 --path /data/temperature
+core-drill s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous script connect.py --branch v2 --path /data/temperature
 
 # Write and immediately run
-core-drill era5 script explore.ipynb --run
+core-drill s3://icechunk-public-data/v1/era5_weatherbench2 --anonymous script explore.ipynb --run
 ```
 
 Storage flags (`--region`, `--anonymous`, `--endpoint-url`, `--arraylake-api`) work on the `script` subcommand too.
