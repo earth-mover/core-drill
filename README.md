@@ -101,6 +101,52 @@ The `--arraylake-api` flag accepts full URLs or shorthands: `dev` (dev.api.earth
 
 Aliases are stored in `~/.config/core-drill/config.toml` (Linux) or `~/Library/Application Support/core-drill/config.toml` (macOS).
 
+## Script generation
+
+Generate ready-to-run scripts for connecting to a repo — no network call needed:
+
+```bash
+# Python script (PEP 723 inline metadata, run with uv)
+core-drill era5 script connect.py
+
+# Jupyter notebook (juv metadata)
+core-drill era5 script explore.ipynb
+
+# marimo reactive notebook
+core-drill era5 script notebook.py --marimo
+
+# Rust
+core-drill era5 script analysis.rs
+
+# With options
+core-drill era5 script connect.py --branch v2 --path /data/temperature
+
+# Write and immediately run
+core-drill era5 script explore.ipynb --run
+```
+
+Storage flags (`--region`, `--anonymous`, `--endpoint-url`, `--arraylake-api`) work on the `script` subcommand too.
+
+### Extra dependencies
+
+Add packages that should be included in every generated script via `~/.config/core-drill/config.toml`:
+
+```toml
+script_deps = ["matplotlib", "pandas"]
+```
+
+These are added alongside the base deps (icechunk/arraylake, zarr, xarray).
+
+### TUI yank
+
+In the interactive TUI, press `y` then:
+
+- `y` — yank the current selection (node path, branch, snapshot ID) to clipboard
+- `p` — yank a Python connection snippet to clipboard
+- `r` — yank a Rust connection snippet to clipboard
+
+The snippets react to the current branch/snapshot and tree selection.
+
 ## Updating
 
 ```bash

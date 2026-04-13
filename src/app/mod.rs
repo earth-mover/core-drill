@@ -16,6 +16,9 @@ pub enum RepoIdentity {
     },
     S3 {
         url: String,
+        region: Option<String>,
+        endpoint_url: Option<String>,
+        anonymous: bool,
     },
     Arraylake {
         org: String,
@@ -23,15 +26,53 @@ pub enum RepoIdentity {
         bucket: String,
         platform: String,
         region: String,
+        api_url: Option<String>,
     },
 }
 
 impl RepoIdentity {
+    /// Build a RepoIdentity from a URL/path string without connecting.
+    /// Used by CLI `connect` and MCP `connect` to generate code offline.
+    pub fn from_url(
+        url: &str,
+        region: Option<String>,
+        endpoint_url: Option<String>,
+        anonymous: bool,
+        arraylake_api: Option<String>,
+    ) -> Self {
+        if url.starts_with("al:") {
+            let ref_str = url.strip_prefix("al:").unwrap_or(url).trim_end_matches('/');
+            let (org, repo) = ref_str
+                .split_once('/')
+                .unwrap_or((ref_str, "unknown"));
+            let expanded_api = arraylake_api.map(|u| crate::util::expand_api_url(&u));
+            Self::Arraylake {
+                org: org.to_string(),
+                repo: repo.to_string(),
+                bucket: String::new(),
+                platform: String::new(),
+                region: String::new(),
+                api_url: expanded_api,
+            }
+        } else if url.contains("://") {
+            Self::S3 {
+                url: url.to_string(),
+                region,
+                endpoint_url,
+                anonymous,
+            }
+        } else {
+            Self::Local {
+                path: url.to_string(),
+            }
+        }
+    }
+
     /// Short display for status bar
     pub fn display_short(&self) -> String {
         match self {
             Self::Local { path } => path.clone(),
-            Self::S3 { url } => url.clone(),
+            Self::S3 { url, .. } => url.clone(),
             Self::Arraylake {
                 org,
                 repo,
@@ -80,8 +121,16 @@ pub struct App {
     pub pending_z: bool,
     /// Vim-style pending `g` prefix (gg = go to top)
     pub pending_g: bool,
+    /// Pending yank prefix — waiting for y/p/r second key
+    pub pending_y: bool,
+    /// Transient clipboard feedback message (text + timestamp)
+    pub yank_message: Option<(String, std::time::Instant)>,
     /// Last search query for n/N repeat (target + query string)
     pub last_search: Option<(crate::search::SearchTarget, String)>,
+
+    /// User has manually navigated the tree (not just auto-expand).
+    /// Only include tree path in Connect snippets when true.
+    pub(crate) tree_user_selected: bool,
 
     // ─── Internal bookkeeping ────────────────────────────────
     pub(crate) tree_auto_expanded: bool,
@@ -130,7 +179,10 @@ impl App {
             search: None,
             pending_z: false,
             pending_g: false,
+            pending_y: false,
+            yank_message: None,
             last_search: None,
+            tree_user_selected: false,
             tree_auto_expanded: false,
             last_diff_requested: None,
             tree_candidate_cache: None,
@@ -178,6 +230,7 @@ impl App {
         self.current_snapshot = None; // will resolve to tip once ancestry loads
         self.tree_state = tui_tree_widget::TreeState::default();
         self.tree_auto_expanded = false;
+        self.tree_user_selected = false;
         self.last_diff_requested = None;
         self.chunk_scan_complete = false;
         self.chunk_scan_snapshot = None;
@@ -198,6 +251,7 @@ impl App {
         }
         self.current_snapshot = snapshot_id;
         self.tree_auto_expanded = false;
+        self.tree_user_selected = false;
         self.chunk_scan_complete = false;
         self.chunk_scan_snapshot = None;
         // Fetch tree at this snapshot (or branch tip if None)
@@ -229,6 +283,7 @@ impl App {
     pub(crate) fn on_tree_selection_changed(&mut self) {
         self.detail_scroll = 0;
         self.detail_mode = DetailMode::Node;
+        self.tree_user_selected = true;
         self.maybe_request_chunk_stats();
     }
 
@@ -340,7 +395,9 @@ impl App {
         if !self.tree_auto_expanded
             && let Some(LoadState::Loaded(_)) = self.store.node_children.get("/")
         {
+            self.tree_state.open(vec!["/".to_string()]);
             self.auto_expand_tree();
+            self.tree_state.select(vec!["/".to_string()]);
             self.tree_auto_expanded = true;
             // Kick off chunk stats for whatever array got auto-selected
             self.maybe_request_chunk_stats();
@@ -646,6 +703,79 @@ impl App {
             // Per-tab selection is preserved in tab_selection/tab_offset arrays,
             // so just switching the tab is enough — no need to reset to 0.
             self.on_bottom_selection_changed();
+        }
+    }
+
+    /// Build a CodeContext from current TUI state for code generation.
+    /// Only includes a tree path if the user has manually navigated the tree.
+    pub fn code_context(&self) -> crate::codegen::CodeContext {
+        let path = if self.tree_user_selected {
+            self.tree_state
+                .selected()
+                .last()
+                .cloned()
+                .filter(|p| p != "/" && !p.is_empty())
+        } else {
+            None
+        };
+        crate::codegen::CodeContext {
+            branch: self.current_branch.clone(),
+            snapshot: self.current_snapshot.clone(),
+            path,
+        }
+    }
+
+    /// Write text to clipboard and set feedback message.
+    pub fn yank_text(&mut self, text: String, label: &str) {
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+            Ok(()) => {
+                self.yank_message = Some((
+                    format!("yanked {label} to clipboard"),
+                    std::time::Instant::now(),
+                ));
+            }
+            Err(e) => {
+                self.yank_message = Some((
+                    format!("clipboard error: {e}"),
+                    std::time::Instant::now(),
+                ));
+            }
+        }
+    }
+
+    /// Get text for yy (yank selection) based on focused pane.
+    pub(crate) fn yank_selection_text(&self) -> String {
+        match self.focused_pane {
+            Pane::Sidebar => {
+                // Yank selected node path
+                self.tree_state
+                    .selected()
+                    .last()
+                    .cloned()
+                    .unwrap_or_default()
+            }
+            Pane::Bottom => match self.bottom_tab {
+                BottomTab::Snapshots => self.selected_snapshot_id().unwrap_or_default(),
+                BottomTab::Branches => {
+                    if let Some(branches) = self.store.branches.as_loaded()
+                        && let Some(b) = branches.get(self.bottom_selected())
+                    {
+                        b.name.clone()
+                    } else {
+                        String::new()
+                    }
+                }
+                BottomTab::Tags => {
+                    if let Some(tags) = self.store.tags.as_loaded()
+                        && let Some(t) = tags.get(self.bottom_selected())
+                    {
+                        t.name.clone()
+                    } else {
+                        String::new()
+                    }
+                }
+            },
+            Pane::Detail => self.current_branch.clone(),
         }
     }
 

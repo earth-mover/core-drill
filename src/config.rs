@@ -9,6 +9,15 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     #[serde(default)]
     pub aliases: BTreeMap<String, Alias>,
+
+    /// Extra Python packages to include in generated scripts (PEP 723 deps).
+    /// These are added to every `core-drill script` output alongside
+    /// icechunk/arraylake, zarr, and xarray.
+    ///
+    /// Example in config.toml:
+    ///   script_deps = ["matplotlib", "pandas"]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub script_deps: Vec<String>,
 }
 
 /// A saved repo alias — short name that expands to a full repo reference

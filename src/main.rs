@@ -1,5 +1,6 @@
 mod app;
 mod cli;
+mod codegen;
 mod component;
 pub mod config;
 mod fetch;
@@ -45,11 +46,36 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    // Handle subcommands that don't need a repo
+    // Handle subcommands that don't need a repo connection
     match cli.command {
         Some(cli::Command::Alias { command }) => return run_alias_command(command),
+        Some(cli::Command::ScriptDeps { command }) => return run_script_deps_command(command),
         Some(cli::Command::InstallCompletions { shell }) => return install_completions(shell),
         Some(cli::Command::SelfUpdate) => return self_update().await,
+        Some(cli::Command::Script {
+            ref filename,
+            ref branch,
+            ref snapshot,
+            ref path,
+            ref region,
+            ref endpoint_url,
+            anonymous: script_anon,
+            ref arraylake_api,
+            marimo,
+            force,
+            run,
+        }) => {
+            // Subcommand storage flags override top-level flags
+            let merged_region = region.clone().or(cli.region.clone());
+            let merged_endpoint = endpoint_url.clone().or(cli.endpoint_url.clone());
+            let merged_anon = script_anon || cli.anonymous;
+            let merged_api = arraylake_api.clone().or(cli.arraylake_api.clone());
+            return run_script(
+                cli.repo.as_deref(), filename, branch, snapshot.as_deref(), path.as_deref(),
+                merged_region, merged_endpoint, merged_anon, merged_api.as_deref(),
+                marimo, force, run,
+            );
+        }
         _ => {}
     }
 
@@ -168,7 +194,12 @@ pub async fn open_repo(
     } else {
         let repo = repo::open(&resolved, &resolved_overrides).await?;
         let identity = if resolved.contains("://") {
-            app::RepoIdentity::S3 { url: resolved }
+            app::RepoIdentity::S3 {
+                url: resolved,
+                region: resolved_overrides.region.clone(),
+                endpoint_url: resolved_overrides.endpoint_url.clone(),
+                anonymous: resolved_overrides.anonymous,
+            }
         } else {
             app::RepoIdentity::Local { path: resolved }
         };
@@ -189,7 +220,7 @@ async fn open_via_arraylake(
     al_ref: &str,
     api_url: Option<&str>,
 ) -> Result<(icechunk::Repository, app::RepoIdentity)> {
-    let ref_str = al_ref.strip_prefix("al:").unwrap_or(al_ref);
+    let ref_str = al_ref.strip_prefix("al:").unwrap_or(al_ref).trim_end_matches('/');
     let (org, repo_name) = ref_str.split_once('/').ok_or_else(|| {
         color_eyre::eyre::eyre!("Invalid Arraylake ref: expected 'al:org/repo', got '{al_ref}'")
     })?;
@@ -197,14 +228,9 @@ async fn open_via_arraylake(
     // Resolve API endpoint: CLI flag > env var > crate default (None)
     // Accept shorthands: "dev" / "prod" expand to known Earthmover endpoints
     let env_api = std::env::var("ARRAYLAKE_SERVICE__URI").ok();
-    let api_url_owned: Option<String> = api_url.or(env_api.as_deref()).map(|url| {
-        match url {
-            "dev" => "https://dev.api.earthmover.io".to_string(),
-            "prod" => "https://api.earthmover.io".to_string(),
-            u if !u.contains("://") => format!("https://{u}"),
-            u => u.to_string(),
-        }
-    });
+    let api_url_owned: Option<String> = api_url
+        .or(env_api.as_deref())
+        .map(crate::util::expand_api_url);
     let api_url = api_url_owned.as_deref();
 
     // Read token from ~/.arraylake/token.json
@@ -305,6 +331,7 @@ async fn open_via_arraylake(
         bucket: bucket_name.to_string(),
         platform,
         region,
+        api_url: api_url.map(|s| s.to_string()),
     };
     Ok((repository, identity))
 }
@@ -383,6 +410,53 @@ fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
 }
 
 /// Detect current shell from $SHELL, install completion eval line into rc file.
+fn run_script_deps_command(command: cli::ScriptDepsCommand) -> Result<()> {
+    match command {
+        cli::ScriptDepsCommand::List => {
+            let cfg = config::load()?;
+            if cfg.script_deps.is_empty() {
+                println!("No extra script dependencies configured.");
+                println!(
+                    "\nAdd some with: core-drill script-deps add matplotlib pandas"
+                );
+            } else {
+                for dep in &cfg.script_deps {
+                    println!("  {dep}");
+                }
+            }
+        }
+        cli::ScriptDepsCommand::Add { packages } => {
+            let mut cfg = config::load()?;
+            let mut added = Vec::new();
+            for pkg in &packages {
+                if !cfg.script_deps.contains(pkg) {
+                    cfg.script_deps.push(pkg.clone());
+                    added.push(pkg.as_str());
+                }
+            }
+            config::save(&cfg)?;
+            if added.is_empty() {
+                println!("All packages already configured.");
+            } else {
+                println!("Added: {}", added.join(", "));
+            }
+        }
+        cli::ScriptDepsCommand::Remove { packages } => {
+            let mut cfg = config::load()?;
+            let before = cfg.script_deps.len();
+            cfg.script_deps.retain(|d| !packages.contains(d));
+            let removed = before - cfg.script_deps.len();
+            config::save(&cfg)?;
+            if removed == 0 {
+                println!("None of those packages were configured.");
+            } else {
+                println!("Removed {removed} package(s).");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn install_completions(shell_override: Option<clap_complete::Shell>) -> Result<()> {
     use clap_complete::Shell;
 
@@ -450,6 +524,166 @@ fn detect_shell() -> Result<clap_complete::Shell> {
             "Cannot detect shell from $SHELL='{shell_env}'. Pass the shell explicitly: core-drill install-completions bash"
         )
     }
+}
+
+/// Extract human-readable code from a file for diffing.
+/// For .ipynb, extracts the source lines from code cells.
+/// For everything else, returns the content as-is.
+fn extract_diffable(content: &str, filename: &str) -> String {
+    if filename.ends_with(".ipynb") {
+        if let Ok(nb) = serde_json::from_str::<serde_json::Value>(content) {
+            if let Some(cells) = nb["cells"].as_array() {
+                return cells
+                    .iter()
+                    .filter(|c| c["cell_type"].as_str() == Some("code"))
+                    .filter(|c| {
+                        // Skip hidden metadata cells (juv PEP 723 cell)
+                        c["metadata"]["jupyter"]["source_hidden"].as_bool() != Some(true)
+                    })
+                    .filter_map(|c| {
+                        c["source"].as_array().map(|lines| {
+                            lines
+                                .iter()
+                                .filter_map(|l| l.as_str())
+                                .collect::<String>()
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+            }
+        }
+    }
+    content.to_string()
+}
+
+fn print_truncated_diff(old: &str, new: &str) {
+    let max_lines = 12;
+    let mut shown = 0;
+    for (old_line, new_line) in old.lines().zip(new.lines()) {
+        if old_line != new_line {
+            eprintln!("  \x1b[31m- {old_line}\x1b[0m");
+            eprintln!("  \x1b[32m+ {new_line}\x1b[0m");
+            shown += 1;
+            if shown >= max_lines {
+                eprintln!("  ...");
+                break;
+            }
+        }
+    }
+    let old_len = old.lines().count();
+    let new_len = new.lines().count();
+    if old_len != new_len && shown < max_lines {
+        eprintln!("  ({old_len} lines → {new_len} lines)");
+    }
+}
+
+/// Generate a connection script and write it to a file. No network needed.
+#[allow(clippy::too_many_arguments)]
+fn run_script(
+    repo_arg: Option<&str>,
+    filename: &str,
+    branch: &str,
+    snapshot: Option<&str>,
+    path: Option<&str>,
+    region: Option<String>,
+    endpoint_url: Option<String>,
+    anonymous: bool,
+    arraylake_api: Option<&str>,
+    marimo: bool,
+    force: bool,
+    exec: bool,
+) -> Result<()> {
+    let repo_str = repo_arg
+        .ok_or_else(|| color_eyre::eyre::eyre!("A repo argument is required for `script`"))?;
+
+    // Infer format from extension + flags
+    let format = if filename.ends_with(".ipynb") {
+        codegen::ScriptFormat::Jupyter
+    } else if filename.ends_with(".py") && marimo {
+        codegen::ScriptFormat::Marimo
+    } else if filename.ends_with(".py") {
+        codegen::ScriptFormat::Python
+    } else if filename.ends_with(".rs") {
+        codegen::ScriptFormat::Rust
+    } else {
+        color_eyre::eyre::bail!(
+            "Cannot infer language from '{filename}'.\n\
+             Supported extensions: .py, .rs, .ipynb"
+        );
+    };
+
+    // Resolve alias if applicable
+    let (resolved, resolved_region, resolved_endpoint, resolved_anon) =
+        if let Some(alias) = config::resolve_alias(repo_str)? {
+            (
+                alias.repo,
+                region.or(alias.region),
+                endpoint_url.or(alias.endpoint_url),
+                anonymous || alias.anonymous,
+            )
+        } else {
+            (repo_str.to_string(), region, endpoint_url, anonymous)
+        };
+
+    let resolved_api = arraylake_api.map(|s| s.to_string());
+    let identity = app::RepoIdentity::from_url(&resolved, resolved_region, resolved_endpoint, resolved_anon, resolved_api);
+    let ctx = codegen::CodeContext {
+        branch: branch.to_string(),
+        snapshot: snapshot.map(|s| s.to_string()),
+        path: path.map(|p| p.to_string()),
+    };
+
+    let extra_deps = config::load().map(|c| c.script_deps).unwrap_or_default();
+    let content = codegen::generate_script(&identity, &ctx, &format, &extra_deps);
+    let dest = std::path::Path::new(filename);
+
+    if dest.exists() {
+        let existing = std::fs::read_to_string(dest)?;
+        if existing != content && !force {
+            eprintln!("\x1b[31merror:\x1b[0m File '{filename}' already exists with different content. Use --force to overwrite.\n");
+            // For notebooks, diff the Python code content, not the raw JSON
+            let old_text = extract_diffable(&existing, filename);
+            let new_text = extract_diffable(&content, filename);
+            print_truncated_diff(&old_text, &new_text);
+            std::process::exit(1);
+        }
+        if existing != content {
+            std::fs::write(dest, &content)?;
+        }
+    } else {
+        std::fs::write(dest, &content)?;
+    }
+
+    if !exec {
+        println!("Written to \x1b[1m{filename}\x1b[0m, run with:\n\n  {}\n", codegen::run_hint(&format, filename));
+    }
+
+    if exec {
+        let commands = codegen::run_commands(&format, filename);
+        for (prog, args) in &commands {
+            let display = format!("{prog} {}", args.join(" "));
+            match std::process::Command::new(prog).args(args).status() {
+                Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Try next fallback
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("\x1b[31merror:\x1b[0m Failed to run `{display}`: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        // All commands failed to launch
+        let names: Vec<&str> = commands.iter().map(|(p, _)| *p).collect();
+        eprintln!(
+            "\x1b[31merror:\x1b[0m None of [{}] found on PATH.\nInstall one, then run:\n  {}",
+            names.join(", "),
+            codegen::run_hint(&format, filename),
+        );
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 async fn self_update() -> Result<()> {

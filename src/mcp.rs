@@ -40,6 +40,8 @@ pub struct CoreDrillServer {
     tool_router: ToolRouter<Self>,
     repo: Arc<RwLock<Option<Arc<Repository>>>>,
     repo_url: Arc<RwLock<String>>,
+    /// Preserved identity for code generation (retains region/endpoint/anonymous)
+    repo_identity: Arc<RwLock<Option<crate::app::RepoIdentity>>>,
     cache: Arc<RwLock<McpCache>>,
 }
 
@@ -49,6 +51,7 @@ impl CoreDrillServer {
             tool_router: Self::tool_router(),
             repo: Arc::new(RwLock::new(repo.map(Arc::new))),
             repo_url: Arc::new(RwLock::new(repo_url)),
+            repo_identity: Arc::new(RwLock::new(None)),
             cache: Arc::new(RwLock::new(McpCache::default())),
         }
     }
@@ -149,6 +152,25 @@ struct SearchParams {
 
 fn default_search_mode() -> String {
     "fuzzy".to_string()
+}
+
+fn default_lang() -> String {
+    "python".to_string()
+}
+
+#[allow(dead_code)] // fields read via serde deserialization
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ScriptParams {
+    /// Language: "python" (default) or "rust"
+    #[serde(default = "default_lang")]
+    lang: String,
+    /// Branch name (default: "main")
+    #[serde(default = "default_ref")]
+    branch: String,
+    /// Snapshot ID (overrides branch if set)
+    snapshot: Option<String>,
+    /// Zarr group path to navigate to (e.g. "/data/temperature")
+    path: Option<String>,
 }
 
 fn default_ref() -> String {
@@ -291,6 +313,7 @@ impl CoreDrillServer {
 
                     *self.repo.write().await = Some(Arc::clone(&repo));
                     *self.repo_url.write().await = label;
+                    *self.repo_identity.write().await = Some(identity);
                     *self.cache.write().await = McpCache::default();
 
                     // Return info overview immediately — saves the agent an extra round trip
@@ -736,6 +759,30 @@ impl CoreDrillServer {
         };
         info!("MCP search completed in {:?}", start.elapsed());
         cap_output(result)
+    }
+
+    #[tool(
+        description = "Generate a ready-to-run Python or Rust script for connecting to the currently open repo. No extra network calls needed. Returns code with PEP 723 metadata (Python) that can be saved and run directly."
+    )]
+    async fn script(&self, Parameters(params): Parameters<ScriptParams>) -> String {
+        let identity_guard = self.repo_identity.read().await;
+        let identity = match identity_guard.as_ref() {
+            Some(id) => id,
+            None => return "No repo open. Use the `open` tool first.".to_string(),
+        };
+
+        let ctx = crate::codegen::CodeContext {
+            branch: params.branch,
+            snapshot: params.snapshot,
+            path: params.path,
+        };
+
+        let format = match params.lang.as_str() {
+            "rust" => crate::codegen::ScriptFormat::Rust,
+            _ => crate::codegen::ScriptFormat::Python,
+        };
+        let extra_deps = crate::config::load().map(|c| c.script_deps).unwrap_or_default();
+        crate::codegen::generate_script(identity, &ctx, &format, &extra_deps)
     }
 }
 

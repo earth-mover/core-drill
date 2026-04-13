@@ -27,6 +27,7 @@ pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
             bucket,
             platform,
             region,
+            ..
         } => {
             lines.push(Line::from(vec![
                 Span::styled("  Organization:  ", app.theme.text_dim),
@@ -57,7 +58,7 @@ pub(super) fn render_repo_overview<'a>(app: &'a App) -> Vec<Line<'a>> {
                 Span::styled(path.clone(), app.theme.text),
             ]));
         }
-        crate::app::RepoIdentity::S3 { url } => {
+        crate::app::RepoIdentity::S3 { url, .. } => {
             lines.push(Line::from(vec![
                 Span::styled("  Location:      ", app.theme.text_dim),
                 Span::styled(url.clone(), app.theme.text),

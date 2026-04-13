@@ -202,7 +202,9 @@ async fn run_json(
         Some(
             Command::Alias { .. }
             | Command::InstallCompletions { .. }
-            | Command::SelfUpdate,
+            | Command::SelfUpdate
+            | Command::Script { .. }
+            | Command::ScriptDeps { .. },
         ) => unreachable!("handled before repo open"),
     }
     Ok(())
@@ -312,7 +314,9 @@ async fn run_md(
         Some(
             Command::Alias { .. }
             | Command::InstallCompletions { .. }
-            | Command::SelfUpdate,
+            | Command::SelfUpdate
+            | Command::Script { .. }
+            | Command::ScriptDeps { .. },
         ) => unreachable!("handled before repo open"),
     }
     Ok(())

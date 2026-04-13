@@ -128,6 +128,80 @@ pub enum Command {
         limit: Option<usize>,
     },
 
+    /// Generate a ready-to-run script for connecting to this repo
+    ///
+    /// Language is inferred from the file extension.
+    /// No network connection needed — writes the file directly.
+    ///
+    /// Base dependencies (icechunk/arraylake, zarr, xarray) are included
+    /// automatically. Add extra packages via ~/.config/core-drill/config.toml:
+    ///
+    ///   script_deps = ["matplotlib", "pandas"]
+    ///
+    /// Examples:
+    ///   core-drill s3://bucket/prefix --anonymous script connect.py
+    ///   core-drill s3://bucket/prefix script analysis.rs --branch v2
+    ///   core-drill era5 script explore.ipynb
+    ///   core-drill era5 script notebook.py --marimo
+    Script {
+        /// Output filename (e.g. connect.py, analysis.rs, explore.ipynb)
+        ///
+        /// Language is inferred from the extension:
+        ///   .py    → Python script with PEP 723 inline metadata (run with uv)
+        ///   .rs    → Rust with tokio
+        ///   .ipynb → Jupyter notebook with juv/uv metadata (run with juv)
+        ///
+        /// Use --marimo with a .py file to generate a marimo notebook instead.
+        filename: String,
+
+        /// Branch to open (default: main)
+        #[arg(short, long, default_value = "main")]
+        branch: String,
+
+        /// Snapshot ID to open (overrides --branch)
+        #[arg(short, long)]
+        snapshot: Option<String>,
+
+        /// Zarr group path to navigate to (e.g. /data/temperature)
+        #[arg(short, long)]
+        path: Option<String>,
+
+        /// Cloud storage region (e.g., us-east-1). Overrides top-level --region.
+        #[arg(long)]
+        region: Option<String>,
+
+        /// Storage endpoint URL (for S3-compatible services). Overrides top-level --endpoint-url.
+        #[arg(long)]
+        endpoint_url: Option<String>,
+
+        /// Use anonymous (unsigned) requests. Overrides top-level --anonymous.
+        #[arg(long, alias = "anon")]
+        anonymous: bool,
+
+        /// Arraylake API endpoint. Overrides top-level --arraylake-api.
+        #[arg(long)]
+        arraylake_api: Option<String>,
+
+        /// Generate a marimo reactive notebook instead of a plain Python script
+        ///
+        /// Only valid with .py files. Adds marimo cell structure and
+        /// marimo to the PEP 723 dependencies.
+        #[arg(long)]
+        marimo: bool,
+
+        /// Overwrite the file if it already exists
+        #[arg(short, long)]
+        force: bool,
+
+        /// Run the script after writing
+        ///
+        /// If the file already exists and is unchanged, runs it directly.
+        /// If the file would change, errors unless --force is also passed.
+        /// Launches: uv run (.py), juv run (.ipynb), marimo edit (.py --marimo)
+        #[arg(long, alias = "exec")]
+        run: bool,
+    },
+
     /// Update core-drill to the latest release
     SelfUpdate,
 
@@ -138,6 +212,21 @@ pub enum Command {
     InstallCompletions {
         /// Shell to generate completions for (auto-detected from $SHELL if omitted)
         shell: Option<clap_complete::Shell>,
+    },
+
+    /// Manage extra Python packages included in generated scripts
+    ///
+    /// These packages are added to every `core-drill script` output
+    /// alongside the base deps (icechunk/arraylake, zarr, xarray).
+    /// Stored in ~/.config/core-drill/config.toml.
+    ///
+    /// Examples:
+    ///   core-drill script-deps add matplotlib pandas
+    ///   core-drill script-deps list
+    ///   core-drill script-deps rm matplotlib
+    ScriptDeps {
+        #[command(subcommand)]
+        command: ScriptDepsCommand,
     },
 
     /// Manage saved repo aliases
@@ -195,6 +284,29 @@ pub enum AliasCommand {
     Remove {
         /// Name of the alias to remove
         name: String,
+    },
+}
+
+/// Subcommands for managing script dependencies
+#[derive(Subcommand, Debug)]
+pub enum ScriptDepsCommand {
+    /// List all extra script dependencies
+    #[command(alias = "ls")]
+    List,
+
+    /// Add one or more packages
+    Add {
+        /// Package names (e.g. matplotlib pandas)
+        #[arg(required = true)]
+        packages: Vec<String>,
+    },
+
+    /// Remove one or more packages
+    #[command(alias = "rm")]
+    Remove {
+        /// Package names to remove
+        #[arg(required = true)]
+        packages: Vec<String>,
     },
 }
 

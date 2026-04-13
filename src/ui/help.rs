@@ -12,11 +12,11 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // title bar
-            Constraint::Min(6),    // main area (sidebar + detail)
-            Constraint::Length(8), // search + global row
-            Constraint::Length(8), // bottom panel
-            Constraint::Length(1), // hint bar
+            Constraint::Length(1),  // title bar
+            Constraint::Min(6),     // main area (sidebar + detail)
+            Constraint::Length(17), // search + global row
+            Constraint::Length(8),  // bottom panel
+            Constraint::Length(1),  // hint bar
         ])
         .split(area);
 
@@ -65,18 +65,18 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(Span::styled(" Navigation", t.text_bold)),
         kv(t, "j/k ↑↓", "Move selection"),
         kv(t, "gg / G", "Jump to top / bottom"),
-        kv(t, "H / M / L", "Screen top / middle / bottom"),
-        kv(t, "Ctrl+d/u", "Half-page down / up"),
-        kv(t, "Ctrl+f/b", "Full page down / up"),
-        kv(t, "{ / }", "Jump 10 items up / down"),
-        kv(t, "n / N", "Next / prev search match"),
-        kv(t, "Enter", "Toggle expand/collapse"),
-        kv(t, "l / →", "Focus detail pane"),
+        kv(t, "H / M / L", "Top / mid / bottom"),
+        kv(t, "Ctrl+d/u", "Half-page"),
+        kv(t, "Ctrl+f/b", "Full page"),
+        kv(t, "{ / }", "Jump 10"),
+        kv(t, "n / N", "Next / prev match"),
+        kv(t, "Enter", "Expand / collapse"),
+        kv(t, "l / →", "Focus detail"),
         Line::from(""),
-        Line::from(Span::styled(" Fold (vim-style)", t.text_bold)),
-        kv(t, "zo / zc", "Open / close group"),
-        kv(t, "zO / zC", "Open / close with descendants"),
-        kv(t, "zR / zM", "Open / close entire tree"),
+        Line::from(Span::styled(" Fold", t.text_bold)),
+        kv(t, "zo / zc", "Open / close"),
+        kv(t, "zO / zC", "Recursive"),
+        kv(t, "zR / zM", "All"),
     ];
     let sidebar_block = theme::panel("[1] Tree", false, t);
     frame.render_widget(
@@ -152,11 +152,16 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(Span::styled(" Global", t.text_bold)),
         kv(t, "q", "Quit"),
-        kv(t, "? / Esc", "Toggle help"),
-        kv(t, "R", "Retry failed data loads"),
+        kv(t, "?", "Toggle help"),
+        kv(t, "R", "Refresh"),
         kv(t, "t", "Toggle bottom panel"),
-        kv(t, "1 / 2 / 3", "Focus sidebar / detail / bottom"),
-        kv(t, "Ctrl+hjkl", "Move panes (zellij/tmux passthrough)"),
+        kv(t, "1 / 2 / 3", "Focus pane"),
+        kv(t, "Ctrl+hjkl", "Move panes"),
+        Line::from(""),
+        Line::from(Span::styled(" Yank (clipboard)", t.text_bold)),
+        kv(t, "yy", "Yank current selection"),
+        kv(t, "yp", "Yank Python connect snippet"),
+        kv(t, "yr", "Yank Rust connect snippet"),
     ];
     let global_block = theme::panel("Global", false, t);
     frame.render_widget(
@@ -193,7 +198,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
     );
 
     // ─── Hint bar ───────────────────────
-    let hint = Line::from(Span::styled(" Press ? or Esc to close help", t.text_dim));
+    let hint = Line::from(Span::styled(" Press q or ? to close help", t.text_dim));
     frame.render_widget(Paragraph::new(hint), hint_area);
 }
 

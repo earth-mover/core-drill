@@ -6,7 +6,8 @@ impl App {
     /// Build the full identifier path for tui_tree_widget selection.
     /// For "/stations/latitude" returns ["/stations", "/stations/latitude"].
     pub(crate) fn tree_identifier_path(path: &str) -> Vec<String> {
-        let mut parts = Vec::new();
+        // Start with root "/" since the tree has a selectable root node
+        let mut parts = vec!["/".to_string()];
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let mut built = String::new();
         for seg in segments {
@@ -120,7 +121,8 @@ impl App {
     /// the first meaningful level of the hierarchy.
     pub(crate) fn auto_expand_tree(&mut self) {
         let mut current_path = "/".to_string();
-        let mut identifier_path: Vec<String> = Vec::new();
+        let mut identifier_path: Vec<String> = vec!["/".to_string()];
+        self.tree_state.open(identifier_path.clone());
 
         while let Some(LoadState::Loaded(children)) = self.store.node_children.get(&current_path) {
             if children.is_empty() {

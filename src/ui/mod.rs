@@ -203,7 +203,7 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
                     visible
                 });
 
-            let tree_items: Vec<tui_tree_widget::TreeItem<String>> = nodes
+            let children: Vec<tui_tree_widget::TreeItem<String>> = nodes
                 .iter()
                 .filter(|node| {
                     visible_paths
@@ -212,6 +212,15 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
                 })
                 .map(|node| build_tree_item(node, &app.store, 0, visible_paths.as_ref()))
                 .collect();
+
+            // Wrap in a selectable root "/" node
+            let root_item = tui_tree_widget::TreeItem::new(
+                "/".to_string(),
+                "/",
+                children,
+            )
+            .expect("unique root identifier");
+            let tree_items = vec![root_item];
 
             let tree = tui_tree_widget::Tree::new(&tree_items)
                 .expect("unique identifiers")
@@ -228,6 +237,10 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
                 .node_open_symbol("▼ ")
                 .node_no_children_symbol("─ ");
 
+            // Root is always open — guard against zc/zM closing it
+            static ROOT_ID: std::sync::LazyLock<Vec<String>> =
+                std::sync::LazyLock::new(|| vec!["/".to_string()]);
+            app.tree_state.open(ROOT_ID.clone());
             frame.render_stateful_widget(tree, chunks[1], &mut app.tree_state);
         }
     }
@@ -306,6 +319,32 @@ fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
+    // Transient yank confirmation — shown for 2 seconds
+    if let Some((ref msg, instant)) = app.yank_message {
+        if instant.elapsed().as_secs() < 2 {
+            let line = Line::from(vec![Span::styled(
+                format!(" \u{2713} {msg}"),
+                app.theme.status_ok,
+            )]);
+            frame.render_widget(Paragraph::new(line), area);
+            return;
+        }
+    }
+
+    // Show pending y-command indicator
+    if app.pending_y {
+        let line = Line::from(vec![
+            Span::styled(" y", app.theme.text_bold),
+            Span::styled("\u{258F}", app.theme.text),
+            Span::styled(
+                "  y:yank selection  p:Python snippet  r:Rust snippet",
+                app.theme.text_dim,
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+        return;
+    }
+
     // Show pending g-command indicator (gg = go to top)
     if app.pending_g {
         let line = Line::from(vec![
@@ -333,11 +372,11 @@ fn render_hint_bar(app: &App, frame: &mut Frame, area: Rect) {
 
     let hints = match app.focused_pane {
         Pane::Sidebar => {
-            " q:quit  ?:help  /:search  j/k:navigate  Enter:expand  zo/zc:open/close  zR/zM:all "
+            " q:quit  ?:help  /:search  j/k:navigate  Enter:expand  zo/zc:fold  y:yank "
         }
-        Pane::Detail => " q:quit  ?:help  R:retry  t:toggle log  j/k:scroll  h/l:Node/Repo ",
+        Pane::Detail => " q:quit  ?:help  R:refresh  t:toggle log  j/k:scroll  h/l:tabs  y:yank ",
         Pane::Bottom => {
-            " q:quit  ?:help  R:retry  t:toggle log  /:search  j/k:navigate  Tab:next tab  Enter:select "
+            " q:quit  ?:help  /:search  j/k:navigate  Tab:next tab  Enter:select  y:yank "
         }
     };
     frame.render_widget(

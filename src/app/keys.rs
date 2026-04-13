@@ -10,7 +10,7 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
         // Help overlay: ? or Esc closes it, all other keys ignored
         if self.show_help {
-            if matches!(key.code, KeyCode::Char('?') | KeyCode::Esc) {
+            if matches!(key.code, KeyCode::Char('q') | KeyCode::Char('?')) {
                 self.show_help = false;
             }
             return;
@@ -155,6 +155,32 @@ impl App {
             return Action::None;
         }
 
+        // Handle pending `y` prefix for yank commands (yy=selection, yp=Python, yr=Rust)
+        if self.pending_y {
+            self.pending_y = false;
+            match key.code {
+                KeyCode::Char('y') => {
+                    // yy — yank current selection
+                    let text = self.yank_selection_text();
+                    if !text.is_empty() {
+                        self.yank_text(text, "selection");
+                    }
+                }
+                KeyCode::Char('p') => {
+                    let ctx = self.code_context();
+                    let (python, _) = crate::codegen::generate(&self.repo_info, &ctx);
+                    self.yank_text(python, "Python snippet");
+                }
+                KeyCode::Char('r') => {
+                    let ctx = self.code_context();
+                    let (_, rust) = crate::codegen::generate(&self.repo_info, &ctx);
+                    self.yank_text(rust, "Rust snippet");
+                }
+                _ => {} // cancel — unknown y-command
+            }
+            return Action::None;
+        }
+
         // Global keys
         match key.code {
             KeyCode::Char('q') => return Action::Quit,
@@ -185,6 +211,10 @@ impl App {
             }
             KeyCode::Char('R') => {
                 self.retry_failed();
+                return Action::None;
+            }
+            KeyCode::Char('y') => {
+                self.pending_y = true;
                 return Action::None;
             }
             _ => {}
