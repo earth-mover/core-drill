@@ -65,6 +65,3 @@ lto = "thin"
 [profile.dist]
 inherits = "release"
 lto = "thin"
-
-[workspace.metadata.dist]
-install-updater = true
