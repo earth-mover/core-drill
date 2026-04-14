@@ -210,7 +210,7 @@ pub async fn open_repo(
 /// Detect if a repo string is an Arraylake reference.
 /// Explicit: `al:org/repo`. Implicit: `org/repo` that doesn't exist on disk.
 fn looks_like_arraylake_ref(s: &str) -> bool {
-    s.starts_with("al:")
+    s.starts_with("al:") || s.starts_with("al://")
 }
 
 /// Open a repo via Arraylake, handling credentials automatically.
@@ -220,7 +220,11 @@ async fn open_via_arraylake(
     al_ref: &str,
     api_url: Option<&str>,
 ) -> Result<(icechunk::Repository, app::RepoIdentity)> {
-    let ref_str = al_ref.strip_prefix("al:").unwrap_or(al_ref).trim_end_matches('/');
+    let ref_str = al_ref
+        .strip_prefix("al://")
+        .or_else(|| al_ref.strip_prefix("al:"))
+        .unwrap_or(al_ref)
+        .trim_end_matches('/');
     let (org, repo_name) = ref_str.split_once('/').ok_or_else(|| {
         color_eyre::eyre::eyre!("Invalid Arraylake ref: expected 'al:org/repo', got '{al_ref}'")
     })?;

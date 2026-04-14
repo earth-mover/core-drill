@@ -40,8 +40,12 @@ impl RepoIdentity {
         anonymous: bool,
         arraylake_api: Option<String>,
     ) -> Self {
-        if url.starts_with("al:") {
-            let ref_str = url.strip_prefix("al:").unwrap_or(url).trim_end_matches('/');
+        if url.starts_with("al:") || url.starts_with("al://") {
+            let ref_str = url
+                .strip_prefix("al://")
+                .or_else(|| url.strip_prefix("al:"))
+                .unwrap_or(url)
+                .trim_end_matches('/');
             let (org, repo) = ref_str
                 .split_once('/')
                 .unwrap_or((ref_str, "unknown"));

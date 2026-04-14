@@ -56,7 +56,7 @@ pub fn generate_script(
 pub fn run_hint(format: &ScriptFormat, filename: &str) -> String {
     match format {
         ScriptFormat::Python => format!("uv run {filename}"),
-        ScriptFormat::Rust => format!("cargo script {filename}"),
+        ScriptFormat::Rust => format!("cargo +nightly -Zscript {filename}"),
         ScriptFormat::Jupyter => format!("juv run {filename}"),
         ScriptFormat::Marimo => format!("marimo edit {filename}"),
     }
@@ -70,7 +70,7 @@ pub fn run_commands(format: &ScriptFormat, filename: &str) -> Vec<(&'static str,
             ("uv", vec!["run".into(), filename.into()]),
         ],
         ScriptFormat::Rust => vec![
-            ("cargo", vec!["script".into(), filename.into()]),
+            ("cargo", vec!["+nightly".into(), "-Zscript".into(), filename.into()]),
         ],
         ScriptFormat::Jupyter => vec![
             ("juv", vec!["run".into(), filename.into()]),
@@ -126,8 +126,19 @@ fn assemble_rust(setup: &str, ctx: &CodeContext, is_arraylake: bool) -> String {
         format!("&VersionInfo::BranchTipRef(\"{}\".into())", ctx.branch)
     };
 
+    let frontmatter = "#!/usr/bin/env -S cargo +nightly -Zscript\n\
+                        ---\n\
+                        [package]\n\
+                        edition = \"2021\"\n\
+                        \n\
+                        [dependencies]\n\
+                        icechunk = \"2\"\n\
+                        tokio = { version = \"1\", features = [\"full\"] }\n\
+                        ---";
+
     format!(
-        r#"{setup}
+        r#"{frontmatter}
+{setup}
     let repo = Repository::open(None, storage, Default::default()).await?;
     let session = repo
         .readonly_session({version_info})
@@ -361,7 +372,8 @@ repo = icechunk.Repository.open(storage=storage)
     );
 
     let rust = format!(
-        r#"use icechunk::{{Repository, VersionInfo}};
+        r#"use icechunk::Repository;
+use icechunk::repository::VersionInfo;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {{
@@ -420,11 +432,14 @@ repo = icechunk.Repository.open(storage=storage)
     }
     if let Some(e) = endpoint_url {
         config_lines.push(format!("        endpoint_url: Some(\"{e}\".into()),"));
+    } else {
+        config_lines.push("        endpoint_url: None,".to_string());
     }
-    if anonymous {
-        config_lines.push("        anonymous: true,".to_string());
-    }
-    config_lines.push("        ..Default::default()".to_string());
+    config_lines.push(format!("        anonymous: {},", anonymous));
+    config_lines.push("        allow_http: false,".to_string());
+    config_lines.push("        force_path_style: false,".to_string());
+    config_lines.push("        network_stream_timeout_seconds: None,".to_string());
+    config_lines.push("        requester_pays: false,".to_string());
     let config_body = config_lines.join("\n");
 
     let prefix_arg = if prefix.is_empty() {
@@ -446,7 +461,8 @@ repo = icechunk.Repository.open(storage=storage)
     };
 
     let rust = format!(
-        r#"use icechunk::{{Repository, VersionInfo}};
+        r#"use icechunk::Repository;
+use icechunk::repository::VersionInfo;
 {creds_import}
 
 #[tokio::main]
@@ -493,7 +509,8 @@ repo = icechunk.Repository.open(storage=storage)
     };
 
     let rust = format!(
-        r#"use icechunk::{{Repository, VersionInfo}};
+        r#"use icechunk::Repository;
+use icechunk::repository::VersionInfo;
 use icechunk::storage::new_gcs_storage;
 
 #[tokio::main]
@@ -540,7 +557,8 @@ repo = icechunk.Repository.open(storage=storage)
     };
 
     let rust = format!(
-        r#"use icechunk::{{Repository, VersionInfo}};
+        r#"use icechunk::Repository;
+use icechunk::repository::VersionInfo;
 use icechunk::storage::new_azure_blob_storage;
 
 #[tokio::main]
@@ -571,7 +589,8 @@ repo = icechunk.Repository.open(storage=storage)
     );
 
     let rust = format!(
-        r#"use icechunk::{{Repository, VersionInfo}};
+        r#"use icechunk::Repository;
+use icechunk::repository::VersionInfo;
 use icechunk::storage::new_http_storage;
 
 #[tokio::main]

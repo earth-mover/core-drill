@@ -21,6 +21,7 @@ pub struct Cli {
     ///   az://container/prefix        Azure Blob Storage
     ///   https://host/path            HTTP (read-only)
     ///   al:myorg/myrepo              Arraylake (credentials from ~/.arraylake/token.json)
+    ///   al://myorg/myrepo            Arraylake (alternate URL-style syntax)
     #[arg(value_name = "REPO", add = ArgValueCompleter::new(complete_repo))]
     pub repo: Option<String>,
 

@@ -129,13 +129,15 @@ Storage flags (`--region`, `--anonymous`, `--endpoint-url`, `--arraylake-api`) w
 
 ### Extra dependencies
 
-Add packages that should be included in every generated script via `~/.config/core-drill/config.toml`:
+Add packages that should be included in every generated script:
 
-```toml
-script_deps = ["matplotlib", "pandas"]
+```bash
+core-drill script-deps add matplotlib pandas
+core-drill script-deps list
+core-drill script-deps rm matplotlib
 ```
 
-These are added alongside the base deps (icechunk/arraylake, zarr, xarray).
+These are stored in `~/.config/core-drill/config.toml` and added alongside the base deps (icechunk/arraylake, zarr, xarray).
 
 ### TUI yank
 
