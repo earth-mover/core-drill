@@ -9,6 +9,8 @@ The decoding matches `core-drill <repo> object`, `chunk-ref`, and `chunk-changes
 
 ## Opening the viewer
 
+![The repo page: branches, tags, and every snapshot with links to its snapshot and transaction log](../DOCS/images/web-viewer-repo.png)
+
 Run:
 
 ```bash
@@ -61,6 +63,8 @@ The transaction log covers one commit. To compare two versions further apart, cl
 
 ### How does a manifest record a chunk deletion?
 
+![Classify changes on the "Delete native chunk (1, 1)" commit: coordinate [1, 1] is deleted, with the parent manifest position and no ref after](../DOCS/images/web-viewer-classify-deletion.png)
+
 A manifest has no entry for a deleted chunk. The transaction log lists the coordinate in `updated_chunks` without the kind of change. To see the deletion, open the transaction log of "Delete native chunk (1, 1)" and click **Classify changes**:
 
 - The log's `updated_chunks` lists `/native` coordinate `[1, 1]`.
@@ -70,6 +74,8 @@ A manifest has no entry for a deleted chunk. The transaction log lists the coord
 A coordinate with no ref reads as the array's fill value. On the snapshot page, **Find chunk** with `1,1` on `/native` reports no ref.
 
 ### What checksum is stored for a virtual ref?
+
+![Find chunk 8 on /virtual: the ref's manifest position, decoded location, and checksum_etag](../DOCS/images/web-viewer-find-chunk.png)
 
 1. On the **repo** page, click the snapshot at the tip of `main`.
 2. In the `/virtual` row, enter a coordinate in **Find chunk** and press **Find**.
