@@ -38,7 +38,7 @@ src/
   theme.rs             — Earthmover brand colors, panel/widget helpers
   multiplexer.rs       — zellij/tmux detection, Ctrl+hjkl passthrough at pane edges
   util.rs              — shared path helpers: parent_path(), leaf_name()
-  mcp.rs               — MCP server (11 tools), glob matching, collapsed tree output (thin layer: delegates to fetch + output)
+  mcp.rs               — MCP server (12 tools), glob matching, collapsed tree output (thin layer: delegates to fetch + output)
   output/
     mod.rs             — CLI output dispatch (markdown/JSON), REPL
     format.rs          — all fmt_* functions: node detail, tree lines, chunk stats, diffs, repo config, repo overview

@@ -781,6 +781,21 @@ impl CoreDrillServer {
         let extra_deps = crate::config::load().map(|c| c.script_deps).unwrap_or_default();
         crate::codegen::generate_script(identity, &ctx, &format, &extra_deps)
     }
+
+    #[tool(
+        description = "Total deduplicated on-disk storage size across all history. Lists all objects in storage (chunks, manifests, snapshots) and sums their compressed sizes. May be slow for large repositories with millions of chunks."
+    )]
+    async fn storage_size(&self, _params: Parameters<EmptyParams>) -> String {
+        let start = std::time::Instant::now();
+        info!("MCP storage_size");
+        let repo = require_repo!(self);
+        let result = match crate::fetch::fetch_repo_storage_size(&repo).await {
+            Ok(size) => output::fmt_repo_storage_size(&size),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
+        };
+        info!("MCP storage_size completed in {:?}", start.elapsed());
+        result
+    }
 }
 
 /// Convert a simple glob pattern to a matching function.

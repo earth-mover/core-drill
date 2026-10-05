@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     // with completions (including alias names) and exit immediately.
     clap_complete::CompleteEnv::with_factory(Cli::command).complete();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
     // Suppress icechunk's internal ERROR logs by default — they fire during
     // normal shutdown when manifest pre-load tasks are cancelled, and look
@@ -77,6 +77,24 @@ async fn main() -> Result<()> {
             );
         }
         _ => {}
+    }
+
+    // Commands that produce output default to markdown if no --output is given.
+    // This avoids accidentally launching the TUI when running e.g. `core-drill <repo> storage-size`.
+    let has_output_command = matches!(
+        cli.command,
+        Some(
+            cli::Command::Branches
+                | cli::Command::Tags
+                | cli::Command::Log { .. }
+                | cli::Command::Tree { .. }
+                | cli::Command::OpsLog { .. }
+                | cli::Command::StorageSize
+                | cli::Command::Info
+        )
+    );
+    if has_output_command && cli.output.is_none() {
+        cli.output = Some(cli::OutputFormat::Md);
     }
 
     // For TUI mode (no --output, --serve, --repl), show loading screen while opening

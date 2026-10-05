@@ -199,6 +199,10 @@ async fn run_json(
             let entries = fetch_ops_log(&repo, limit).await?;
             println!("{}", serde_json::to_string_pretty(&entries)?);
         }
+        Some(Command::StorageSize) => {
+            let size = fetch_repo_storage_size(&repo).await?;
+            println!("{}", serde_json::to_string_pretty(&size)?);
+        }
         Some(
             Command::Alias { .. }
             | Command::InstallCompletions { .. }
@@ -310,6 +314,10 @@ async fn run_md(
                     println!("| {} | {} |", ts, entry.description);
                 }
             }
+        }
+        Some(Command::StorageSize) => {
+            let size = fetch_repo_storage_size(&repo).await?;
+            println!("{}", format::fmt_repo_storage_size(&size));
         }
         Some(
             Command::Alias { .. }

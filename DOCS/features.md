@@ -145,6 +145,7 @@ All subcommands work with `--output json` and `--output md`.
 | `log [-r ref] [-n limit]` | Snapshot history with ancestry |
 | `tree [-r ref] [-p path]` | Node tree at a given ref, optional path filter |
 | `ops-log [-n limit]` | Operations log (mutation history) |
+| `storage-size` | On-disk bytes and object counts for chunks, manifests, and snapshots across all history. Lists every object, so slow on large repos |
 
 ### Examples
 ```bash
@@ -174,6 +175,7 @@ When running with `--serve`, these tools are exposed:
 | `tags` | — | List all tags with snapshot IDs |
 | `log` | `ref`, `limit` | Snapshot history for a branch/tag/snapshot |
 | `tree` | `ref`, `path` | Node tree; use `path` to get detailed array metadata |
+| `storage_size` | — | On-disk bytes and object counts across all history (lists every object) |
 
 ### Planned MCP tools (not yet implemented)
 - `ops-log` — Mutation history

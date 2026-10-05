@@ -1050,3 +1050,49 @@ pub(crate) async fn fetch_repo_config(repo: &Repository) -> color_eyre::Result<R
         virtual_chunk_containers: vcc,
     })
 }
+
+/// Fetch total deduplicated on-disk storage size across all history by listing
+/// all chunks, manifests, and snapshots concurrently.
+pub(crate) async fn fetch_repo_storage_size(
+    repo: &Repository,
+) -> color_eyre::Result<RepoStorageSize> {
+    let am = repo.asset_manager();
+    let (chunks, manifests, snapshots) = tokio::join!(
+        sum_listing(am.list_chunks()),
+        sum_listing(am.list_manifests()),
+        sum_listing(am.list_snapshots()),
+    );
+    let (chunk_bytes, chunk_count) = chunks?;
+    let (manifest_bytes, manifest_count) = manifests?;
+    let (snapshot_bytes, snapshot_count) = snapshots?;
+
+    Ok(RepoStorageSize {
+        chunk_bytes,
+        chunk_count,
+        manifest_bytes,
+        manifest_count,
+        snapshot_bytes,
+        snapshot_count,
+    })
+}
+
+/// Sum `(bytes, count)` over an object listing.
+async fn sum_listing<'a, Id>(
+    listing: impl std::future::Future<
+        Output = icechunk::repository::RepositoryResult<
+            futures::stream::BoxStream<
+                'a,
+                icechunk::repository::RepositoryResult<icechunk::storage::ListInfo<Id>>,
+            >,
+        >,
+    >,
+) -> color_eyre::Result<(u64, u64)> {
+    use futures::TryStreamExt;
+    listing
+        .await?
+        .try_fold((0u64, 0u64), |(bytes, count), info| async move {
+            Ok((bytes + info.size_bytes, count + 1))
+        })
+        .await
+        .map_err(Into::into)
+}

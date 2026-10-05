@@ -230,6 +230,17 @@ pub enum Command {
         command: ScriptDepsCommand,
     },
 
+    /// Show total deduplicated on-disk storage size across all history.
+    ///
+    /// Lists all chunks, manifests, and snapshots in object storage to compute
+    /// the total compressed bytes. Virtual chunks live outside the repo and are
+    /// not counted. May be slow for large repositories.
+    ///
+    /// Examples:
+    ///   core-drill s3://bucket/prefix --anonymous storage-size
+    ///   core-drill s3://bucket/prefix --anonymous --output json storage-size
+    StorageSize,
+
     /// Manage saved repo aliases
     ///
     /// Aliases let you refer to frequently-used repositories by short names.

@@ -138,6 +138,27 @@ pub struct FeatureFlagInfo {
     pub explicit: bool,
 }
 
+/// Total deduplicated on-disk storage size across all history.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RepoStorageSize {
+    pub chunk_bytes: u64,
+    pub chunk_count: u64,
+    pub manifest_bytes: u64,
+    pub manifest_count: u64,
+    pub snapshot_bytes: u64,
+    pub snapshot_count: u64,
+}
+
+impl RepoStorageSize {
+    pub fn total_bytes(&self) -> u64 {
+        self.chunk_bytes + self.manifest_bytes + self.snapshot_bytes
+    }
+
+    pub fn total_objects(&self) -> u64 {
+        self.chunk_count + self.manifest_count + self.snapshot_count
+    }
+}
+
 /// A single entry from the repository operations log
 #[derive(Debug, Clone, Serialize)]
 pub struct OpsLogEntry {

@@ -7,7 +7,7 @@ use humansize::{BINARY, format_size};
 
 use crate::fetch::{FlatNode, FlatNodeType};
 use crate::store::types::{
-    BranchInfo, ChunkStats, DiffSummary, RepoConfig, SnapshotEntry, TagInfo,
+    BranchInfo, ChunkStats, DiffSummary, RepoConfig, RepoStorageSize, SnapshotEntry, TagInfo,
 };
 
 // ─── Primitive helpers ────────────────────────────────────────
@@ -609,5 +609,32 @@ pub(crate) fn fmt_repo_overview(
     }
 
     out.push_str("\n\n---\n*Next steps: `tree` (browse arrays), `search` (find array by name), `log` (full history), `diff` (snapshot changes), `ops_log` (mutation history), `config` (repo settings)*");
+    out
+}
+
+/// Format a human-readable storage size report from `RepoStorageSize`.
+pub(crate) fn fmt_repo_storage_size(size: &RepoStorageSize) -> String {
+    let mut out = String::from("## On-Disk Storage\n\n");
+    out.push_str("| Category | Size | Objects |\n|----------|------|--------|\n");
+    out.push_str(&format!(
+        "| Chunks | {} | {} |\n",
+        format_size(size.chunk_bytes, BINARY),
+        size.chunk_count,
+    ));
+    out.push_str(&format!(
+        "| Manifests | {} | {} |\n",
+        format_size(size.manifest_bytes, BINARY),
+        size.manifest_count,
+    ));
+    out.push_str(&format!(
+        "| Snapshots | {} | {} |\n",
+        format_size(size.snapshot_bytes, BINARY),
+        size.snapshot_count,
+    ));
+    out.push_str(&format!(
+        "| **Total** | **{}** | **{}** |\n",
+        format_size(size.total_bytes(), BINARY),
+        size.total_objects(),
+    ));
     out
 }
