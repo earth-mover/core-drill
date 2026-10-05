@@ -16,6 +16,7 @@ mod theme;
 mod tui;
 mod ui;
 pub mod util;
+mod web;
 
 use std::sync::Arc;
 
@@ -108,6 +109,24 @@ async fn main() -> Result<()> {
     );
     if has_output_command && cli.output.is_none() {
         cli.output = Some(cli::OutputFormat::Md);
+    }
+
+    if let Some(cli::Command::Web { port, no_open }) = cli.command {
+        let repo_str = cli
+            .repo
+            .clone()
+            .ok_or_else(|| color_eyre::eyre::eyre!("A repo argument is required"))?;
+        let (repository, repo_id) = open_repo(
+            &repo_str,
+            cli.arraylake_api.as_deref(),
+            &repo::StorageOverrides {
+                region: cli.region.clone(),
+                endpoint_url: cli.endpoint_url.clone(),
+                anonymous: cli.anonymous,
+            },
+        )
+        .await?;
+        return web::serve(repository, repo_id.display_short(), port, !no_open).await;
     }
 
     // For TUI mode (no --output, --serve, --repl), show loading screen while opening

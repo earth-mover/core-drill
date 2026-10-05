@@ -229,7 +229,8 @@ async fn run_json(
             | Command::InstallCompletions { .. }
             | Command::SelfUpdate
             | Command::Script { .. }
-            | Command::ScriptDeps { .. },
+            | Command::ScriptDeps { .. }
+            | Command::Web { .. },
         ) => unreachable!("handled before repo open"),
     }
     Ok(())
@@ -366,7 +367,8 @@ async fn run_md(
             | Command::InstallCompletions { .. }
             | Command::SelfUpdate
             | Command::Script { .. }
-            | Command::ScriptDeps { .. },
+            | Command::ScriptDeps { .. }
+            | Command::Web { .. },
         ) => unreachable!("handled before repo open"),
     }
     Ok(())

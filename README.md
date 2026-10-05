@@ -161,7 +161,13 @@ core-drill ./repo chunk-ref /temperature 0,3,1        # manifest entry for one c
 core-drill ./repo chunk-changes main                  # chunks a commit added, overwrote, or deleted
 ```
 
-See [DOCS/raw-inspection.md](DOCS/raw-inspection.md). The same views run in the browser with no install: [web/README.md](web/README.md).
+To click through the same files in your browser:
+
+```bash
+core-drill ./repo web          # also works for s3://, gs://, and al: repos
+```
+
+See [DOCS/raw-inspection.md](DOCS/raw-inspection.md) and [web/README.md](web/README.md).
 
 ## Updating
 

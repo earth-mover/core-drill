@@ -40,6 +40,7 @@ src/
   theme.rs             — Earthmover brand colors, panel/widget helpers
   multiplexer.rs       — zellij/tmux detection, Ctrl+hjkl passthrough at pane edges
   util.rs              — shared path helpers: parent_path(), leaf_name()
+  web.rs               — `web` command: axum server on 127.0.0.1 for the embedded web/ viewer; /repo/* proxies repo objects
   raw/                 — schema-driven flatbuffer decoding (pure, no I/O)
     mod.rs             — FileKind, open() (header, zstd, icechunk verifier), OpenedFile::walk()
     header.rs          — 39-byte file header parsing and body decompression

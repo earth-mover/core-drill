@@ -148,6 +148,7 @@ All subcommands work with `--output json` and `--output md`.
 | `object <target> [--at path] [-n items] [-s ref]` | Decode a raw metadata file field by field (see [raw-inspection.md](raw-inspection.md)) |
 | `chunk-ref <array> <coords> [-r ref]` | Manifest entry for one chunk: native ID, inline bytes, or virtual location and checksum |
 | `chunk-changes [ref] [-p path] [-n limit]` | Classify a commit's chunk changes as added, overwritten, rewritten, deleted |
+| `web [--port N] [--no-open]` | Open the metadata viewer in a browser, served from the binary on 127.0.0.1 |
 | `storage-size` | On-disk bytes and object counts for chunks, manifests, and snapshots across all history. Lists every object, so slow on large repos |
 
 ### Examples

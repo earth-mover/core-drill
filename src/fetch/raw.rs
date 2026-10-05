@@ -73,7 +73,8 @@ async fn candidate_paths(repo: &Repository, target: &str) -> Result<Vec<String>>
     Ok(vec![format!("{}/{id}", FileKind::Snapshot.dir())])
 }
 
-async fn fetch_bytes(repo: &Repository, path: &str) -> Result<Vec<u8>> {
+/// Raw bytes of one repo object, by repo-relative path.
+pub(crate) async fn fetch_bytes(repo: &Repository, path: &str) -> Result<Vec<u8>> {
     check_key(path)?;
     let am = repo.asset_manager();
     let (mut reader, _) = am

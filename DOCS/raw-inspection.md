@@ -8,7 +8,7 @@
 | `chunk-ref <array> <coords>` | Which manifest entry holds this chunk, and what does it record? |
 | `chunk-changes <commit>` | Which chunks did this commit add, overwrite, or delete? |
 
-All three work with `--output json` and as MCP tools (`object`, `chunk_ref`, `chunk_changes`). For the same views in a browser, see the [web viewer](../web/README.md).
+All three work with `--output json` and as MCP tools (`object`, `chunk_ref`, `chunk_changes`). `core-drill <repo> web` opens the same views in your browser ([web viewer](../web/README.md)).
 
 This page covers the CLI. For the file layout itself, see [icechunk-v2-format.md](icechunk-v2-format.md).
 

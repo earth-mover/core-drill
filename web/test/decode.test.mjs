@@ -5,13 +5,12 @@
 //   node web/test/decode.test.mjs
 //
 // Needs `cargo build` to have produced target/debug/core-drill (override with
-// CORE_DRILL_BIN). zstd comes from @bokuweb/zstd-wasm, installed on first run
-// into a temp directory outside the repo (override with ZSTD_WASM_PREFIX).
+// CORE_DRILL_BIN). zstd comes from web/vendor/zstd.js, the same file the page
+// loads.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -19,23 +18,12 @@ import vm from 'node:vm';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
 const bin = process.env.CORE_DRILL_BIN || path.join(root, 'target', 'debug', 'core-drill');
-const ZSTD_VERSION = '0.0.27';
-
-function loadZstdLib() {
-  const prefix = process.env.ZSTD_WASM_PREFIX || path.join(os.tmpdir(), 'core-drill-web-test');
-  const pkg = path.join(prefix, 'node_modules', '@bokuweb', 'zstd-wasm');
-  if (!existsSync(pkg)) {
-    console.log(`installing @bokuweb/zstd-wasm@${ZSTD_VERSION} into ${prefix}`);
-    execFileSync('npm', ['install', '--prefix', prefix, '--no-save', '--silent', `@bokuweb/zstd-wasm@${ZSTD_VERSION}`], { stdio: 'inherit' });
-  }
-  return createRequire(path.join(prefix, 'index.js'))('@bokuweb/zstd-wasm');
-}
-
 const require = createRequire(import.meta.url);
 const D = require('../decoder.js');
 const sandbox = { window: {} };
 vm.runInNewContext(readFileSync(path.join(root, 'web', 'schema.js'), 'utf8'), sandbox);
-const zlib = loadZstdLib();
+vm.runInNewContext(readFileSync(path.join(root, 'web', 'vendor', 'zstd.js'), 'utf8') + ';window.IcechunkZstd = IcechunkZstd;', sandbox);
+const zlib = sandbox.window.IcechunkZstd;
 await zlib.init();
 const decoder = D.create({ schema: sandbox.window.ICECHUNK_SCHEMA, zstd: D.zstdFromLib(zlib) });
 

@@ -311,6 +311,28 @@ pub enum Command {
         r#ref: String,
     },
 
+    /// Open the metadata viewer in your browser
+    ///
+    /// Serves the viewer (built into this binary) on 127.0.0.1 and opens it
+    /// pointed at this repo. Repo files are fetched through core-drill's own
+    /// connection, so local, S3, GCS, and Arraylake repos all work with no
+    /// CORS setup. Click from the repo file to snapshots, manifests, and
+    /// transaction logs; use Find chunk and Classify changes for lookups.
+    /// Stop with Ctrl+C.
+    ///
+    /// Examples:
+    ///   core-drill ./repo web
+    ///   core-drill al:org/repo web --port 8080 --no-open
+    Web {
+        /// Port to listen on (default: any free port)
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+
+        /// Print the URL without opening a browser
+        #[arg(long)]
+        no_open: bool,
+    },
+
     /// Classify the chunk changes in one commit as added, overwritten, or
     /// deleted
     ///

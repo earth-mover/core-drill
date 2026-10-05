@@ -5,8 +5,6 @@
   'use strict';
 
   const D = window.IcechunkDecoder;
-  const ZSTD_MODULE = 'https://cdn.jsdelivr.net/npm/@bokuweb/zstd-wasm@0.0.27/+esm';
-  const ZSTD_WASM = 'https://cdn.jsdelivr.net/npm/@bokuweb/zstd-wasm@0.0.27/dist/web/zstd.wasm';
   const PAGE = 50;
   const HEX_PAGE = 4096;
 
@@ -16,7 +14,7 @@
   const state = {
     decoder: null,
     zstdError: null,
-    source: null, // {type: 'dir' | 'url' | 'file', label, input?, region?}
+    source: null, // {type: 'served' | 'dir' | 'url' | 'file', label, input?, region?}
     repo: null,
     trail: [],
     renderToken: 0,
@@ -155,10 +153,8 @@
     return url.href;
   }
 
-  async function openUrl(input, region, navigate = true) {
-    let base;
-    try { base = urlBase(input, region); } catch (e) { view.replaceChildren(errorBox(e)); return false; }
-    const fetchBytes = async (rel) => {
+  function httpFetcher(base) {
+    return async (rel) => {
       let res;
       try { res = await fetch(base + rel, { mode: 'cors', credentials: 'omit' }); } catch (e) {
         throw new Error(`could not fetch ${base + rel}: ${e.message}. If the repository is on another origin, its server must allow CORS.`);
@@ -166,10 +162,21 @@
       if (!res.ok) throw new Error(`${base + rel}: HTTP ${res.status}`);
       return new Uint8Array(await res.arrayBuffer());
     };
+  }
+
+  async function openUrl(input, region, navigate = true) {
+    let base;
+    try { base = urlBase(input, region); } catch (e) { view.replaceChildren(errorBox(e)); return false; }
     await ready;
-    setSource({ type: 'url', label: base, input: input.trim(), region: region.trim() }, state.decoder.repo(fetchBytes));
+    setSource({ type: 'url', label: base, input: input.trim(), region: region.trim() }, state.decoder.repo(httpFetcher(base)));
     if (navigate) go({ path: 'repo' });
     return true;
+  }
+
+  async function openServed() {
+    const base = new URL(served.source, location.href).href;
+    const name = typeof served.name === 'string' && served.name ? served.name : base;
+    setSource({ type: 'served', label: name }, state.decoder.repo(httpFetcher(base)));
   }
 
   async function openDirectory(files) {
@@ -789,21 +796,22 @@
   // ─── Wiring ─────────────────────────────────────────────
 
   const ready = (async () => {
-    const status = $('status');
-    status.replaceChildren(h('p', { class: 'muted' }, 'Loading the zstd decoder…'));
     let zstd = null;
     try {
-      const lib = await import(ZSTD_MODULE);
-      await lib.init(ZSTD_WASM);
-      zstd = D.zstdFromLib(lib);
-      status.replaceChildren();
+      if (!window.IcechunkZstd) throw new Error('vendor/zstd.js did not load');
+      await window.IcechunkZstd.init();
+      zstd = D.zstdFromLib(window.IcechunkZstd);
     } catch (e) {
       state.zstdError = e && e.message ? e.message : String(e);
-      status.replaceChildren(notice(`Could not load the zstd decoder from ${ZSTD_MODULE} (${state.zstdError}). `,
-        'Compressed files (most Icechunk metadata) cannot be decoded. Check your network connection, or serve this page over HTTP.'));
+      $('status').replaceChildren(notice(`The zstd decoder failed to start (${state.zstdError}). `,
+        'Compressed files cannot be decoded; uncompressed files still work.'));
     }
     state.decoder = D.create({ schema: window.ICECHUNK_SCHEMA, zstd });
   })();
+
+  // Set by `core-drill <repo> web`, which serves the repository's objects
+  // next to this page.
+  const served = window.CORE_DRILL && typeof window.CORE_DRILL.source === 'string' ? window.CORE_DRILL : null;
 
   $('toggle-open').addEventListener('click', () => showOpen($('open').hidden));
   $('dir-input').addEventListener('change', (e) => openDirectory(e.target.files));
@@ -822,5 +830,8 @@
     if (f) openSingleFile(f);
   });
   window.addEventListener('hashchange', onRoute);
-  ready.then(onRoute);
+  ready.then(async () => {
+    if (served && !parseHash().src) await openServed();
+    onRoute();
+  });
 })();

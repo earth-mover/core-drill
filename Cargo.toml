@@ -22,6 +22,10 @@ flatbuffers-reflection = "0.1"
 flexbuffers = "25.12"
 zstd = "0.13"
 
+# `web` command: local server for the embedded metadata viewer
+axum = "0.8"
+open = "5"
+
 # Arraylake — credential vending for cloud repos
 arraylake = "0.2.0"
 
