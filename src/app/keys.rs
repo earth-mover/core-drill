@@ -615,7 +615,8 @@ impl App {
                 // Scroll so current position is roughly middle
             }
             Pane::Bottom => {
-                let target = (self.bottom_offset() + half).min(self.bottom_list_len().saturating_sub(1));
+                let target =
+                    (self.bottom_offset() + half).min(self.bottom_list_len().saturating_sub(1));
                 self.set_bottom_selected(target);
                 self.on_bottom_selection_changed();
             }
@@ -661,10 +662,7 @@ impl App {
         let candidates: Vec<String> = self.search_candidates().to_vec();
         let candidate_refs: Vec<&str> = candidates.iter().map(|s| s.as_str()).collect();
 
-        let mut search = crate::search::SearchState::new(
-            self.focused_pane,
-            self.bottom_tab,
-        );
+        let mut search = crate::search::SearchState::new(self.focused_pane, self.bottom_tab);
         search.query = query;
         search.update_matches(&candidate_refs);
 
@@ -684,9 +682,7 @@ impl App {
         };
 
         // Find which match entry corresponds to current selection
-        let match_pos = current_idx.and_then(|ci| {
-            search.matches.iter().position(|&m| m == ci)
-        });
+        let match_pos = current_idx.and_then(|ci| search.matches.iter().position(|&m| m == ci));
 
         let next_match_pos = match match_pos {
             Some(pos) => {

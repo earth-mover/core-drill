@@ -42,9 +42,7 @@ pub async fn open(path_or_url: &str, overrides: &StorageOverrides) -> Result<Rep
     }
 }
 
-async fn open_simple(
-    storage: Arc<dyn icechunk::Storage + Send + Sync>,
-) -> Result<Repository> {
+async fn open_simple(storage: Arc<dyn icechunk::Storage + Send + Sync>) -> Result<Repository> {
     Ok(Repository::open(None, storage, HashMap::new()).await?)
 }
 
@@ -78,8 +76,7 @@ async fn open_s3(url: &Url, overrides: &StorageOverrides) -> Result<Repository> 
     if overrides.anonymous || parse_bool(&params, "anonymous") == Some(true) {
         let mut anon_config = config;
         anon_config.anonymous = true;
-        let storage =
-            new_s3_storage(anon_config, bucket, prefix, Some(S3Credentials::Anonymous))?;
+        let storage = new_s3_storage(anon_config, bucket, prefix, Some(S3Credentials::Anonymous))?;
         return Ok(Repository::open(None, storage, HashMap::new()).await?);
     }
 
@@ -103,8 +100,10 @@ async fn open_s3(url: &Url, overrides: &StorageOverrides) -> Result<Repository> 
                     Ok(repo)
                 }
                 Err(anon_err) => {
-                    let path_suffix =
-                        prefix.as_deref().map(|p| format!("/{p}")).unwrap_or_default();
+                    let path_suffix = prefix
+                        .as_deref()
+                        .map(|p| format!("/{p}"))
+                        .unwrap_or_default();
                     color_eyre::eyre::bail!(
                         "Could not open s3://{bucket}{path_suffix}\n\
                          \n  With environment credentials: {env_err}\
@@ -144,9 +143,7 @@ fn create_gcs_storage(url: &Url) -> Result<Arc<dyn icechunk::Storage + Send + Sy
 // ── Azure ───────────────────────────────────────────────────────────
 
 /// az://account/container/prefix
-async fn create_azure_storage(
-    url: &Url,
-) -> Result<Arc<dyn icechunk::Storage + Send + Sync>> {
+async fn create_azure_storage(url: &Url) -> Result<Arc<dyn icechunk::Storage + Send + Sync>> {
     let params = query_params(url);
 
     let account = url
@@ -165,7 +162,11 @@ async fn create_azure_storage(
             let pfx = path[pos + 1..].trim_end_matches('/');
             (
                 path[..pos].to_string(),
-                if pfx.is_empty() { None } else { Some(pfx.to_string()) },
+                if pfx.is_empty() {
+                    None
+                } else {
+                    Some(pfx.to_string())
+                },
             )
         }
         None if !path.is_empty() => (path.to_string(), None),

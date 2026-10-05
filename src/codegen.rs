@@ -66,12 +66,11 @@ pub fn run_hint(format: &ScriptFormat, filename: &str) -> String {
 /// Each entry is (program, args).
 pub fn run_commands(format: &ScriptFormat, filename: &str) -> Vec<(&'static str, Vec<String>)> {
     match format {
-        ScriptFormat::Python => vec![
-            ("uv", vec!["run".into(), filename.into()]),
-        ],
-        ScriptFormat::Rust => vec![
-            ("cargo", vec!["+nightly".into(), "-Zscript".into(), filename.into()]),
-        ],
+        ScriptFormat::Python => vec![("uv", vec!["run".into(), filename.into()])],
+        ScriptFormat::Rust => vec![(
+            "cargo",
+            vec!["+nightly".into(), "-Zscript".into(), filename.into()],
+        )],
         ScriptFormat::Jupyter => vec![
             ("juv", vec!["run".into(), filename.into()]),
             ("uvx", vec!["juv".into(), "run".into(), filename.into()]),
@@ -92,7 +91,9 @@ fn storage_setup(identity: &RepoIdentity) -> (String, String) {
             endpoint_url,
             anonymous,
         } => url_storage(url, region.as_deref(), endpoint_url.as_deref(), *anonymous),
-        RepoIdentity::Arraylake { org, repo, api_url, .. } => arraylake_storage(org, repo, api_url.as_deref()),
+        RepoIdentity::Arraylake {
+            org, repo, api_url, ..
+        } => arraylake_storage(org, repo, api_url.as_deref()),
     }
 }
 
@@ -428,7 +429,10 @@ repo = icechunk.Repository.open(storage=storage)
     let mut config_lines = Vec::new();
     match region {
         Some(r) => config_lines.push(format!("        region: Some(\"{r}\".into()),")),
-        None => config_lines.push("        region: Some(\"us-east-1\".into()), // default guess — update if needed".to_string()),
+        None => config_lines.push(
+            "        region: Some(\"us-east-1\".into()), // default guess — update if needed"
+                .to_string(),
+        ),
     }
     if let Some(e) = endpoint_url {
         config_lines.push(format!("        endpoint_url: Some(\"{e}\".into()),"));

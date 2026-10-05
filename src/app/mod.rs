@@ -46,9 +46,7 @@ impl RepoIdentity {
                 .or_else(|| url.strip_prefix("al:"))
                 .unwrap_or(url)
                 .trim_end_matches('/');
-            let (org, repo) = ref_str
-                .split_once('/')
-                .unwrap_or((ref_str, "unknown"));
+            let (org, repo) = ref_str.split_once('/').unwrap_or((ref_str, "unknown"));
             let expanded_api = arraylake_api.map(|u| crate::util::expand_api_url(&u));
             Self::Arraylake {
                 org: org.to_string(),
@@ -739,10 +737,8 @@ impl App {
                 ));
             }
             Err(e) => {
-                self.yank_message = Some((
-                    format!("clipboard error: {e}"),
-                    std::time::Instant::now(),
-                ));
+                self.yank_message =
+                    Some((format!("clipboard error: {e}"), std::time::Instant::now()));
             }
         }
     }

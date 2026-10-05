@@ -1,9 +1,9 @@
 use ratatui::prelude::*;
 
 use crate::app::App;
+use crate::fetch::ZarrMetadata;
 use crate::store::LoadState;
 use crate::store::types::ArraySummary;
-use crate::fetch::ZarrMetadata;
 use crate::ui::widgets::{
     compute_grid_chunks, fmt_initialized, format_vcc_prefix, labeled_lines, section_header,
 };
@@ -472,8 +472,7 @@ pub(super) fn render_array_detail_storage<'a>(
                 })
                 .collect(),
         );
-        let json_lines =
-            crate::ui::json_view::render_json_value(&attr_obj, &app.theme, 10, 50);
+        let json_lines = crate::ui::json_view::render_json_value(&attr_obj, &app.theme, 10, 50);
         lines.extend(json_lines);
     }
 
@@ -494,8 +493,7 @@ pub(super) fn render_array_detail_storage<'a>(
                 })
                 .collect(),
         );
-        let json_lines =
-            crate::ui::json_view::render_json_value(&extra_obj, &app.theme, 10, 50);
+        let json_lines = crate::ui::json_view::render_json_value(&extra_obj, &app.theme, 10, 50);
         lines.extend(json_lines);
     }
 

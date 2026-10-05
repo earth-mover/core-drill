@@ -214,12 +214,8 @@ fn render_sidebar(app: &mut App, frame: &mut Frame, area: Rect) {
                 .collect();
 
             // Wrap in a selectable root "/" node
-            let root_item = tui_tree_widget::TreeItem::new(
-                "/".to_string(),
-                "/",
-                children,
-            )
-            .expect("unique root identifier");
+            let root_item = tui_tree_widget::TreeItem::new("/".to_string(), "/", children)
+                .expect("unique root identifier");
             let tree_items = vec![root_item];
 
             let tree = tui_tree_widget::Tree::new(&tree_items)
