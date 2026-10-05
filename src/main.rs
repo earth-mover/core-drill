@@ -302,7 +302,7 @@ async fn open_via_arraylake(
         .ok_or_else(|| color_eyre::eyre::eyre!("No id_token in Arraylake token file"))?;
 
     let client = Arc::new(
-        arraylake::ALClient::new(api_url.map(|s| s.to_string()), id_token.to_string())
+        arraylake::ALClient::new(api_url.map(|s| s.to_string()), Some(id_token.to_string()))
             .map_err(|e| color_eyre::eyre::eyre!("Failed to create Arraylake client: {e}"))?,
     );
 
@@ -322,16 +322,13 @@ async fn open_via_arraylake(
         )
     })?;
 
-    // Extract bucket metadata once — used for display and the identity struct
-    let bucket_name = repo_info
-        .bucket
-        .as_ref()
-        .map(|b| b.name.as_str())
-        .unwrap_or("?");
+    // Extract bucket metadata once — used for display and the identity struct.
+    // A marketplace subscription has no bucket of its own; it reads its
+    // parent repo's storage.
+    let effective_bucket = repo_info.effective_storage().ok().map(|(b, _)| b);
+    let bucket_name = effective_bucket.map(|b| b.name.as_str()).unwrap_or("?");
 
-    let region = repo_info
-        .bucket
-        .as_ref()
+    let region = effective_bucket
         .and_then(|b| {
             b.extra_config.get("region_name").map(|v| match v {
                 arraylake::ALBucketExtraConfigValue::S(s) => s.clone(),
@@ -340,9 +337,7 @@ async fn open_via_arraylake(
         })
         .unwrap_or_else(|| "?".to_string());
 
-    let platform = repo_info
-        .bucket
-        .as_ref()
+    let platform = effective_bucket
         .map(|b| {
             let endpoint = b.extra_config.get("endpoint_url").and_then(|v| match v {
                 arraylake::ALBucketExtraConfigValue::S(s) => Some(s.as_str()),
@@ -358,6 +353,7 @@ async fn open_via_arraylake(
                 arraylake::ALBucketPlatform::S3Compatible => "S3-compatible".to_string(),
                 arraylake::ALBucketPlatform::Minio => "MinIO".to_string(),
                 arraylake::ALBucketPlatform::GS => "GCS".to_string(),
+                arraylake::ALBucketPlatform::Azure => "Azure".to_string(),
             }
         })
         .unwrap_or_else(|| "?".to_string());
@@ -365,7 +361,7 @@ async fn open_via_arraylake(
     tracing::info!("Arraylake: {org}/{repo_name}  →  {bucket_name} ({platform}, {region})");
 
     let storage = client
-        .get_storage_for_repo(&repo_info)
+        .get_storage_for_repo(&repo_info, None)
         .await
         .map_err(|e| color_eyre::eyre::eyre!("Failed to get storage for '{ref_str}': {e}"))?;
 

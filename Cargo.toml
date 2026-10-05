@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Icechunk — the library does all format parsing and storage I/O
-icechunk = "2.0.0"
+icechunk = "2.2"
 
 # Raw flatbuffer inspection (`object` command): schema-driven walk of metadata
 # files. Versions match the ones icechunk already pulls in.
@@ -27,7 +27,7 @@ axum = "0.8"
 open = "5"
 
 # Arraylake — credential vending for cloud repos
-arraylake = "0.2.0"
+arraylake = "0.14"
 
 # TUI framework
 ratatui = { version = "0.30", features = ["crossterm"] }

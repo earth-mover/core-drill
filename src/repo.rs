@@ -53,35 +53,51 @@ async fn open_s3(url: &Url, overrides: &StorageOverrides) -> Result<Repository> 
     let (bucket, prefix) = host_and_prefix(url)?;
     let params = query_params(url);
 
-    let config = S3Options {
-        region: Some(
+    let mut config = S3Options::default()
+        .with_region(
             overrides
                 .region
                 .clone()
                 .or_else(|| params.get("region").cloned())
                 .unwrap_or_else(|| "us-east-1".to_string()),
-        ),
-        endpoint_url: overrides
-            .endpoint_url
-            .clone()
-            .or_else(|| params.get("endpoint_url").cloned()),
-        anonymous: false,
-        allow_http: parse_bool(&params, "allow_http").unwrap_or(false),
-        force_path_style: parse_bool(&params, "force_path_style").unwrap_or(false),
-        network_stream_timeout_seconds: None,
-        requester_pays: parse_bool(&params, "requester_pays").unwrap_or(false),
-    };
+        )
+        .with_allow_http(parse_bool(&params, "allow_http").unwrap_or(false))
+        .with_force_path_style(parse_bool(&params, "force_path_style").unwrap_or(false))
+        .with_requester_pays(parse_bool(&params, "requester_pays").unwrap_or(false));
+    if let Some(endpoint) = overrides
+        .endpoint_url
+        .clone()
+        .or_else(|| params.get("endpoint_url").cloned())
+    {
+        config = config.with_endpoint_url(endpoint);
+    }
 
     // Explicit anonymous (--anon flag or ?anonymous=true) — skip credential probing
     if overrides.anonymous || parse_bool(&params, "anonymous") == Some(true) {
         let mut anon_config = config;
         anon_config.anonymous = true;
-        let storage = new_s3_storage(anon_config, bucket, prefix, Some(S3Credentials::Anonymous))?;
+        let storage = new_s3_storage(
+            anon_config,
+            bucket,
+            prefix,
+            Some(S3Credentials::Anonymous),
+            vec![],
+            vec![],
+            None,
+        )?;
         return Ok(Repository::open(None, storage, HashMap::new()).await?);
     }
 
     // Try environment credentials first
-    let env_storage = new_s3_storage(config.clone(), bucket.clone(), prefix.clone(), None)?;
+    let env_storage = new_s3_storage(
+        config.clone(),
+        bucket.clone(),
+        prefix.clone(),
+        None,
+        vec![],
+        vec![],
+        None,
+    )?;
     match Repository::open(None, env_storage, HashMap::new()).await {
         Ok(repo) => Ok(repo),
         Err(env_err) => {
@@ -93,6 +109,9 @@ async fn open_s3(url: &Url, overrides: &StorageOverrides) -> Result<Repository> 
                 bucket.clone(),
                 prefix.clone(),
                 Some(S3Credentials::Anonymous),
+                vec![],
+                vec![],
+                None,
             )?;
             match Repository::open(None, anon_storage, HashMap::new()).await {
                 Ok(repo) => {
@@ -137,7 +156,14 @@ fn create_gcs_storage(url: &Url) -> Result<Arc<dyn icechunk::Storage + Send + Sy
         Some(params)
     };
 
-    Ok(new_gcs_storage(bucket, prefix, credentials, config)?)
+    Ok(new_gcs_storage(
+        bucket,
+        prefix,
+        credentials,
+        config,
+        vec![],
+        vec![],
+    )?)
 }
 
 // ── Azure ───────────────────────────────────────────────────────────
@@ -189,7 +215,7 @@ async fn create_azure_storage(url: &Url) -> Result<Arc<dyn icechunk::Storage + S
 // ── HTTP ────────────────────────────────────────────────────────────
 
 fn create_http_storage(url: &Url) -> Result<Arc<dyn icechunk::Storage + Send + Sync>> {
-    Ok(new_http_storage(url.as_str(), None)?)
+    Ok(new_http_storage(url.as_str(), None, None)?)
 }
 
 // ── Local ───────────────────────────────────────────────────────────
