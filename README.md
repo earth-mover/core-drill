@@ -46,7 +46,7 @@ nix profile install github:earth-mover/core-drill
 ### From source
 
 ```bash
-cargo install --git https://github.com/earth-mover/core-drill
+cargo install --locked --git https://github.com/earth-mover/core-drill
 ```
 
 ## Usage
