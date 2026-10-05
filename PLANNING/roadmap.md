@@ -35,7 +35,9 @@
 - [DONE] Virtual source aggregation in repo overview (resolved VCC → bucket/org)
 - Manifest viewer: per-manifest chunk stats, storage distribution
 - Virtual ref analysis: dedicated view of all virtual refs for an array
-- Transaction log viewer: what changed per commit (beyond current diff view)
+- [DONE] Raw object inspection: `object` decodes repo/snapshot/manifest/transaction files field by field (CLI + MCP + web viewer)
+- [DONE] Per-commit chunk changes (`chunk-changes`) and single-chunk lookup (`chunk-ref`)
+- TUI pane for raw objects
 
 ## Phase 4 — Advanced
 

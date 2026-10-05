@@ -203,6 +203,27 @@ async fn run_json(
             let size = fetch_repo_storage_size(&repo).await?;
             println!("{}", serde_json::to_string_pretty(&size)?);
         }
+        Some(Command::Object {
+            target,
+            at,
+            max_items,
+            snapshot,
+        }) => {
+            let obj = fetch_raw_object(&repo, &target, at, max_items, snapshot.as_deref()).await?;
+            println!("{}", serde_json::to_string_pretty(&obj)?);
+        }
+        Some(Command::ChunkRef {
+            path,
+            coords,
+            r#ref,
+        }) => {
+            let lookup = fetch_chunk_ref(&repo, &r#ref, &path, &coords).await?;
+            println!("{}", serde_json::to_string_pretty(&lookup)?);
+        }
+        Some(Command::ChunkChanges { r#ref, path, limit }) => {
+            let changes = fetch_chunk_changes(&repo, &r#ref, path.as_deref(), limit).await?;
+            println!("{}", serde_json::to_string_pretty(&changes)?);
+        }
         Some(
             Command::Alias { .. }
             | Command::InstallCompletions { .. }
@@ -318,6 +339,27 @@ async fn run_md(
         Some(Command::StorageSize) => {
             let size = fetch_repo_storage_size(&repo).await?;
             println!("{}", format::fmt_repo_storage_size(&size));
+        }
+        Some(Command::Object {
+            target,
+            at,
+            max_items,
+            snapshot,
+        }) => {
+            let obj = fetch_raw_object(&repo, &target, at, max_items, snapshot.as_deref()).await?;
+            println!("{}", format::fmt_raw_object(&obj));
+        }
+        Some(Command::ChunkRef {
+            path,
+            coords,
+            r#ref,
+        }) => {
+            let lookup = fetch_chunk_ref(&repo, &r#ref, &path, &coords).await?;
+            println!("{}", format::fmt_chunk_ref(&lookup));
+        }
+        Some(Command::ChunkChanges { r#ref, path, limit }) => {
+            let changes = fetch_chunk_changes(&repo, &r#ref, path.as_deref(), limit).await?;
+            println!("{}", format::fmt_chunk_changes(&changes));
         }
         Some(
             Command::Alias { .. }

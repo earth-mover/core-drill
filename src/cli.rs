@@ -241,6 +241,105 @@ pub enum Command {
     ///   core-drill s3://bucket/prefix --anonymous --output json storage-size
     StorageSize,
 
+    /// Decode a raw metadata file (repo info, snapshot, manifest, transaction
+    /// log) and show every flatbuffer field.
+    ///
+    /// TARGET can be:
+    ///   repo                      the repo info file
+    ///   snapshots/<id|ref>        a snapshot (a branch or tag resolves to its tip)
+    ///   transactions/<id|ref>     a transaction log (same ID as its snapshot)
+    ///   manifests/<id>            a manifest
+    ///   chunks/<id>               a native chunk (size and leading bytes only)
+    ///   overwritten/<file>        a superseded repo info file
+    ///   <id>                      bare ID: tried as snapshot, manifest, then chunk
+    ///   <branch|tag>              the snapshot it points at
+    ///
+    /// IDs that point at other files are printed with those files' paths, so
+    /// you can follow them with another `object` call. Node IDs are labeled
+    /// with node paths: a transaction log uses its own snapshot; a manifest
+    /// uses --snapshot (default: the tip of main).
+    ///
+    /// Use --at to show one subtree, e.g. `arrays/0/refs/5` or a window of a
+    /// long vector, `arrays/0/refs/100..150`.
+    ///
+    /// Examples:
+    ///   core-drill ./repo object repo
+    ///   core-drill ./repo object main
+    ///   core-drill ./repo object transactions/main
+    ///   core-drill ./repo object manifests/GFFPFGXK5R0JXEZ9WNXG --at arrays/0/refs/0..10
+    ///   core-drill ./repo --output json object snapshots/66QBAMNBNVZWY4SRXZJ0
+    Object {
+        /// What to decode (see above)
+        target: String,
+
+        /// Show only this subtree: field names and vector indices separated
+        /// by `/`; the last step may be a range `start..end`
+        #[arg(long)]
+        at: Option<String>,
+
+        /// Elements to show per vector of tables (0 = all)
+        #[arg(short = 'n', long, default_value_t = crate::fetch::raw::DEFAULT_MAX_ITEMS)]
+        max_items: usize,
+
+        /// Snapshot (ID, branch, or tag) whose node paths label a manifest's
+        /// node IDs (default: main)
+        #[arg(short, long)]
+        snapshot: Option<String>,
+    },
+
+    /// Find the manifest entry for one chunk and show the stored ref
+    ///
+    /// Locates the manifest that covers the coordinates (via the snapshot's
+    /// manifest extents), binary-searches it, and prints the raw ChunkRef:
+    /// native chunk ID, inline bytes, or virtual location with its ETag or
+    /// last-modified checksum. Reports when no ref exists (the chunk reads as
+    /// the fill value).
+    ///
+    /// Examples:
+    ///   core-drill ./repo chunk-ref /temperature 0,0,0
+    ///   core-drill ./repo chunk-ref /virtual 7 -r 77F4RZTA6H6XD0SEW3Z0
+    ChunkRef {
+        /// Array path, e.g. /group/temperature
+        path: String,
+
+        /// Chunk coordinates, comma-separated (e.g. 0,3,1)
+        #[arg(value_delimiter = ',', num_args = 1.., required = true)]
+        coords: Vec<u32>,
+
+        /// Branch, tag, or snapshot ID
+        #[arg(short, long, default_value = "main")]
+        r#ref: String,
+    },
+
+    /// Classify the chunk changes in one commit as added, overwritten, or
+    /// deleted
+    ///
+    /// The transaction log lists the chunk coordinates a commit touched, but
+    /// not the kind of change. A deleted chunk has no ref in the commit's
+    /// manifest. This command looks up each listed coordinate in the
+    /// parent's and the commit's manifests and reports both refs.
+    ///
+    /// Kinds: added (no ref before), deleted (no ref after), overwritten (refs
+    /// differ), rewritten (identical refs), absent (no ref either side, e.g.
+    /// written then deleted in the same commit).
+    ///
+    /// Examples:
+    ///   core-drill ./repo chunk-changes main
+    ///   core-drill ./repo chunk-changes 77F4RZTA6H6XD0SEW3Z0 --path /native
+    ChunkChanges {
+        /// The commit: branch, tag, or snapshot ID
+        #[arg(default_value = "main")]
+        r#ref: String,
+
+        /// Only this array path
+        #[arg(short, long)]
+        path: Option<String>,
+
+        /// Maximum coordinates to classify across all arrays (0 = all)
+        #[arg(short = 'n', long, default_value_t = crate::fetch::raw::DEFAULT_CHANGE_LIMIT)]
+        limit: usize,
+    },
+
     /// Manage saved repo aliases
     ///
     /// Aliases let you refer to frequently-used repositories by short names.
@@ -331,8 +430,6 @@ fn complete_repo(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
     cfg.aliases
         .into_iter()
         .filter(|(name, _)| name.starts_with(prefix.as_ref()))
-        .map(|(name, alias)| {
-            CompletionCandidate::new(name).help(Some(alias.repo.into()))
-        })
+        .map(|(name, alias)| CompletionCandidate::new(name).help(Some(alias.repo.into())))
         .collect()
 }

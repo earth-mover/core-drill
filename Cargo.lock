@@ -1143,12 +1143,16 @@ dependencies = [
  "arboard",
  "arraylake",
  "axoupdater",
+ "bytes",
  "chrono",
  "clap",
  "clap_complete",
  "color-eyre",
  "crossterm 0.28.1",
  "dirs",
+ "flatbuffers",
+ "flatbuffers-reflection",
+ "flexbuffers",
  "futures",
  "humansize",
  "icechunk",
@@ -1166,6 +1170,7 @@ dependencies = [
  "tui-input",
  "tui-tree-widget",
  "url",
+ "zstd",
 ]
 
 [[package]]
@@ -1712,6 +1717,18 @@ checksum = "35f6839d7b3b98adde531effaf34f0c2badc6f4735d26fe74709d8e513a96ef3"
 dependencies = [
  "bitflags 2.11.0",
  "rustc_version",
+]
+
+[[package]]
+name = "flatbuffers-reflection"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c29b83e11dbe84a256acfb8f3ea3637204a6b1b08257cbf1b7dfd48f8ef0904"
+dependencies = [
+ "anyhow",
+ "flatbuffers",
+ "num-traits",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

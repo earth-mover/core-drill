@@ -145,6 +145,9 @@ All subcommands work with `--output json` and `--output md`.
 | `log [-r ref] [-n limit]` | Snapshot history with ancestry |
 | `tree [-r ref] [-p path]` | Node tree at a given ref, optional path filter |
 | `ops-log [-n limit]` | Operations log (mutation history) |
+| `object <target> [--at path] [-n items] [-s ref]` | Decode a raw metadata file field by field (see [raw-inspection.md](raw-inspection.md)) |
+| `chunk-ref <array> <coords> [-r ref]` | Manifest entry for one chunk: native ID, inline bytes, or virtual location and checksum |
+| `chunk-changes [ref] [-p path] [-n limit]` | Classify a commit's chunk changes as added, overwritten, rewritten, deleted |
 | `storage-size` | On-disk bytes and object counts for chunks, manifests, and snapshots across all history. Lists every object, so slow on large repos |
 
 ### Examples
@@ -175,6 +178,9 @@ When running with `--serve`, these tools are exposed:
 | `tags` | — | List all tags with snapshot IDs |
 | `log` | `ref`, `limit` | Snapshot history for a branch/tag/snapshot |
 | `tree` | `ref`, `path` | Node tree; use `path` to get detailed array metadata |
+| `object` | `target`, `at`, `max_items`, `snapshot` | Decode a raw metadata file field by field |
+| `chunk_ref` | `path`, `coords`, `ref` | Manifest entry for one chunk |
+| `chunk_changes` | `ref`, `path`, `limit` | Classify a commit's chunk changes |
 | `storage_size` | — | On-disk bytes and object counts across all history (lists every object) |
 
 ### Planned MCP tools (not yet implemented)

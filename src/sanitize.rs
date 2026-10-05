@@ -11,11 +11,18 @@ pub fn sanitize(s: &str) -> String {
     let stripped = strip(&protected);
     let cleaned: String = String::from_utf8_lossy(&stripped)
         .chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !is_bidi_control(*c))
         .collect();
     cleaned
         .replace(TAB_SENTINEL, "\t")
         .replace(NL_SENTINEL, "\n")
+}
+
+/// Explicit directional formatting characters. They can make displayed text
+/// read in a different order than it is stored (e.g. disguising a name's
+/// extension).
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 pub fn sanitize_truncate(s: &str, max_len: usize) -> String {
@@ -86,5 +93,11 @@ mod tests {
         let result = sanitize_truncate(&s, 50);
         assert!(result.chars().count() <= 50);
         assert!(!result.contains('\x1b'));
+    }
+
+    #[test]
+    fn strips_bidi_controls() {
+        assert_eq!(sanitize("invoice\u{202E}fdp.exe"), "invoicefdp.exe");
+        assert_eq!(sanitize("a\u{2066}b\u{2069}c\u{200F}"), "abc");
     }
 }

@@ -30,7 +30,9 @@ src/
   cli.rs               — clap CLI definition
   codegen.rs           — code snippet generation (Python/Rust connect snippets)
   config.rs            — application config loading (~/.config/core-drill/config.toml)
-  fetch.rs             — canonical fetch layer (all icechunk data fetching lives here)
+  fetch/
+    mod.rs             — canonical fetch layer (all icechunk data fetching lives here)
+    raw.rs             — raw object fetch, chunk-ref lookup, per-commit chunk-change classification
   tui.rs               — terminal init (mouse capture), tokio::select event loop
   repo.rs              — open repos (local, S3, GCS, Azure, HTTP)
   sanitize.rs          — text sanitization (ANSI escape/control character stripping)
@@ -38,10 +40,19 @@ src/
   theme.rs             — Earthmover brand colors, panel/widget helpers
   multiplexer.rs       — zellij/tmux detection, Ctrl+hjkl passthrough at pane edges
   util.rs              — shared path helpers: parent_path(), leaf_name()
-  mcp.rs               — MCP server (12 tools), glob matching, collapsed tree output (thin layer: delegates to fetch + output)
+  raw/                 — schema-driven flatbuffer decoding (pure, no I/O)
+    mod.rs             — FileKind, open() (header, zstd, icechunk verifier), OpenedFile::walk()
+    header.rs          — 39-byte file header parsing and body decompression
+    walk.rs            — reflection walker over schema/*.bfbs, `--at` selectors, bounds-checked reads
+    annotate.rs        — ID links, node-path labels, timestamps, decoded byte fields
+    value.rs           — RawValue tree and its JSON serialization
+    lookup.rs          — binary search for a chunk ref inside a manifest
+  mcp.rs               — MCP server (15 tools), glob matching, collapsed tree output (thin layer: delegates to fetch + output)
   output/
     mod.rs             — CLI output dispatch (markdown/JSON), REPL
-    format.rs          — all fmt_* functions: node detail, tree lines, chunk stats, diffs, repo config, repo overview
+    format/
+      mod.rs           — all fmt_* functions: node detail, tree lines, chunk stats, diffs, repo config, repo overview
+      raw.rs           — fmt_raw_object, fmt_chunk_ref, fmt_chunk_changes
   app/
     mod.rs             — App struct, state management, data loading, drain_responses
     keys.rs            — keyboard/mouse input handling, search, vim fold commands
@@ -89,6 +100,7 @@ src/
 - **Cached ZarrMetadata**: parsed once at fetch time into `ArraySummary::parsed_metadata`, never per-frame
 - **Guarded per-frame work**: `branches_synced`, `chunk_scan_complete` flags prevent redundant scans in `drain_responses`
 - **MCP thin layer**: mcp.rs handles protocol only; delegates to fetch.rs for data, output/format.rs for formatting
+- **Raw inspection is schema-driven**: `schema/*.bfbs` (regenerate with `scripts/gen-schema.sh`) drives both the Rust walker and `web/schema.js`; never hand-write per-type decoders
 - **DetailMode cycling**: `next()`/`prev()` methods on enum, not verbose match arms
 
 ## Critical Rules
@@ -115,4 +127,6 @@ src/
 - `PLANNING/roadmap.md` — phased delivery plan with completion status
 - `DOCS/icechunk-rust-api.md` — API cookbook, AllNodes pattern, diff gotchas
 - `DOCS/icechunk-v2-format.md` — binary format quick reference
+- `DOCS/raw-inspection.md` — `object`, `chunk-ref`, `chunk-changes` guide
+- `web/README.md` — static browser viewer for raw metadata files
 - `DOCS/ui-design.md` — three-pane TUI layout, navigation, **array detail pane sections** (Shape & Layout, Storage, Chunk Types including initialized fraction, Attributes)

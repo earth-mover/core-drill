@@ -70,6 +70,18 @@ $ROOT/
 - Updated chunks (node id + coordinates touched)
 - Move operations (from, to, node_id, node_type)
 
+### Chunk deletions
+The commit's transaction log lists the coordinate in `updated_chunks`, which
+does not distinguish added, overwritten, and deleted. The commit's manifest has
+no `ChunkRef` at that index. To
+classify a change, look the coordinate up in the parent's and the commit's
+manifests (`core-drill chunk-changes`). In V2, `Snapshot.parent_id` is unset:
+the parent comes from the repo file's `SnapshotInfo.parent_offset`, an index
+into `Repo.snapshots` (-1 for the initial snapshot).
+
+Inspect any of these files field by field with `core-drill object` (see
+[raw-inspection.md](raw-inspection.md)).
+
 ## Performance-Critical Details
 
 - All sorted lists enable binary search

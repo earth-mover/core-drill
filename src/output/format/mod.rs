@@ -3,6 +3,10 @@
 //! All functions are pure (no I/O) and return `String`. Callers decide whether
 //! to print, truncate, or embed the result in a larger response.
 
+mod raw;
+
+pub(crate) use raw::{fmt_chunk_changes, fmt_chunk_ref, fmt_raw_object};
+
 use humansize::{BINARY, format_size};
 
 use crate::fetch::{FlatNode, FlatNodeType};

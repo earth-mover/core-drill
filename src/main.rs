@@ -7,6 +7,7 @@ mod fetch;
 mod mcp;
 mod multiplexer;
 mod output;
+mod raw;
 mod repo;
 pub mod sanitize;
 pub mod search;
@@ -71,9 +72,18 @@ async fn main() -> Result<()> {
             let merged_anon = script_anon || cli.anonymous;
             let merged_api = arraylake_api.clone().or(cli.arraylake_api.clone());
             return run_script(
-                cli.repo.as_deref(), filename, branch, snapshot.as_deref(), path.as_deref(),
-                merged_region, merged_endpoint, merged_anon, merged_api.as_deref(),
-                marimo, force, run,
+                cli.repo.as_deref(),
+                filename,
+                branch,
+                snapshot.as_deref(),
+                path.as_deref(),
+                merged_region,
+                merged_endpoint,
+                merged_anon,
+                merged_api.as_deref(),
+                marimo,
+                force,
+                run,
             );
         }
         _ => {}
@@ -90,6 +100,9 @@ async fn main() -> Result<()> {
                 | cli::Command::Tree { .. }
                 | cli::Command::OpsLog { .. }
                 | cli::Command::StorageSize
+                | cli::Command::Object { .. }
+                | cli::Command::ChunkRef { .. }
+                | cli::Command::ChunkChanges { .. }
                 | cli::Command::Info
         )
     );
@@ -134,9 +147,7 @@ async fn main() -> Result<()> {
 
         tui::run_with_loading(
             &label,
-            async move {
-                open_repo(&repo_str, api_url.as_deref(), &overrides).await
-            },
+            async move { open_repo(&repo_str, api_url.as_deref(), &overrides).await },
             |(repository, repo_id)| {
                 let data_store = store::DataStore::new(repository);
                 app::App::new(data_store, repo_id)
@@ -194,9 +205,7 @@ pub async fn open_repo(
             endpoint_url: overrides.endpoint_url.clone().or(alias.endpoint_url),
             anonymous: overrides.anonymous || alias.anonymous,
         };
-        resolved_api = arraylake_api
-            .map(|s| s.to_string())
-            .or(alias.arraylake_api);
+        resolved_api = arraylake_api.map(|s| s.to_string()).or(alias.arraylake_api);
     } else {
         resolved = repo_str.to_string();
         resolved_overrides = repo::StorageOverrides {
@@ -424,7 +433,9 @@ fn run_alias_command(command: cli::AliasCommand) -> Result<()> {
                 config::save(&cfg)?;
                 println!("Removed alias '{name}'");
             } else {
-                color_eyre::eyre::bail!("No alias named '{name}'. Run `core-drill alias list` to see available aliases.");
+                color_eyre::eyre::bail!(
+                    "No alias named '{name}'. Run `core-drill alias list` to see available aliases."
+                );
             }
         }
     }
@@ -438,9 +449,7 @@ fn run_script_deps_command(command: cli::ScriptDepsCommand) -> Result<()> {
             let cfg = config::load()?;
             if cfg.script_deps.is_empty() {
                 println!("No extra script dependencies configured.");
-                println!(
-                    "\nAdd some with: core-drill script-deps add matplotlib pandas"
-                );
+                println!("\nAdd some with: core-drill script-deps add matplotlib pandas");
             } else {
                 for dep in &cfg.script_deps {
                     println!("  {dep}");
@@ -492,14 +501,8 @@ fn install_completions(shell_override: Option<clap_complete::Shell>) -> Result<(
         .ok_or_else(|| color_eyre::eyre::eyre!("Cannot determine home directory"))?;
 
     let (rc_path, eval_line) = match shell {
-        Shell::Zsh => (
-            home.join(".zshrc"),
-            "source <(COMPLETE=zsh core-drill)",
-        ),
-        Shell::Bash => (
-            home.join(".bashrc"),
-            "source <(COMPLETE=bash core-drill)",
-        ),
+        Shell::Zsh => (home.join(".zshrc"), "source <(COMPLETE=zsh core-drill)"),
+        Shell::Bash => (home.join(".bashrc"), "source <(COMPLETE=bash core-drill)"),
         Shell::Fish => (
             home.join(".config/fish/config.fish"),
             "COMPLETE=fish core-drill | source",
@@ -564,12 +567,9 @@ fn extract_diffable(content: &str, filename: &str) -> String {
                 c["metadata"]["jupyter"]["source_hidden"].as_bool() != Some(true)
             })
             .filter_map(|c| {
-                c["source"].as_array().map(|lines| {
-                    lines
-                        .iter()
-                        .filter_map(|l| l.as_str())
-                        .collect::<String>()
-                })
+                c["source"]
+                    .as_array()
+                    .map(|lines| lines.iter().filter_map(|l| l.as_str()).collect::<String>())
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -647,7 +647,13 @@ fn run_script(
         };
 
     let resolved_api = arraylake_api.map(|s| s.to_string());
-    let identity = app::RepoIdentity::from_url(&resolved, resolved_region, resolved_endpoint, resolved_anon, resolved_api);
+    let identity = app::RepoIdentity::from_url(
+        &resolved,
+        resolved_region,
+        resolved_endpoint,
+        resolved_anon,
+        resolved_api,
+    );
     let ctx = codegen::CodeContext {
         branch: branch.to_string(),
         snapshot: snapshot.map(|s| s.to_string()),
@@ -661,7 +667,9 @@ fn run_script(
     if dest.exists() {
         let existing = std::fs::read_to_string(dest)?;
         if existing != content && !force {
-            eprintln!("\x1b[31merror:\x1b[0m File '{filename}' already exists with different content. Use --force to overwrite.\n");
+            eprintln!(
+                "\x1b[31merror:\x1b[0m File '{filename}' already exists with different content. Use --force to overwrite.\n"
+            );
             // For notebooks, diff the Python code content, not the raw JSON
             let old_text = extract_diffable(&existing, filename);
             let new_text = extract_diffable(&content, filename);
@@ -676,7 +684,10 @@ fn run_script(
     }
 
     if !exec {
-        println!("Written to \x1b[1m{filename}\x1b[0m, run with:\n\n  {}\n", codegen::run_hint(&format, filename));
+        println!(
+            "Written to \x1b[1m{filename}\x1b[0m, run with:\n\n  {}\n",
+            codegen::run_hint(&format, filename)
+        );
     }
 
     if exec {

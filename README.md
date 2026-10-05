@@ -149,6 +149,20 @@ In the interactive TUI, press `y` then:
 
 The snippets react to the current branch/snapshot and tree selection.
 
+## Format-level inspection
+
+Decode Icechunk's metadata files (repo info, snapshots, manifests, transaction logs) as flatbuffers, field by field:
+
+```bash
+core-drill ./repo object main                         # snapshot at the tip of main
+core-drill ./repo object transactions/main            # what the last commit recorded
+core-drill ./repo object manifests/<id> --at arrays/0/refs/0..20
+core-drill ./repo chunk-ref /temperature 0,3,1        # manifest entry for one chunk, incl. virtual checksums
+core-drill ./repo chunk-changes main                  # chunks a commit added, overwrote, or deleted
+```
+
+See [DOCS/raw-inspection.md](DOCS/raw-inspection.md). The same views run in the browser with no install: [web/README.md](web/README.md).
+
 ## Updating
 
 ```bash

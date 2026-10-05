@@ -18,6 +18,8 @@ src/
   repo.rs              — thin wrapper for opening repos (local, S3, GCS, Azure, HTTP)
   theme.rs             — Earthmover brand colors, shared styles, widget helpers
   multiplexer.rs       — zellij/tmux detection and focus passthrough
+  raw/                 — schema-driven flatbuffer decoding for `object` (see DOCS/raw-inspection.md)
+  fetch/raw.rs         — raw object fetch, chunk-ref lookup, chunk-change classification
   store/
     mod.rs             — DataStore, LoadState, DataRequest/Response, background worker
     types.rs           — owned domain types (BranchInfo, TagInfo, TreeNode, DiffSummary, etc.)

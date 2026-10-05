@@ -152,6 +152,40 @@ struct SearchParams {
     mode: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ObjectParams {
+    /// File to decode: "repo", "snapshots/<id|ref>", "transactions/<id|ref>", "manifests/<id>", "chunks/<id>", "overwritten/<file>", a bare object ID, or a branch/tag (its snapshot)
+    target: String,
+    /// Subtree to show: field names and vector indices joined by "/", last step may be a range, e.g. "arrays/0/refs/100..150"
+    at: Option<String>,
+    /// Elements shown per vector of tables (default 50, 0 = all)
+    max_items: Option<usize>,
+    /// Snapshot (ID, branch, or tag) whose node paths label a manifest's node IDs (default: main)
+    snapshot: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ChunkRefParams {
+    /// Array path, e.g. "/group/temperature"
+    path: String,
+    /// Chunk coordinates, one per dimension
+    coords: Vec<u32>,
+    /// Branch, tag, or snapshot ID (default: "main")
+    #[serde(default = "default_ref")]
+    r#ref: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ChunkChangesParams {
+    /// The commit to inspect: branch, tag, or snapshot ID (default: "main")
+    #[serde(default = "default_ref")]
+    r#ref: String,
+    /// Only this array path
+    path: Option<String>,
+    /// Maximum coordinates to classify (default 200, 0 = all)
+    limit: Option<usize>,
+}
+
 fn default_search_mode() -> String {
     "fuzzy".to_string()
 }
@@ -426,7 +460,9 @@ impl CoreDrillServer {
                 };
                 let matched = filtered.len();
 
-                if matched == 0 && let Some(ref query) = params.search {
+                if matched == 0
+                    && let Some(ref query) = params.search
+                {
                     format!(
                         "No snapshots matching \"{query}\" in {} ({total} total commits)",
                         params.r#ref,
@@ -435,8 +471,7 @@ impl CoreDrillServer {
                     // Paginate
                     let offset = params.offset.unwrap_or(0);
                     let limit = params.limit.unwrap_or(20);
-                    let display: Vec<_> =
-                        filtered.into_iter().skip(offset).take(limit).collect();
+                    let display: Vec<_> = filtered.into_iter().skip(offset).take(limit).collect();
                     let showing_end = offset + display.len();
 
                     // Header
@@ -546,7 +581,11 @@ impl CoreDrillServer {
                             );
 
                             const CHILD_LINE_LIMIT: usize = 30;
-                            out.push_str(&output::fmt_collapsed_tree(&children, &tree, CHILD_LINE_LIMIT));
+                            out.push_str(&output::fmt_collapsed_tree(
+                                &children,
+                                &tree,
+                                CHILD_LINE_LIMIT,
+                            ));
                             if children.is_empty() {
                                 out.push_str("*(empty group)*\n");
                             }
@@ -575,7 +614,11 @@ impl CoreDrillServer {
                             filter_path, groups_count, arrays_count
                         );
                         const PREFIX_LINE_LIMIT: usize = 30;
-                        out.push_str(&output::fmt_collapsed_tree(&filtered, &tree, PREFIX_LINE_LIMIT));
+                        out.push_str(&output::fmt_collapsed_tree(
+                            &filtered,
+                            &tree,
+                            PREFIX_LINE_LIMIT,
+                        ));
                         out
                     }
                 } else {
@@ -598,7 +641,11 @@ impl CoreDrillServer {
                         params.r#ref, groups_count, arrays_count
                     );
                     const TREE_LINE_LIMIT: usize = 30;
-                    out.push_str(&output::fmt_collapsed_tree(&filtered, &tree, TREE_LINE_LIMIT));
+                    out.push_str(&output::fmt_collapsed_tree(
+                        &filtered,
+                        &tree,
+                        TREE_LINE_LIMIT,
+                    ));
                     let total_all = tree.len();
                     if filtered.len() < total_all {
                         out.push_str(&format!(
@@ -778,7 +825,9 @@ impl CoreDrillServer {
             "rust" => crate::codegen::ScriptFormat::Rust,
             _ => crate::codegen::ScriptFormat::Python,
         };
-        let extra_deps = crate::config::load().map(|c| c.script_deps).unwrap_or_default();
+        let extra_deps = crate::config::load()
+            .map(|c| c.script_deps)
+            .unwrap_or_default();
         crate::codegen::generate_script(identity, &ctx, &format, &extra_deps)
     }
 
@@ -794,6 +843,76 @@ impl CoreDrillServer {
             Err(e) => format!("Error: {}", sanitize(&e.to_string())),
         };
         info!("MCP storage_size completed in {:?}", start.elapsed());
+        result
+    }
+
+    #[tool(
+        description = "Decode a raw Icechunk metadata file (repo info, snapshot, manifest, transaction log) and show every flatbuffer field. IDs that reference other files are shown as `→ dir/ID` links you can pass back as `target`. Node IDs are labeled with paths. Use `at` to drill into a subtree or page through long vectors (e.g. at=\"arrays/0/refs/100..150\"). Use for format-level questions: what a manifest stores for a chunk, what a commit's transaction log recorded, how snapshots link to manifests."
+    )]
+    async fn object(&self, Parameters(params): Parameters<ObjectParams>) -> String {
+        let start = std::time::Instant::now();
+        info!("MCP object target={}", params.target);
+        let repo = require_repo!(self);
+        let result = match crate::fetch::fetch_raw_object(
+            &repo,
+            &params.target,
+            params.at,
+            params
+                .max_items
+                .unwrap_or(crate::fetch::raw::DEFAULT_MAX_ITEMS),
+            params.snapshot.as_deref(),
+        )
+        .await
+        {
+            Ok(obj) => output::fmt_raw_object(&obj),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
+        };
+        info!("MCP object completed in {:?}", start.elapsed());
+        result
+    }
+
+    #[tool(
+        description = "Find the stored chunk ref for one chunk of an array: which manifest holds it, its position (for `object --at`), and the raw ChunkRef (native chunk ID, inline bytes, or virtual location with ETag/last-modified checksum). Reports when no ref exists (chunk reads as fill value)."
+    )]
+    async fn chunk_ref(&self, Parameters(params): Parameters<ChunkRefParams>) -> String {
+        let start = std::time::Instant::now();
+        info!(
+            "MCP chunk_ref path={} coords={:?}",
+            params.path, params.coords
+        );
+        let repo = require_repo!(self);
+        let result =
+            match crate::fetch::fetch_chunk_ref(&repo, &params.r#ref, &params.path, &params.coords)
+                .await
+            {
+                Ok(lookup) => output::fmt_chunk_ref(&lookup),
+                Err(e) => format!("Error: {}", sanitize(&e.to_string())),
+            };
+        info!("MCP chunk_ref completed in {:?}", start.elapsed());
+        result
+    }
+
+    #[tool(
+        description = "Classify every chunk a commit touched as added, overwritten, rewritten (identical ref), deleted, or absent, with before/after refs. Looks up each coordinate from the transaction log in the parent's and the commit's manifests."
+    )]
+    async fn chunk_changes(&self, Parameters(params): Parameters<ChunkChangesParams>) -> String {
+        let start = std::time::Instant::now();
+        info!("MCP chunk_changes ref={}", params.r#ref);
+        let repo = require_repo!(self);
+        let result = match crate::fetch::fetch_chunk_changes(
+            &repo,
+            &params.r#ref,
+            params.path.as_deref(),
+            params
+                .limit
+                .unwrap_or(crate::fetch::raw::DEFAULT_CHANGE_LIMIT),
+        )
+        .await
+        {
+            Ok(changes) => output::fmt_chunk_changes(&changes),
+            Err(e) => format!("Error: {}", sanitize(&e.to_string())),
+        };
+        info!("MCP chunk_changes completed in {:?}", start.elapsed());
         result
     }
 }
@@ -1053,7 +1172,10 @@ impl ServerHandler for CoreDrillServer {
              Start with `open`, then `info` for a full overview (branches, snapshots, tree). \
              Use `tree` with a `path` param to drill into a specific array. \
              Use `log`/`diff` for history, `search` for fuzzy find, `ops_log`/`config` for repo metadata. \
-             `log` supports `offset`/`limit` for pagination and `search` for filtering by commit message.",
+             `log` supports `offset`/`limit` for pagination and `search` for filtering by commit message. \
+             For format-level questions, `object` decodes raw metadata files field by field, \
+             `chunk_ref` shows what a manifest stores for one chunk, and `chunk_changes` classifies \
+             a commit's chunk writes and deletions.",
         )
     }
 }

@@ -4,6 +4,10 @@
 //! delegates to functions here. This eliminates duplication and ensures
 //! consistent error handling via `color_eyre::Result`.
 
+pub(crate) mod raw;
+
+pub(crate) use raw::{fetch_chunk_changes, fetch_chunk_ref, fetch_raw_object};
+
 use icechunk::Repository;
 
 use crate::sanitize::sanitize;

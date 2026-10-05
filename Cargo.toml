@@ -15,6 +15,13 @@ path = "src/main.rs"
 # Icechunk — the library does all format parsing and storage I/O
 icechunk = "2.0.0"
 
+# Raw flatbuffer inspection (`object` command): schema-driven walk of metadata
+# files. Versions match the ones icechunk already pulls in.
+flatbuffers = "25.12"
+flatbuffers-reflection = "0.1"
+flexbuffers = "25.12"
+zstd = "0.13"
+
 # Arraylake — credential vending for cloud repos
 arraylake = "0.2.0"
 
@@ -65,3 +72,6 @@ lto = "thin"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[dev-dependencies]
+bytes = "1"
