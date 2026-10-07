@@ -167,6 +167,8 @@ To click through the same files in your browser:
 core-drill ./repo web          # also works for s3://, gs://, and al: repos
 ```
 
+![The web viewer's repo page: branches, tags, and every snapshot with links to its snapshot and transaction log](DOCS/images/web-viewer-repo.png)
+
 See [DOCS/raw-inspection.md](DOCS/raw-inspection.md) and [web/README.md](web/README.md).
 
 ## Updating
