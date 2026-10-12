@@ -29,6 +29,26 @@ core-drill s3://icechunk-public-data/v1/era5_weatherbench2
 
 ## Install
 
+### Pixi/Conda (recommended)
+
+Core-drill is easily installable from the [`github-releases` Conda channel](https://prefix.dev/channels/github-releases/packages/core-drill). We recommend using [Pixi](https://pixi.prefix.dev/latest/) with a [global installation](https://pixi.prefix.dev/latest/global_tools/introduction/).
+
+```
+pixi global install -c https://prefix.dev/github-releases core-drill
+```
+
+To try core-drill without installing it, use `pixi exec`, which runs it from a cached, temporary environment:
+
+```
+pixi exec -c https://prefix.dev/github-releases core-drill s3://icechunk-public-data/v1/era5_weatherbench2
+```
+
+If you prefer Conda, you can install it into a Conda environment using
+
+```
+conda install -c https://prefix.dev/github-releases core-drill
+```
+
 ### Shell (Linux / macOS)
 
 ```bash
