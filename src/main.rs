@@ -735,7 +735,19 @@ fn run_script(
 
 async fn self_update() -> Result<()> {
     let mut updater = axoupdater::AxoUpdater::new_for("core-drill");
-    updater.load_receipt()?;
+    // Only the shell installer writes a receipt. A receipt for a different path means a
+    // shell-installed copy exists alongside this one, which a package manager owns.
+    let installed_by_shell = updater.load_receipt().is_ok()
+        && updater
+            .check_receipt_is_for_this_executable()
+            .unwrap_or(false);
+    if !installed_by_shell {
+        eprintln!(
+            "\x1b[31merror:\x1b[0m This copy of core-drill was not installed with the shell installer, so it cannot self-update.\n{}",
+            package_manager_update_hint()
+        );
+        std::process::exit(1);
+    }
 
     if !updater.is_update_needed().await? {
         println!("Already up to date ({})", env!("CARGO_PKG_VERSION"));
@@ -748,4 +760,22 @@ async fn self_update() -> Result<()> {
         println!("Updated to {}", outcome.new_version);
     }
     Ok(())
+}
+
+fn package_manager_update_hint() -> String {
+    let exe = std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .unwrap_or_default();
+    let in_conda_env = exe
+        .parent()
+        .and_then(|bin| bin.parent())
+        .is_some_and(|prefix| prefix.join("conda-meta").is_dir());
+
+    if in_conda_env && exe.components().any(|c| c.as_os_str() == ".pixi") {
+        "Update it with pixi instead:\n  pixi global update core-drill   (global install)\n  pixi update core-drill          (inside a pixi project)".into()
+    } else if in_conda_env {
+        "Update it with conda instead:\n  conda update core-drill".into()
+    } else {
+        "Update it with the package manager you installed it with, e.g.:\n  nix profile upgrade core-drill\n  cargo install --locked --force --git https://github.com/earth-mover/core-drill".into()
+    }
 }

@@ -177,6 +177,8 @@ See [DOCS/raw-inspection.md](DOCS/raw-inspection.md) and [web/README.md](web/REA
 core-drill self-update
 ```
 
+`self-update` works only for copies installed with the shell installer. Update other installs with the tool that installed them, such as pixi, conda, nix, or cargo.
+
 ## Tab completion
 
 ```bash
